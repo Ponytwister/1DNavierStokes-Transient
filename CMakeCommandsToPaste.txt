@@ -1,0 +1,4 @@
+cmake -S ../../ -B . -G "MinGW Makefiles"
+cmake -S . -B .
+cmake --build .
+target_link_libraries(${PROJECT_NAME} alglib)

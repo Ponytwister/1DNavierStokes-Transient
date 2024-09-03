@@ -1,0 +1,2 @@
+C:\msys64\mingw64\bin\ar.exe qc libalglib.a CMakeFiles/alglib.dir/optimization.cpp.obj
+C:\msys64\mingw64\bin\ranlib.exe libalglib.a

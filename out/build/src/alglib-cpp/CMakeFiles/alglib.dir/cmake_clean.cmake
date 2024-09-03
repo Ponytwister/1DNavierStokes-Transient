@@ -1,0 +1,41 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/alglib.dir/src/alglibinternal.cpp.obj"
+  "CMakeFiles/alglib.dir/src/alglibinternal.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/alglibmisc.cpp.obj"
+  "CMakeFiles/alglib.dir/src/alglibmisc.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/ap.cpp.obj"
+  "CMakeFiles/alglib.dir/src/ap.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/dataanalysis.cpp.obj"
+  "CMakeFiles/alglib.dir/src/dataanalysis.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/diffequations.cpp.obj"
+  "CMakeFiles/alglib.dir/src/diffequations.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/fasttransforms.cpp.obj"
+  "CMakeFiles/alglib.dir/src/fasttransforms.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/integration.cpp.obj"
+  "CMakeFiles/alglib.dir/src/integration.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/interpolation.cpp.obj"
+  "CMakeFiles/alglib.dir/src/interpolation.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/kernels_avx2.cpp.obj"
+  "CMakeFiles/alglib.dir/src/kernels_avx2.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/kernels_fma.cpp.obj"
+  "CMakeFiles/alglib.dir/src/kernels_fma.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/kernels_sse2.cpp.obj"
+  "CMakeFiles/alglib.dir/src/kernels_sse2.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/linalg.cpp.obj"
+  "CMakeFiles/alglib.dir/src/linalg.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/optimization.cpp.obj"
+  "CMakeFiles/alglib.dir/src/optimization.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/solvers.cpp.obj"
+  "CMakeFiles/alglib.dir/src/solvers.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/specialfunctions.cpp.obj"
+  "CMakeFiles/alglib.dir/src/specialfunctions.cpp.obj.d"
+  "CMakeFiles/alglib.dir/src/statistics.cpp.obj"
+  "CMakeFiles/alglib.dir/src/statistics.cpp.obj.d"
+  "libalglib.a"
+  "libalglib.pdb"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/alglib.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

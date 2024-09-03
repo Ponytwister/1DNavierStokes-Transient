@@ -4,8 +4,7 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/eigen-3.4.0",
-                "C:/Users/Eric J/Desktop/NavierStokesModel/eigen-3.4.0/"
+                "${workspaceFolder}/eigen-3.4.0"
             ],
             "defines": [
                 "_DEBUG",
