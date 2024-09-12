@@ -21,9 +21,10 @@ void normalize_profile();
 void solver(double* control_parameters, alglib::real_1d_array &residuals); 
 void alglib_shift_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
 void alglib_react_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
+void alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
 
 const int Z                 = 100; // divisions along the z(time) axis
-const int X                 = 500; // divisions along the x axis (exp_X - 1) * 3 + 1
+const int X                 = 500; // divisions along the x axis
 const int M                 = X * Z;
 
 // Device Dimenssions
@@ -42,8 +43,8 @@ const int window_size = 180;
 const int exp_left_padding = 20;
 const int exp_right_padding = 20;
 
-double num_left_padding = 41.2463d;
-double num_right_padding = 20.0153d;
+double num_left_padding = 39.7704d;
+double num_right_padding = 20.0155d;
 double num_profile_width = window_size - num_left_padding - num_right_padding;
 
 int low_ref_start = 0;
@@ -68,11 +69,10 @@ const double dX            = 1.0d / X; // X = x/l
 const double r_dye         = dT_dye / dX / dX; // r = dT/(dX)^2
 const double r_beads       = dT_beads / dX / dX; // r = dT/(dX)^2
 
-
 struct parameters_struct {
-    double p               = 34.9268d; // FITC molecules / PS bead
-    double kon             = 3.56578E-14d * (W / X); // 0.10d;
-
+    double p               = 124.2129d; // FITC molecules / PS bead
+    double kon             = 1.987E-14d * (W / X); // 0.10d;
+    double koff            = 1.987E-16d * (W / X); 
     double* wt_percent;                      //= 0.1d; // wt%
     double* dye_conc_mgml;                   //= 0.00336d; // mg/ml FITC
     double* bead_conc;                       //= wt_percent / 100.0d / 1.05d / ( 4.0d / 3.0d * M_PI * powf(diameter / 2.0d, 3.0d)); // beads/m3 
@@ -101,12 +101,12 @@ prime_excel_output(string file_name)
 {
     ofstream fout;
     fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
-    fout << "res_time  " << "bind_ratio(p)  " << "forward_reaction_rate  " << "dye_conc.   " << "bead_conc.  "<< "species  "; 
+    fout << "res_time  " << "bind_ratio(p)  " << "forward_reaction_rate  "  << "reverse_reaction_rate  "<< "dye_conc.   " << "bead_conc.  "<< "species  "; 
     for (int x = 0; x < X; x++) {
         fout << x << "  ";
     }
     fout << endl;
-    fout << "sec  " << "molc/bead  " << "forward_reaction_rate  " << "molc/m3   " << "bead/m3  "<< "Channel_Width_(um)->  "; 
+    fout << "sec  " << "molc/bead  " << "forward_reaction_rate  " << "reverse_reaction_rate  " << "molc/m3   " << "bead/m3  "<< "Channel_Width_(um)->  "; 
 }
 
 void
@@ -126,7 +126,7 @@ save_excel_output(double* D, double* ND, double* NS, double* control_parameters)
 
     for (int step_in_line_read = 0; step_in_line_read < profile_file_line_count; step_in_line_read++) {
         for (int j = 0; j < 9; j++) {
-            fout << z * dt << "  " << control_parameters[2] << "  " << control_parameters[3] << "  " << parameters.dye_conc[step_in_line_read] << "   " <<  parameters.bead_conc[step_in_line_read] << "  ";
+            fout << z * dt << "  " << control_parameters[2] << "  " << control_parameters[3] << "  " << control_parameters[4] << "  " << parameters.dye_conc[step_in_line_read] << "   " <<  parameters.bead_conc[step_in_line_read] << "  ";
             switch(j) {
                 case 0:
                     fout << "Free_Dye  ";
@@ -246,19 +246,14 @@ read_profile_from_text(string file_name)
     int step_in_line_read = 0;
     fin.seekg(0);
     fin >> data;
-    cout << data << " ";
     low_ref_start = stoi(data);
     fin >> data;
-    cout << data << " ";
     low_ref_end = stoi(data);
     fin >> data;
-    cout << data << " ";
     high_ref_start = stoi(data);
     fin >> data;
-    cout << data << " ";
     high_ref_end = stoi(data);
     fin >> data;
-    cout << data << " ";
     while (!fin.eof()) {    
         parameters.wt_percent[step_in_line_read] = stod(data);
         parameters.bead_conc[step_in_line_read] = parameters.wt_percent[step_in_line_read] / 100.0d / 1.05d / ( 4.0d / 3.0d * M_PI * powf(diameter / 2.0d, 3.0d)); // beads/m3 
@@ -354,6 +349,7 @@ solver(double* control_parameters_mid, alglib::real_1d_array &residuals) //
     }
     
     double reaction_rate = 0.0d;
+    double reverse_reaction_rate = 0.0d;
     for (int main_loop = 0; main_loop < profile_file_line_count; main_loop++) {
         //initialize the 3 Concentration Arrays. 
         for (int z = 0; z < Z; z++) {
@@ -374,21 +370,23 @@ solver(double* control_parameters_mid, alglib::real_1d_array &residuals) //
         for (int z = 1; z < Z; z++) {
             for (int i = 0; i < X; i++) {
                 reaction_rate = control_parameters_mid[3] * dt * (D[i + (z - 1) * X] * NS[i + (z - 1) * X]); // - ND[i + (z - 1) * X] / Keq);
-                reaction_rate = min(reaction_rate, NS[i + (z - 1) * X] * control_parameters_mid[2]);
+                reaction_rate = min(reaction_rate, NS[i + (z - 1) * X] / control_parameters_mid[2]);
                 reaction_rate = min(D[i + (z - 1) * X], reaction_rate);
+                reverse_reaction_rate = control_parameters_mid[4] * dt * ND[i + (z - 1) * X];
+                reverse_reaction_rate = min(reverse_reaction_rate, ND[i + (z - 1) * X]);
                 if (i == 0) {
-                    E(i,0)      = (1.00d - r_dye)   * D[i + (z - 1) * X]    + r_dye   * D[i + (z - 1) * X + 1]                                                              - reaction_rate;
-                    E_NS(i,0)   = (1.00d - r_beads) * NS[i + (z - 1) * X]   + r_beads * NS[i + (z - 1) * X + 1]                                                             - reaction_rate * control_parameters_mid[2];
-                    E_ND(i,0)   = (1.00d - r_beads) * ND[i + (z - 1) * X]   + r_beads * ND[i + (z - 1) * X + 1]                                                             + reaction_rate;
+                    E(i,0)      = (1.00d - r_dye)   * D[i + (z - 1) * X]    + r_dye   * D[i + (z - 1) * X + 1]                                                              - reaction_rate + reverse_reaction_rate;
+                    E_NS(i,0)   = (1.00d - r_beads) * NS[i + (z - 1) * X]   + r_beads * NS[i + (z - 1) * X + 1]                                                             - reaction_rate / control_parameters_mid[2] + reverse_reaction_rate / control_parameters_mid[2];
+                    E_ND(i,0)   = (1.00d - r_beads) * ND[i + (z - 1) * X]   + r_beads * ND[i + (z - 1) * X + 1]                                                             + reaction_rate - reverse_reaction_rate;
                     
                 } else if (i == X - 1) {
-                    E(i,0)      =                                             r_dye   * D[i + (z - 1) * X - 1]                  + (1.00d - r_dye)   * D[i + (z - 1) * X]    - reaction_rate;
-                    E_NS(i,0)   =                                             r_beads * NS[i + (z - 1) * X - 1]                 + (1.00d - r_beads) * NS[i + (z - 1) * X]   - reaction_rate * control_parameters_mid[2];
-                    E_ND(i,0)   =                                             r_beads * ND[i + (z - 1) * X - 1]                 + (1.00d - r_beads) * ND[i + (z - 1) * X]   + reaction_rate;
+                    E(i,0)      =                                             r_dye   * D[i + (z - 1) * X - 1]                  + (1.00d - r_dye)   * D[i + (z - 1) * X]    - reaction_rate + reverse_reaction_rate;
+                    E_NS(i,0)   =                                             r_beads * NS[i + (z - 1) * X - 1]                 + (1.00d - r_beads) * NS[i + (z - 1) * X]   - reaction_rate / control_parameters_mid[2] + reverse_reaction_rate / control_parameters_mid[2];
+                    E_ND(i,0)   =                                             r_beads * ND[i + (z - 1) * X - 1]                 + (1.00d - r_beads) * ND[i + (z - 1) * X]   + reaction_rate - reverse_reaction_rate;;
                 } else {
-                    E(i,0)      = r_dye   * D[i + (z - 1) * X - 1]          + (2.00d - 2.00d * r_dye)   * D[i + (z - 1) * X]    + r_dye   * D[i + (z - 1) * X + 1]          - reaction_rate;
-                    E_NS(i,0)   = r_beads * NS[i + (z - 1) * X - 1]         + (2.00d - 2.00d * r_beads) * NS[i + (z - 1) * X]   + r_beads * NS[i + (z - 1) * X + 1]         - reaction_rate / control_parameters_mid[2];
-                    E_ND(i,0)   = r_beads * ND[i + (z - 1) * X - 1]         + (2.00d - 2.00d * r_beads) * ND[i + (z - 1) * X]   + r_beads * ND[i + (z - 1) * X + 1]         + reaction_rate;
+                    E(i,0)      = r_dye   * D[i + (z - 1) * X - 1]          + (2.00d - 2.00d * r_dye)   * D[i + (z - 1) * X]    + r_dye   * D[i + (z - 1) * X + 1]          - reaction_rate + reverse_reaction_rate;
+                    E_NS(i,0)   = r_beads * NS[i + (z - 1) * X - 1]         + (2.00d - 2.00d * r_beads) * NS[i + (z - 1) * X]   + r_beads * NS[i + (z - 1) * X + 1]         - reaction_rate / control_parameters_mid[2] + reverse_reaction_rate / control_parameters_mid[2];
+                    E_ND(i,0)   = r_beads * ND[i + (z - 1) * X - 1]         + (2.00d - 2.00d * r_beads) * ND[i + (z - 1) * X]   + r_beads * ND[i + (z - 1) * X + 1]         + reaction_rate - reverse_reaction_rate;
                 }
             }
 
@@ -433,14 +431,21 @@ solver(double* control_parameters_mid, alglib::real_1d_array &residuals) //
 void
 alglib_shift_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr)
 {
-    double control_parameters_mid [4] = {control_parameters[0], control_parameters[1], parameters.p, parameters.kon};
+    double control_parameters_mid [5] = {control_parameters[0], control_parameters[1], parameters.p, parameters.kon, parameters.koff};
     solver(control_parameters_mid, residuals);
 }
 
 void
 alglib_react_solver(const alglib::real_1d_array &react_control_parameters, alglib::real_1d_array &residuals, void *ptr)
 {
-    double control_parameters_mid [4] = {(double)num_left_padding, (double)num_right_padding, react_control_parameters[0], react_control_parameters[1]};
+    double control_parameters_mid [5] = {(double)num_left_padding, (double)num_right_padding, react_control_parameters[0], react_control_parameters[1], react_control_parameters[2]};
+    solver(control_parameters_mid, residuals);
+}
+
+void
+alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr)
+{
+    double control_parameters_mid [5] = {control_parameters[0], control_parameters[1], control_parameters[2], control_parameters[3], control_parameters[4]};
     solver(control_parameters_mid, residuals);
 }
 
@@ -532,6 +537,7 @@ main()
         double init_shift_control_parameters[] = {(double)num_left_padding, (double)num_right_padding};
         alglib::real_1d_array shift_control_parameters;
         shift_control_parameters.setcontent(2, init_shift_control_parameters);
+        /*
         alglib::real_1d_array shift_s = "[1.0, 1.0]";
         alglib::real_1d_array shift_bndl = "[0, 0]";
         alglib::real_1d_array shift_bndu = "[60, 60]";
@@ -550,16 +556,17 @@ main()
         num_right_padding = shift_control_parameters[1];
         printf("%s\n", shift_control_parameters.tostring(4).c_str());
         alglib::minlmrestartfrom(shift_state, shift_control_parameters);
-
-        double init_react_control_parameters[] = {parameters.p, parameters.kon};
+*/
+        double init_react_control_parameters[] = {parameters.p, parameters.kon, parameters.koff};
         alglib::real_1d_array react_control_parameters;
-        react_control_parameters.setcontent(2, init_react_control_parameters);
-        alglib::real_1d_array react_s = "[0.1,1.0e-19]";
-        alglib::real_1d_array react_bndl = "[10,1.0e-24]";
-        alglib::real_1d_array react_bndu = "[200,1.0e-16]";
+        react_control_parameters.setcontent(3, init_react_control_parameters);
+        /*
+        alglib::real_1d_array react_s = "[0.1,1.0e-19,1.0e-19]";
+        alglib::real_1d_array react_bndl = "[10,1.0e-24,1.0e-24]";
+        alglib::real_1d_array react_bndu = "[200,1.0e-1,1.0e-16]";
         alglib::minlmstate react_state;
         alglib::minlmreport react_rep;
-        alglib::minlmcreatev(2, window_size * profile_file_line_count, react_control_parameters, 0.000001, react_state);
+        alglib::minlmcreatev(3, window_size * profile_file_line_count, react_control_parameters, 0.000001, react_state);
         alglib::minlmsetbc(react_state, react_bndl, react_bndu);
         alglib::minlmsetcond(react_state, epsx, maxits);
         alglib::minlmsetscale(react_state, react_s);
@@ -569,8 +576,27 @@ main()
         std::cout << "Done" << endl;
         alglib::minlmresults(react_state, react_control_parameters, react_rep);
         printf("%s\n", react_control_parameters.tostring(4).c_str());
-        
-        double control_parameters_out[4] = {shift_control_parameters[0], shift_control_parameters[1], react_control_parameters[0], react_control_parameters[1]};   
+        */
+        double init_control_parameters[] = {shift_control_parameters[0], shift_control_parameters[1], react_control_parameters[2], react_control_parameters[3]};
+        alglib::real_1d_array control_parameters;
+        control_parameters.setcontent(5, init_control_parameters);
+        alglib::real_1d_array s = "[1.0, 1.0, 0.1, 1.0e-18, 1.0e-18]";
+        alglib::real_1d_array bndl = "[0, 0, 10, 1.0e-22, 0]";
+        alglib::real_1d_array bndu = "[60, 60, 1000, 1.0e-17, 1.0e-17]";
+        alglib::minlmstate state;
+        alglib::minlmreport rep;
+        alglib::minlmcreatev(5, window_size * profile_file_line_count, control_parameters, 0.000001, state);
+        alglib::minlmsetbc(state, bndl, bndu);
+        alglib::minlmsetcond(state, epsx, maxits);
+        alglib::minlmsetscale(state, s);
+        alglib::minlmsetnonmonotonicsteps(state, 2);
+        std::cout << "minlmoptimize: ";
+        alglib::minlmoptimize(state, alglib_solver);   // Optimize
+        std::cout << "Done" << endl;
+        alglib::minlmresults(state, control_parameters, rep);
+        printf("%s\n", control_parameters.tostring(4).c_str());
+
+        double control_parameters_out[5] = {control_parameters[0], control_parameters[1], control_parameters[2], control_parameters[3], control_parameters[4]};   
         save_excel_output(D_out, ND_out, NS_out, control_parameters_out);
         
         //printf("%s\n", control_parameters.tostring(2).c_str()); // EXPECTED: [-3,+3]
