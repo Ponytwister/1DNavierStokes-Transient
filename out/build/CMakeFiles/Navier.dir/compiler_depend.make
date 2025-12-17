@@ -411,7 +411,8 @@ CMakeFiles/Navier.dir/Navier.cpp.obj: D:/GitHub/1DNavierStokes-Transient/Navier.
   D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/linalg.h \
   D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/optimization.h \
   D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h \
-  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/stdafx.h
+  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/stdafx.h \
+  D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include/sqlite3.h
 
 
 C:/msys64/mingw64/include/c++/12.1.0/eigen-3.4.0/Eigen/src/Core/NumTraits.h:
@@ -1097,6 +1098,8 @@ C:/msys64/mingw64/include/c++/12.1.0/eigen-3.4.0/Eigen/src/SVD/SVDBase.h:
 C:/msys64/mingw64/include/c++/12.1.0/eigen-3.4.0/Eigen/src/misc/Kernel.h:
 
 C:/msys64/mingw64/include/c++/12.1.0/eigen-3.4.0/Eigen/src/misc/RealSvd2x2.h:
+
+D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include/sqlite3.h:
 
 C:/msys64/mingw64/include/c++/12.1.0/eigen-3.4.0/Eigen/src/plugins/CommonCwiseBinaryOps.h:
 

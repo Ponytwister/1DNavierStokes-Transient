@@ -129,6 +129,19 @@ Navier/fast:
 .PHONY : Navier/fast
 
 #=============================================================================
+# Target rules for targets named simulate_array
+
+# Build rule for target.
+simulate_array: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 simulate_array
+.PHONY : simulate_array
+
+# fast build rule for target.
+simulate_array/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\simulate_array.dir\build.make CMakeFiles/simulate_array.dir/build
+.PHONY : simulate_array/fast
+
+#=============================================================================
 # Target rules for targets named alglib
 
 # Build rule for target.
@@ -140,6 +153,19 @@ alglib: cmake_check_build_system
 alglib/fast:
 	$(MAKE) $(MAKESILENT) -f src\alglib-cpp\CMakeFiles\alglib.dir\build.make src/alglib-cpp/CMakeFiles/alglib.dir/build
 .PHONY : alglib/fast
+
+#=============================================================================
+# Target rules for targets named sqlite3
+
+# Build rule for target.
+sqlite3: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 sqlite3
+.PHONY : sqlite3
+
+# fast build rule for target.
+sqlite3/fast:
+	$(MAKE) $(MAKESILENT) -f src\sqlite3\CMakeFiles\sqlite3.dir\build.make src/sqlite3/CMakeFiles/sqlite3.dir/build
+.PHONY : sqlite3/fast
 
 Navier.obj: Navier.cpp.obj
 .PHONY : Navier.obj
@@ -165,6 +191,30 @@ Navier.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\Navier.dir\build.make CMakeFiles/Navier.dir/Navier.cpp.s
 .PHONY : Navier.cpp.s
 
+Navier_array.obj: Navier_array.cpp.obj
+.PHONY : Navier_array.obj
+
+# target to build an object file
+Navier_array.cpp.obj:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\simulate_array.dir\build.make CMakeFiles/simulate_array.dir/Navier_array.cpp.obj
+.PHONY : Navier_array.cpp.obj
+
+Navier_array.i: Navier_array.cpp.i
+.PHONY : Navier_array.i
+
+# target to preprocess a source file
+Navier_array.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\simulate_array.dir\build.make CMakeFiles/simulate_array.dir/Navier_array.cpp.i
+.PHONY : Navier_array.cpp.i
+
+Navier_array.s: Navier_array.cpp.s
+.PHONY : Navier_array.s
+
+# target to generate assembly for a file
+Navier_array.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles\simulate_array.dir\build.make CMakeFiles/simulate_array.dir/Navier_array.cpp.s
+.PHONY : Navier_array.cpp.s
+
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -175,9 +225,14 @@ help:
 	@echo ... rebuild_cache
 	@echo ... Navier
 	@echo ... alglib
+	@echo ... simulate_array
+	@echo ... sqlite3
 	@echo ... Navier.obj
 	@echo ... Navier.i
 	@echo ... Navier.s
+	@echo ... Navier_array.obj
+	@echo ... Navier_array.i
+	@echo ... Navier_array.s
 .PHONY : help
 
 

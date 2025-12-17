@@ -42,3 +42,8 @@ if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   include("D:/GitHub/1DNavierStokes-Transient/out/build/src/alglib-cpp/cmake_install.cmake")
 endif()
 
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/GitHub/1DNavierStokes-Transient/out/build/src/sqlite3/cmake_install.cmake")
+endif()
+

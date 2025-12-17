@@ -93,6 +93,7 @@ Navier_EXTERNAL_OBJECTS =
 Navier.exe: CMakeFiles/Navier.dir/Navier.cpp.obj
 Navier.exe: CMakeFiles/Navier.dir/build.make
 Navier.exe: src/alglib-cpp/libalglib.a
+Navier.exe: src/sqlite3/libsqlite3.a
 Navier.exe: CMakeFiles/Navier.dir/linkLibs.rsp
 Navier.exe: CMakeFiles/Navier.dir/objects1.rsp
 Navier.exe: CMakeFiles/Navier.dir/link.txt

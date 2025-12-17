@@ -413,4 +413,5 @@ CMakeFiles/Navier.dir/Navier.cpp.obj: \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/alglibmisc.h \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/stdafx.h \
- D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h
+ D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h \
+ D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include/sqlite3.h

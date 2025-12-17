@@ -14,6 +14,7 @@ set(CMAKE_MAKEFILE_DEPENDS
   "CMakeFiles/3.30.2/CMakeSystem.cmake"
   "D:/GitHub/1DNavierStokes-Transient/src/CMakeLists.txt"
   "D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/CMakeLists.txt"
+  "D:/GitHub/1DNavierStokes-Transient/src/sqlite3/CMakeLists.txt"
   "D:/Program Files/CMake/share/cmake-3.30/Modules/CMakeCInformation.cmake"
   "D:/Program Files/CMake/share/cmake-3.30/Modules/CMakeCXXInformation.cmake"
   "D:/Program Files/CMake/share/cmake-3.30/Modules/CMakeCommonLanguageInclude.cmake"
@@ -49,10 +50,13 @@ set(CMAKE_MAKEFILE_PRODUCTS
   "CMakeFiles/CMakeDirectoryInformation.cmake"
   "src/CMakeFiles/CMakeDirectoryInformation.cmake"
   "src/alglib-cpp/CMakeFiles/CMakeDirectoryInformation.cmake"
+  "src/sqlite3/CMakeFiles/CMakeDirectoryInformation.cmake"
   )
 
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/Navier.dir/DependInfo.cmake"
+  "CMakeFiles/simulate_array.dir/DependInfo.cmake"
   "src/alglib-cpp/CMakeFiles/alglib.dir/DependInfo.cmake"
+  "src/sqlite3/CMakeFiles/sqlite3.dir/DependInfo.cmake"
   )
