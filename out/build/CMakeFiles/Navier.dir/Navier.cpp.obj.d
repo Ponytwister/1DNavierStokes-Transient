@@ -414,4 +414,17 @@ CMakeFiles/Navier.dir/Navier.cpp.obj: \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/stdafx.h \
  D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include/solvers.h \
- D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include/sqlite3.h
+ D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include/sqlite3.h \
+ C:/msys64/mingw64/include/c++/12.1.0/thread \
+ C:/msys64/mingw64/include/c++/12.1.0/stop_token \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/std_thread.h \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/unique_ptr.h \
+ C:/msys64/mingw64/include/c++/12.1.0/semaphore \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/semaphore_base.h \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/chrono.h \
+ C:/msys64/mingw64/include/c++/12.1.0/ratio \
+ C:/msys64/mingw64/include/c++/12.1.0/ctime \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/parse_numbers.h \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/atomic_timed_wait.h \
+ C:/msys64/mingw64/include/c++/12.1.0/bits/this_thread_sleep.h \
+ C:/msys64/mingw64/include/semaphore.h
