@@ -1,0 +1,2 @@
+C:\msys64\mingw64\bin\ar.exe qc libtsensor.a CMakeFiles/tsensor.dir/src/tsensor/tsensor.cpp.obj
+C:\msys64\mingw64\bin\ranlib.exe libtsensor.a

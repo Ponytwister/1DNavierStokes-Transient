@@ -1,0 +1,15 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/GitHub/1DNavierStokes-Transient/out/build/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/src/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/src/alglib-cpp/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/src/sqlite3/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/src/tsensor/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/tests/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/_deps/googletest-build/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/_deps/googletest-build/googlemock/cmake_install.cmake",
+		"D:/GitHub/1DNavierStokes-Transient/out/build/_deps/googletest-build/googletest/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

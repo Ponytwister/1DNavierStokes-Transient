@@ -1,0 +1,1 @@
+-I"D:/GitHub/1DNavierStokes-Transient/src/tsensor/include" -I"D:/GitHub/1DNavierStokes-Transient/src/alglib-cpp/include" -I"D:/GitHub/1DNavierStokes-Transient/src/sqlite3/include" -isystem "D:/GitHub/1DNavierStokes-Transient/out/build/_deps/googletest-src/googletest/include" -isystem "D:/GitHub/1DNavierStokes-Transient/out/build/_deps/googletest-src/googletest"

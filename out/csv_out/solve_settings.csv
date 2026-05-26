@@ -1,0 +1,3 @@
+"SOLVE_SETTING_ID","ALL_EXP_FITTED","PARAMETERS_SOLVED_FOR","REACTIONS_ENABLED","SCATTER_METHOD","X_RESOLUTION","Z_RESOLUTION"
+1,"24_3_Fit 25_3_Fit",keq1 kon1,all reactions enabled,none,500,1000
+9,"23_Fit 24_2_Fit 24_3_Fit 25_1_Fit 25_2_Fit 25_3_Fit",keq1 kon1,all reactions enabled,none,500,1000

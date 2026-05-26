@@ -1,0 +1,2 @@
+C:\msys64\mingw64\bin\ar.exe qc libtsensor.a CMakeFiles/tsensor.dir/sqlite_interface.cpp.obj
+C:\msys64\mingw64\bin\ranlib.exe libtsensor.a

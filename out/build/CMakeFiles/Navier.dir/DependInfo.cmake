@@ -8,7 +8,8 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "D:/GitHub/1DNavierStokes-Transient/Navier.cpp" "CMakeFiles/Navier.dir/Navier.cpp.obj" "gcc" "CMakeFiles/Navier.dir/Navier.cpp.obj.d"
+  "D:/GitHub/1DNavierStokes-Transient/src/tsensor/sqlite_interface.cpp" "CMakeFiles/Navier.dir/src/tsensor/sqlite_interface.cpp.obj" "gcc" "CMakeFiles/Navier.dir/src/tsensor/sqlite_interface.cpp.obj.d"
+  "D:/GitHub/1DNavierStokes-Transient/tsensor.cpp" "CMakeFiles/Navier.dir/tsensor.cpp.obj" "gcc" "CMakeFiles/Navier.dir/tsensor.cpp.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

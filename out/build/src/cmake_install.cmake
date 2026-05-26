@@ -47,3 +47,14 @@ if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   include("D:/GitHub/1DNavierStokes-Transient/out/build/src/sqlite3/cmake_install.cmake")
 endif()
 
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/GitHub/1DNavierStokes-Transient/out/build/src/tsensor/cmake_install.cmake")
+endif()
+
+string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
+       "${CMAKE_INSTALL_MANIFEST_FILES}")
+if(CMAKE_INSTALL_LOCAL_ONLY)
+  file(WRITE "D:/GitHub/1DNavierStokes-Transient/out/build/src/install_local_manifest.txt"
+     "${CMAKE_INSTALL_MANIFEST_CONTENT}")
+endif()
