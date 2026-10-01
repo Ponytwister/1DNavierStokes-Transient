@@ -18,7 +18,7 @@ cmake --build --preset mingw-debug --parallel 2
 ctest --preset mingw-debug
 ```
 
-Run these commands from the repository root. Use `mingw-release` in all three commands
+Run these commands from the repository root (the folder containing CMakePresets.json). Use `mingw-release` in all three commands
 to build and test the optimized configuration. Presets use separate `out/codex-debug`
 and `out/codex-release` directories, leaving the existing `out/build` cache alone.
 GNU C++20 extensions are enabled: the source currently uses GCC-specific headers,
