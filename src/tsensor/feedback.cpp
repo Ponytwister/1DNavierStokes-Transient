@@ -30,3 +30,11 @@ void publish_event(parameters_t& p, tsensor_workflow::progress_event event)
         p.progress = {};
     }
 }
+
+void check_cancellation(const parameters_t& p)
+{
+    if (p.cancellation.stop_requested()) {
+        throw tsensor_workflow::workflow_error(p.active_operation,
+            tsensor_workflow::error_code::cancelled, "Run cancelled");
+    }
+}

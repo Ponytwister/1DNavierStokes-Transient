@@ -49,7 +49,8 @@ enum class session_state { empty, loaded, completed, failed };
 // Calls on the same session must be serialized; this is not a background UI API.
 class run_session {
 public:
-    explicit run_session(const std::filesystem::path& database_path, progress_callback progress = {});
+    explicit run_session(const std::filesystem::path& database_path, progress_callback progress = {},
+                         std::stop_token cancellation = {});
     ~run_session() = default;
     run_session(const run_session&) = delete;
     run_session& operator=(const run_session&) = delete;

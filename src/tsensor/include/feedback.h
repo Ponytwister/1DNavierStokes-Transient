@@ -11,7 +11,7 @@ namespace tsensor_workflow {
 enum class operation { none, open_database, load_inputs, solve, export_results,
                        save_model_profiles, save_fitted_parameters };
 enum class event_kind { started, message, evaluation, completed, failed };
-enum class error_code { invalid_state, invalid_input, database, solver, io, internal };
+enum class error_code { invalid_state, invalid_input, database, solver, io, internal, cancelled };
 
 struct progress_event {
     event_kind kind;

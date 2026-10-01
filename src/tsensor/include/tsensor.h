@@ -16,6 +16,7 @@
 #include <mutex>
 #include <exception>
 #include <feedback.h>
+#include <stop_token>
 
 enum level {
   all,
@@ -239,6 +240,7 @@ typedef struct parameters_struct {
     std::recursive_mutex report_mutex; // Shared by the existing model workers.
     tsensor_workflow::progress_callback progress;
     std::exception_ptr progress_failure;
+    std::stop_token cancellation;
     tsensor_workflow::operation active_operation = tsensor_workflow::operation::none;
     // Model Control Parameters
     int SOLVE_SETTING_ID = 0;
@@ -322,3 +324,6 @@ void write_alglib_values_to_db(parameters_t& p, sqlite3* db);
 int specie_db_callback(void *data, int count, char **argv, char **columnNames);
 int reaction_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db);
+
+// Cooperative checkpoint; only the stop source may be used concurrently.
+void check_cancellation(const parameters_t& p);

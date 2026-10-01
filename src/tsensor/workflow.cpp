@@ -17,6 +17,7 @@ auto perform(parameters_t& p, operation action, Action&& work)
     p.active_operation = action;
     publish_event(p, {event_kind::started, action, operation_name(action)});
     try {
+        check_cancellation(p);
         if constexpr (std::is_void_v<std::invoke_result_t<Action>>) {
             work();
             publish_event(p, {event_kind::completed, action,
@@ -49,8 +50,10 @@ auto perform(parameters_t& p, operation action, Action&& work)
 }
 } // namespace
 
-run_session::run_session(const std::filesystem::path& database_path, progress_callback progress)
+run_session::run_session(const std::filesystem::path& database_path, progress_callback progress,
+                         std::stop_token cancellation)
 {
+    parameters_.cancellation = cancellation;
     parameters_.progress = std::move(progress);
     perform(parameters_, operation::open_database, [&] {
         if (database_path.empty()) {
@@ -133,11 +136,14 @@ void load_inputs(parameters_t& p, sqlite3* db)
     get_SOLUTION_IDs_from_db(p, db);
     //get_solvable_initial_values_from_db(p, db);
     read_alglib_values_from_db(p, db);
+    check_cancellation(p);
     normalize_profile(p);
+    check_cancellation(p);
 }
 
 run_result run(parameters_t& p)
 {
+    check_cancellation(p);
     /*
     double epsx = 1e-11;
     finishes if |v|<=EpsX is fulfilled
@@ -181,6 +187,7 @@ run_result run(parameters_t& p)
         alglib::real_1d_array residuals;
         alglib_solver(control_parameters, residuals, &p);
     }
+    check_cancellation(p);
     result.residual_evaluations = p.iterations;
     for (std::size_t i = 0; i < p.solvables.size(); ++i) {
         const auto& parameter = p.solvables[i];

@@ -136,7 +136,7 @@ synchronized, and a zero hardware-concurrency hint falls back to one worker.
 
 These preparation steps do not change numerical equations, units, boundary
 conditions, optimizer settings, or convergence tolerances. Calls on one session
-must be serialized; background UI work and cancellation are later steps. Component
+must be serialized; use the background runner below for UI work. Component
 and lifetime tests do not establish full transient-solver or parameter-fit correctness.
 
 ## Progress, results, and errors
@@ -162,8 +162,8 @@ a future GUI must marshal copies to its UI thread. Callbacks must be short and
 must not reenter the session, mutate its state, or wait for its workers. If a
 callback throws, it is disconnected and its exception is available through
 `session.progress_failure()` after the operation returns. Display failures do not
-change model results or database-write behavior. No thread dispatcher is provided
-yet. The terminal subscribes to these events and retains the explicit save prompt.
+change model results or database-write behavior. The terminal subscribes to these
+events and retains the explicit save prompt.
 
 `run()` returns an owned `run_result`: whether the optimizer ran, its iteration
 count and ALGLIB termination code when applicable, completed residual evaluations,
@@ -175,7 +175,7 @@ callers must inspect the termination code.
 
 Session failures throw `workflow_error`, with `action`, `code`, and an optional
 native `sqlite_code`, alongside the human-readable `what()` message. Categories
-include invalid state/input, database, solver, I/O, and internal failures. Failure
+include invalid state/input, database, solver, I/O, internal failures, and cancellation. Failure
 events carry the same fields. Callers should use these fields instead of parsing
 message strings. SQL errors now follow one error path, including failed deletes
 that previously only printed a warning and let saving continue.
@@ -192,3 +192,63 @@ that previously only printed a warning and let saving continue.
 These are existing persistence semantics, now documented for future UI callers.
 No transaction or rollback behavior is added: a failed operation may already have
 committed earlier statements. Use a disposable database for automated checks.
+
+## Background execution and cancellation
+
+`background_runner` (in `<background_runner.h>`) owns one active load/solve task.
+The terminal continues to use the synchronous API. A future GUI can start work,
+poll `status()` and `drain_events()` on a timer, and call `request_cancel()` without
+blocking its event loop. Do not call blocking `wait()` from that event loop.
+
+```cpp
+tsensor_workflow::background_runner runner;
+runner.start(database_path);
+// Later, from the UI timer:
+const auto events = runner.drain_events(); // Owned copies; render on the UI thread.
+const auto state = runner.status();
+if (state != tsensor_workflow::background_state::running &&
+    state != tsensor_workflow::background_state::idle) {
+    auto outcome = runner.take_result(); // Joins the finished worker, resets to idle.
+    if (outcome.failure) std::rethrow_exception(outcome.failure);
+    // outcome.result is the summary; outcome.session owns the completed profiles.
+    // Keep the session for explicit export/save actions after completion.
+}
+```
+
+The worker resolves and copies the database path at start and exclusively owns
+its session. No mutable parameters or database handles are exposed while it runs.
+Disable editing controls in the eventual GUI while status is `running`; the runner
+rejects another start until the previous outcome is taken. This does not lock out
+other applications editing the same database. Starting, waiting, taking results,
+and destruction belong to one controlling thread. Status, cancellation, and event
+draining are safe from other threads. Keep one runner per UI workflow.
+
+Events retain the most recent 512 entries, dropping older entries if the UI falls
+behind. Terminal status and outcome remain available independently of this queue.
+The optional observer has the same callback contract as the synchronous session;
+if it throws, event delivery is disconnected and a successful returned session
+retains `progress_failure()`. The completed session is detached from the runner's
+callback and stop token, so it can safely outlive the runner.
+
+Cancellation is cooperative. Checkpoints run before workflow operations and SQL
+statements/row callbacks, between model batches, at time steps, and within diffusion
+iterations. Workers join before cancellation is reported; ALGLIB's bundled callback
+exception guard cleans up while propagating the cancellation exception. No equations,
+optimizer settings, or floating-point convergence criteria change. A long SQL
+statement, normalization pass, optimizer internal step, or callback can delay a
+checkpoint; there is no fixed cancellation-latency guarantee. Destruction requests
+cancellation and joins, so arrange UI shutdown accordingly.
+
+A cancelled outcome has `background_state::cancelled` and a `workflow_error` with
+`error_code::cancelled`, with no usable partial session or result. A request accepted
+before successful completion is published wins that race. A simultaneous unrelated
+failure remains a failure. The runner never exports or saves profiles/fitted inputs
+automatically, on either success or cancellation. Loading may already have created
+identity records; cancellation does not roll those writes back. A completed session
+supports the existing explicit export/save operations. Synchronous callers may also
+pass a `std::stop_token` as the third `run_session` constructor argument.
+
+Tests cover cancellation, active-run exclusion, outcome retrieval/reuse, failure
+propagation, destruction, and ALGLIB callback unwinding with an independent scalar
+least-squares case. These are component/concurrency checks, not a full transient
+solve or complete background load/solve/export validation; that remains step 6.

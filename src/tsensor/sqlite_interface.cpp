@@ -25,6 +25,7 @@ using row_callback = int (*)(void*, int, char**, char**);
 void execute_sql(parameters_t& p, sqlite3* db, const char* sql,
                 row_callback callback, char** error)
 {
+    check_cancellation(p);
     struct callback_context {
         parameters_t& parameters;
         row_callback callback;
@@ -35,6 +36,7 @@ void execute_sql(parameters_t& p, sqlite3* db, const char* sql,
     const auto invoke = [](void* data, int count, char** values, char** columns) noexcept -> int {
         auto& context = *static_cast<callback_context*>(data);
         try {
+            check_cancellation(context.parameters);
             return context.callback(&context.parameters, count, values, columns);
         } catch (...) {
             context.failure = std::current_exception();
@@ -2070,6 +2072,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preZloop");
 
     for (int z = 0; z < p.Z; z++) {
+        check_cancellation(p);
         for (int i = 0; i < X; i++) { 
             for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
                 solution_ptr = &solution[specie * X];
@@ -2169,6 +2172,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
             double error = specie_total;
             int while_loop_iter = 0;
             while (error > p.time_step_convergence * specie_total && while_loop_iter < X * 2 || while_loop_iter < 3) {
+                check_cancellation(p);
                 error = 0.0d;
                 std::swap(old_solution_ptr, solution_ptr);
                 for (int i = 0; i < X; i++) {
@@ -2367,6 +2371,7 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
 {
     if (!ptr) { throw std::invalid_argument("Missing solver state"); }
     auto& p = *static_cast<parameters_t*>(ptr);
+    check_cancellation(p);
     add_report(p, 3, std::to_string(p.iterations));
     if (!p.run_solver) {
         return;
@@ -2417,6 +2422,7 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
         int start_row = 0;
         int row = 0;
         while (row < p.row_count) {
+            check_cancellation(p);
             start_row = row;
             for (int i = 0; i < hardware_threads && row < p.row_count; i++) {
                 threads[row] = std::jthread([&p, &control_parameters, &residuals, &failures, row] {
