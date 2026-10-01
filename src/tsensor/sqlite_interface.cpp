@@ -20,7 +20,11 @@ save_excel_output(std::string file_name)
     fout << "profile_type"              << "  "; //9
     double model_size_ratio = p.W * 1.0e6 / p.X;
     for (int x = 0; x < p.X; x++) {
-        fout << (double)x * model_size_ratio << "  ";
+        double channel_position = (double)x * model_size_ratio;
+        if (std::abs(channel_position) < 1e-307) {
+            channel_position = 0;
+        }
+        fout << channel_position << "  ";
     }
     fout << std::endl;
     std::cout << "Done" << std::endl;
@@ -34,7 +38,7 @@ save_excel_output(std::string file_name)
     specie_struct* Bound_Dye_1_ptr;
     reaction_struct* FITC_Bead_1_ptr;
     
-    std::vector<std::string> specie_name_vect = {"Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads_(wt%)", "Bound_Beads_(wt%)", "Total_Beads_(wt%)", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Profile", "Numeric_Model_Profile"};
+    std::vector<std::string> specie_name_vect = {"Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads_(wt%)", "Bound_Beads_(wt%)", "Total_Beads_(wt%)", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference", "Error"};
     
     for (int row = 0; row < p.row_count; row++) {
         exp_ptr = &p.experiments.at(row);
@@ -60,8 +64,10 @@ save_excel_output(std::string file_name)
         fout << "deriv"                     << "  "; //8
         fout << "Channel_Width_(um)->"      << "  "; //9
         for (int x = 0; x < exp_ptr->window_size; x++) {
-            double x_time = (x  - run_ptr->left_edge) * exp_ptr->scale_factor;
-            fout << x_time << "  ";
+            if (std::abs(exp_ptr->channel_position.at(x)) < 1e-307) {
+                exp_ptr->channel_position.at(x) = 0;
+            }
+            fout << exp_ptr->channel_position.at(x) << "  ";
         }
         fout << std::endl;
         double beads_sa = 0;
@@ -73,15 +79,15 @@ save_excel_output(std::string file_name)
         }
 
         int width;
-        for (int j = 0; j < 10; j++) {
+        for (int j = 0; j < specie_name_vect.size(); j++) {
             fout << p.Z * run_ptr->dt                   << "  "; //1
-            fout << variable_location("p1", run_ptr)    << "  "; //2
-            fout << variable_location("kon1", run_ptr)  << "  "; //3
-            fout << variable_location("keq1", run_ptr)  << "  "; //4
+            fout << variable_location("p1", run_ptr).value()    << "  "; //2
+            fout << variable_location("kon1", run_ptr).value()  << "  "; //3
+            fout << variable_location("keq1", run_ptr).value()  << "  "; //4
             fout << run_ptr->dye_conc                   << "  "; //5
             fout << exp_ptr->second_name                << "  "; //6
             fout << beads_sa                            << "  "; //7
-            if (j < 6) {
+            if (j < 6 || j > 11) {
                 fout << "-"                             << "  "; //8
             } else if (j == 6) {
                 fout << exp_ptr->exp_DA                 << "  "; //8
@@ -99,6 +105,10 @@ save_excel_output(std::string file_name)
                 } else {
                     fout << "-"                         << "  "; //8
                 }
+            } else if (j == 10) {
+                fout << exp_ptr->analytic_exp_integral  << "  "; //8
+            } else if (j == 11) {
+                fout << exp_ptr->analytic_model_integral<< "  "; //8
             }
             
             if (j == 8 || j == 9) {
@@ -106,31 +116,34 @@ save_excel_output(std::string file_name)
             }
             fout << specie_name_vect.at(j) << "  "; //9
             
-            if (j < 6) {
+            if (j < 6 && j != 4) {
                 width = p.X;
             } else {
                 width = exp_ptr->window_size;
             }
+            const double FITC_unit = unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+            const double bead_unit = unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
+
             for (int x = 0; x < width; x++) {
                 switch(j) {
                     case 0: // Free_Dye
                         assert (x < p.X);
-                        fout << out[FITC][x] * unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+                        fout << out[FITC][x] * FITC_unit;
                         break;
                     case 1: // Bound_Dye
-                        fout << (out[Bound_Dye_1][x]) * unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+                        fout << (out[Bound_Dye_1][x]) * FITC_unit;
                         break;
                     case 2: // Total_Dye
-                        fout << (out[FITC][x] + out[Bound_Dye_1][x]) * unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+                        fout << (out[FITC][x] + out[Bound_Dye_1][x]) * FITC_unit;
                         break;
                     case 3: // Unbound_Beads_(wt%)
-                        fout << out[PS_beads][x] * unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
+                        fout << out[PS_beads][x] * bead_unit;
                         break;
                     case 4: // Bound_Beads_(wt%)
-                        fout << out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr)) * unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
+                        fout << exp_ptr->analytical_zero.at(x);//out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value()) * bead_unit;
                         break;   
                     case 5: // Total_Beads_(wt%)
-                        fout << (out[PS_beads][x] + out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr))) * unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
+                        fout << (out[PS_beads][x] + out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value())) * bead_unit;
                         break;
                     case 6: // Experimental_Derivative
                         fout << exp_ptr->experimental_derivative.at(x);
@@ -142,7 +155,16 @@ save_excel_output(std::string file_name)
                         fout << experiment.at(x) * run_ptr->dye_conc_mgml;
                         break;
                     case 9: // Numeric_Model_Profile
-                        fout << model.at(x) * unit_conversion(run_ptr, run_ptr->FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+                        fout << model.at(x) * FITC_unit;
+                        break;
+                    case 10: // Experimental_Difference
+                        fout << exp_ptr->experimental_difference.at(x);
+                        break;    
+                    case 11: // Numeric_Difference
+                        fout << exp_ptr->numeric_difference.at(x) * FITC_unit;
+                        break;
+                    case 12: // Error
+                        fout << exp_ptr->error.at(x);
                         break;
                 }
                 fout << "    ";
@@ -160,12 +182,12 @@ delete_values_from_db(sqlite3* db, std::string table, std::string where_conditio
     int row = 0;
     char* errMsg = 0;
     std::string sqltext;
-    if(where_conditions.empty()) {
+    if (where_conditions.empty()) {
         return;
     }
     sqltext.append("DELETE FROM " + table + " WHERE " + where_conditions + ";");
     int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         printf("Error in executing deletion SQL: %s \n", errMsg);
         std::cout << sqltext << std::endl;
         sqlite3_free(errMsg);
@@ -179,6 +201,9 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
     //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
+    if (argv[1] == NULL) {
+        return 0;
+    }
     std::string criterion;
     std::string value = argv[1];
     removeSpaces(value);
@@ -190,66 +215,61 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
     std::stringstream ss(value); // constructing stream from the string
 
     if (criterion == "width resolution (X)") {
-        if (!value.empty()) {p.X = std::stoi(value);} else {throw std::runtime_error("No width resolution (X) given in model_controls table");}
+        p.X = std::stoi(value);
     } else if (criterion == "length/time resolution (Z)") {
-        if (!value.empty()) {p.Z = std::stoi(value);} else {throw std::runtime_error("No length/time resolution (Z) given in model_controls table");}
+        p.Z = std::stoi(value);
     } else if (criterion == "experiment_name") {
-        if (!value.empty()) {
-            while (getline(ss, s, ' ')) { 
-                removeSpaces(s);
-                p.experiment_runs.emplace_back();
-                p.experiment_runs.back().name = s; 
-            }
-        } else {throw std::runtime_error("No expriment_name given in model_controls table");}
+        while (getline(ss, s, ' ')) { 
+            removeSpaces(s);
+            p.experiment_runs.emplace_back();
+            p.experiment_runs.back().name = s; 
+        }
     } else if (criterion == "exp_left_padding") {
-        if (!value.empty()) {p.exp_left_padding = std::stoi(value);} else {throw std::runtime_error("No exp_left_padding given in model_controls table");}
+        p.exp_left_padding = std::stoi(value);
     } else if (criterion == "exp_right_padding") {
-        if (!value.empty()) {p.exp_right_padding = std::stoi(value);} else {throw std::runtime_error("No exp_right_padding given in model_controls table");}
+        p.exp_right_padding = std::stoi(value);
     } else if (criterion == "disable_reactions") {
-        if (!value.empty()) {
-            std::transform(value.begin(), value.end(), value.begin(), ::tolower);
-            if(value == "true") {
-                p.disable_reactions = true;
-            } else {p.disable_reactions = false;}
+        std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+        if (value == "true") {
+            p.disable_reactions = true;
         } else {p.disable_reactions = false;}
     } else if (criterion == "run_solver") {
-        if (!value.empty()) {if(value == "true") {p.run_solver = true;} else {p.run_solver = false;}
-        } else {p.run_solver = true;}
+        if (value == "true") {
+            p.run_solver = true;
+        }
     } else if (criterion == "scatter_correction_type") {
-        if (!value.empty()) {p.scatter_correction_type = value;} else {p.scatter_correction_type = "none";}
+        p.scatter_correction_type = value;
     } else if (criterion == "save_model_profiles") {
-        if (!value.empty()) {if(value == "true") {p.save_model_profiles = true;} else {p.save_model_profiles = false;}
-        } else {p.save_model_profiles = true;}
+        if (value == "true") {
+            p.save_model_profiles = true;
+        } else {
+            p.save_model_profiles = false;
+        }
     } else if (criterion == "max_iterations") {
-        if (!value.empty()) {p.max_iterations = std::stoi(value);} else {p.max_iterations = 0;}
+        p.max_iterations = std::stoi(value);
     } else if (criterion == "convergence_epsx") {
-        if (!value.empty()) {p.convergence_epsx = std::stod(value);} else {p.convergence_epsx = 1e-9;}
+        p.convergence_epsx = std::stod(value);
     } else if (criterion == "disable_reverse_reactions") {
-        if (!value.empty()) {
-            std::transform(value.begin(), value.end(), value.begin(), ::tolower);
-            if(value == "true") {
-                p.disable_reverse_reactions = true;
-            } else {p.disable_reverse_reactions = false;}
+        std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+        if (value == "true") {
+            p.disable_reverse_reactions = true;
         } else {p.disable_reverse_reactions = false;}
     } else if (criterion == "use_alglib_init_values") {
-        if (!value.empty()) {
-            std::transform(value.begin(), value.end(), value.begin(), ::tolower);
-            if(value == "true") {
-                p.use_alglib_init_values = true;
-            } else {p.use_alglib_init_values = false;}
+        p.use_alglib_init_values = false;
+        std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+        if (value == "true") {
+            p.use_alglib_init_values = true;
         } else {p.use_alglib_init_values = false;}
     } else if (criterion == "universal_solve_for") {
-        if (!value.empty()) {
-            while (getline(ss, s, ' ')) {
-                if (std::find(p.global_solve_for.begin(), p.global_solve_for.end(), s) == p.global_solve_for.end()) { // to avoid repeats
-                    p.global_solve_for.push_back(s);
-                    p.solve_for.push_back(s);
-                    p.number_of_variables++;
-                }
+        while (getline(ss, s, ' ')) {
+            if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats
+                p.global_solve_for.push_back(s);
+                p.solve_for.push_back(s);
+                p.solvables.emplace_back(s, "global");
             }
         }
     } else if (criterion == "debug_level") {
-        if (!value.empty()) {p.debug_level = std::stoi(value);} else {p.debug_level = 0;}
+        p.debug_level = std::stoi(value);
     }
     return 0;
 }
@@ -262,7 +282,7 @@ read_model_parameters_from_db(sqlite3* db) //reading data using callback functio
     std::string sqltext = "SELECT * FROM 'model_controls';";
     const char* sql = sqltext.c_str();
     int rc = sqlite3_exec(db, sql, read_model_parameters_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -329,7 +349,7 @@ lines_from_profile_text(sqlite3* db)
     int number_of_runs = p.experiment_runs.size();
     for (int run = 0; run < number_of_runs; run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        sqltext.append("(NAME = '" + run_ptr->name + "' AND OMIT IS NULL)");
+        sqltext.append("(NAME = '" + run_ptr->name + "')");
         if (run != number_of_runs - 1) {
             sqltext.append(" OR ");
         } else {
@@ -338,7 +358,7 @@ lines_from_profile_text(sqlite3* db)
     }
     const char* sql = sqltext.c_str();
     int rc = sqlite3_exec(db, sql, raw_profile_row_count_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -360,6 +380,11 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
     experiment_run_struct* run_ptr;
     for(int i = 0; i < count; i++) {
         criterion = columnNames[i];
+        if (argv[i] == NULL && criterion == "PARAMETERS_TO_SOLVE_FOR") {
+            i++;
+            criterion = columnNames[i];
+        }
+        
         std::string col_val = argv[i];
         assert (!col_val.empty());
         std::stringstream ss(col_val); // constructing stream from the string
@@ -380,14 +405,15 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
             run_ptr->high_ref_end = std::stoi(col_val);
         } else if (criterion == "PARAMETERS_TO_SOLVE_FOR") {
             while (getline(ss, s, ' ')) {
-                if (std::find(p.global_solve_for.begin(), p.global_solve_for.end(), s) == p.global_solve_for.end() && std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), s) == run_ptr->solve_for.end()) {
+                if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
+                    p.solve_for.push_back(s);
+                }
+                if (std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), s) == run_ptr->solve_for.end()) { // to avoid repeats in run_ptr->solve_for
                     run_ptr->solve_for.push_back(s);
-                    if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) {
-                        p.solve_for.push_back(s);
-                    }
-                    p.number_of_variables++;
+                    p.solvables.emplace_back(s, run_ptr->name);
                 }
             }
+        
         } else if (criterion == "DEFAULT_NORMALIZATION") {
             run_ptr->normalization_method = col_val;
         } else if (criterion == "SPECIES") {
@@ -416,8 +442,8 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
             while (getline(ss, s, ' ')) { 
                 edges.emplace_back(std::max(std::stod(s), 0.0d));
             }
-            run_ptr->left_edge = edges.at(0);
-            run_ptr->right_edge = edges.at(1);
+            run_ptr->left_edge.value() = edges.at(0);
+            run_ptr->left_edge.param_init = true;
         } else if (criterion == "SPECIE_INLET_CONC_UNITS") {
             ptrdiff_t specie_index = 0;
             while (getline(ss, s, ' ')) { 
@@ -430,7 +456,11 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
                 run_ptr->species.at(specie_index).model_units = s;
                 specie_index++;
             }
+        } else if (criterion == "WIDTH") {
+            run_ptr->width.value() = std::stod(col_val);
+            run_ptr->width.param_init = true;
         }
+        
     }
     return 0;
 }
@@ -441,11 +471,12 @@ read_exp_parameters_from_db(sqlite3* db) //reading data using callback functions
     std::cout << "Reading experimental parameters from database: ";
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
+
         char* errMsg = 0;
         std::string sqltext = "SELECT * FROM 'experiments' WHERE NAME='" + run_ptr->name + "';";
         const char* sql = sqltext.c_str();
         int rc = sqlite3_exec(db, sql, exp_parameters_db_callback, 0, &errMsg);
-        if(rc != SQLITE_OK){
+        if (rc != SQLITE_OK){
             std::string error = errMsg;
             throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
             //printf("Error in executing SQL: %s \n", errMsg);
@@ -458,11 +489,116 @@ read_exp_parameters_from_db(sqlite3* db) //reading data using callback functions
     }
 
     std::cout << "Done" << std::endl;
-    std::cout << p.number_of_variables << " parameters for " << p.solve_for.size() << " variables:(";
-    for (int item = 0; item < p.solve_for.size(); item++) {
-        std::cout << p.solve_for[item];
-        if (item != p.solve_for.size() - 1) {std::cout << " ";} else {std::cout << ")" << std::endl;}
+    std::cout << p.solvables.size() << " solvables for " << p.solve_for.size() << " variables ";
+    for (int item = 0; item < p.solvables.size(); item++) {
+        std::cout << "(" << p.solvables.at(item).source_name << "_" << p.solvables.at(item).name << ")";
+        if (item != p.solvables.size() - 1) {
+            std::cout << " ";
+        } else {
+            std::cout << std::endl;
+        }
     }
+}
+
+int 
+get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
+{
+    //1st parameter of this function is received from 4th parameter of sqlite3_exec
+    //count->is the number of columns
+    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
+    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
+    if (argv[0] != NULL) {
+        p.SOLVE_SETTING_ID = std::stoi(argv[0]);
+        std::cout << argv[0] << " ";
+    }
+    return 0;
+}
+
+void 
+get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functions
+{
+    if (p.SOLVE_SETTING_ID == 0) {
+    std::cout << "Retrieving SOLUTION_SET_ID from database: ";
+    } else {
+        std::cout << "SOLUTION_SET_ID not found in database. Writing new entry: ";
+    }
+    char* errMsg = 0;
+    std::string sqltext;
+
+    std::vector<std::string> Individual_EXP_FITTED;
+    std::string ALL_EXP_FITTED;
+    for (int run = 0; run < p.experiment_runs.size(); run++) {
+        Individual_EXP_FITTED.emplace_back(p.experiment_runs.at(run).name);
+    }
+    sort(Individual_EXP_FITTED.begin(), Individual_EXP_FITTED.end());
+    for (int i = 0; i < Individual_EXP_FITTED.size(); i++) {
+        ALL_EXP_FITTED.append(Individual_EXP_FITTED.at(i));
+        if (i != Individual_EXP_FITTED.size() - 1) {
+            ALL_EXP_FITTED.append(" ");
+        }
+    }
+
+    std::vector<std::string> Individual_PARAMETERS_SOLVED_FOR;
+    std::string PARAMETERS_SOLVED_FOR;
+    for (int index = 0; index < p.global_solve_for.size(); index++) {
+        Individual_PARAMETERS_SOLVED_FOR.emplace_back(p.solve_for[index]);
+    }
+    sort(Individual_PARAMETERS_SOLVED_FOR.begin(), Individual_PARAMETERS_SOLVED_FOR.end());
+    for (int i = 0; i < Individual_PARAMETERS_SOLVED_FOR.size(); i++) {
+        PARAMETERS_SOLVED_FOR.append(Individual_PARAMETERS_SOLVED_FOR.at(i));
+        if (i != Individual_PARAMETERS_SOLVED_FOR.size() - 1) {
+            PARAMETERS_SOLVED_FOR.append(" ");
+        }
+    }
+
+    std::string REACTIONS_ENABLED;
+    if (p.disable_reactions) {
+        REACTIONS_ENABLED = "all reactions disabled";
+    } else if (p.disable_reverse_reactions) {
+        REACTIONS_ENABLED = "all reverse reactions disabled";
+    } else {
+        REACTIONS_ENABLED = "all reactions enabled";
+    }
+
+    std::string X_RESOLUTION = std::to_string(p.X);
+    std::string Z_RESOLUTION = std::to_string(p.Z);
+
+    sqltext.append("SELECT SOLVE_SETTING_ID FROM solve_settings ");
+    sqltext.append("WHERE ALL_EXP_FITTED = '" + ALL_EXP_FITTED + "' ");
+    sqltext.append("AND PARAMETERS_SOLVED_FOR = '" + PARAMETERS_SOLVED_FOR + "' ");
+    sqltext.append("AND REACTIONS_ENABLED = '" + REACTIONS_ENABLED + "' ");
+    sqltext.append("AND SCATTER_METHOD = '" + p.scatter_correction_type + "' ");
+    sqltext.append("AND X_RESOLUTION = '" + X_RESOLUTION + "' ");
+    sqltext.append("AND Z_RESOLUTION = '" + Z_RESOLUTION + "'; ");
+    int rc = sqlite3_exec(db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, 0, &errMsg);
+    if (rc != SQLITE_OK){
+        std::string error = errMsg;
+        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
+        //printf("Error in executing SQL: %s \n", errMsg);
+        sqlite3_free(errMsg);
+    }
+    sqltext.clear();
+
+    if (p.SOLVE_SETTING_ID == 0) {
+        sqltext.append("INSERT INTO solve_settings (ALL_EXP_FITTED, PARAMETERS_SOLVED_FOR, REACTIONS_ENABLED, SCATTER_METHOD, X_RESOLUTION, Z_RESOLUTION)");
+        sqltext.append(" VALUES ('" + ALL_EXP_FITTED + "','" + PARAMETERS_SOLVED_FOR + "','" + REACTIONS_ENABLED + "','" + p.scatter_correction_type + "','" + X_RESOLUTION + "','" + Z_RESOLUTION + "'); ");
+
+        int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+        if (rc != SQLITE_OK){
+            std::string error = errMsg;
+            throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
+            //printf("Error in executing SQL: %s \n", errMsg);
+            sqlite3_free(errMsg);
+        }
+        if (p.SOLVE_SETTING_RECURSIVE_CALL == true) {
+            throw std::runtime_error("SOLVE_SETTING_ID recursively called more than once.");
+        } else {
+            p.SOLVE_SETTING_RECURSIVE_CALL = true;
+            get_solve_settings_ID_from_db(db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
+        }
+    }
+    
+    std::cout << "Done" << std::endl;
 }
 
 int 
@@ -510,9 +646,9 @@ specie_db_callback(void *data, int count, char **argv, char **columnNames)
             }
         } else if (criterion == "QE") {
             if (!value.empty()) {
-                specie_ptr->QE = std::stod(value);
+                specie_ptr->QE = solvable(std::stod(value));
             } else {
-                specie_ptr->QE = 0.0d;
+                specie_ptr->QE = solvable(1.0d);
             }
         } else if (criterion == "PARTICLE_DIAMETER") {
             if (!value.empty()) {
@@ -546,9 +682,6 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
     specie_struct* specie_ptr;
     experiment_run_struct* run_ptr;
     std::vector<std::ptrdiff_t> specie_vect;
-    std::vector<double> coef_vect;
-    std::vector<double> ks_vect;
-    std::vector<double> exp_vect;
     std::string s; // variable to store token obtained from the original string
     for(int i = 0; i < count; i++) {
         ptrdiff_t iter = 0;
@@ -581,24 +714,35 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
         } else if (criterion == "COEFFICIENTS") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                coef_vect.push_back(std::stod(s));
                 specie_ptr = run_ptr->reactions.at(react_index).specie_vect.at(iter);
-                run_ptr->reactions.at(react_index).coef.insert({specie_ptr, std::stod(s)});
+                if (run_ptr->reactions.at(react_index).coef.contains(specie_ptr)) {
+                    run_ptr->reactions.at(react_index).coef.at(specie_ptr).value() = std::stod(s);
+                } else {
+                    run_ptr->reactions.at(react_index).coef.emplace(specie_ptr, std::stod(s));
+                }
+                run_ptr->reactions.at(react_index).coef.at(specie_ptr).param_init = true;
+                run_ptr->reactions.at(react_index).coef.at(specie_ptr).source_name = run_ptr->name;
                 iter++;
             }
         } else if (criterion == "Ks") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                ks_vect.push_back(std::stod(s));
-                run_ptr->reactions.at(react_index).k[iter] = std::stod(s);
+                run_ptr->reactions.at(react_index).k[iter].value() = std::stod(s);
+                run_ptr->reactions.at(react_index).k[iter].param_init = true;
+                run_ptr->reactions.at(react_index).k[iter].source_name = run_ptr->name;
                 iter++;
             }
         } else if (criterion == "EXPONENTS") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                exp_vect.push_back(std::stod(s));
                 specie_ptr = run_ptr->reactions.at(react_index).specie_vect.at(iter);
-                run_ptr->reactions.at(react_index).exp.insert({specie_ptr, std::stod(s)});
+                if (run_ptr->reactions.at(react_index).exp.contains(specie_ptr)) {
+                    run_ptr->reactions.at(react_index).exp.at(specie_ptr).value() = std::stod(s);
+                } else {
+                    run_ptr->reactions.at(react_index).exp.emplace(specie_ptr, std::stod(s));
+                }
+                run_ptr->reactions.at(react_index).exp.at(specie_ptr).param_init = true;
+                run_ptr->reactions.at(react_index).exp.at(specie_ptr).source_name = run_ptr->name;
                 iter++;
             }
         }
@@ -625,7 +769,7 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
             }
         }
         int rc = sqlite3_exec(db, sqltext.c_str(), specie_db_callback, 0, &errMsg);
-        if(rc != SQLITE_OK){
+        if (rc != SQLITE_OK){
             std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
             //printf("Error in executing SQL: %s \n", errMsg);
@@ -642,13 +786,25 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
             }
         }
         rc = sqlite3_exec(db, sqltext.c_str(), reaction_db_callback, 0, &errMsg);
-        if(rc != SQLITE_OK){
+        if (rc != SQLITE_OK){
             std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
             //printf("Error in executing SQL: %s \n", errMsg);
             sqlite3_free(errMsg);
         }
 
+        for (int item = 0; item < p.solvables.size(); item++) {
+            auto& s = p.solvables.at(item);
+            if (s.source_name == run_ptr->name || s.source_name == "global") {
+                auto& target = variable_location(s.name, run_ptr);
+                s.value() = target.value();
+                s.param_init = true;
+                target.source = &s;
+                target.source_name = s.source_name;
+                target.name = s.name;
+            }
+        }
+    
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
             add_report(0, "specie: " + std::to_string(specie));
             specie_struct* specie_ptr = &run_ptr->species.at(specie);
@@ -678,7 +834,7 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
         for (int react = 0; react < run_ptr->number_of_reactions; react++) {
             add_report(3, "Reaction: " + run_ptr->reactions.at(react).name + ":");
             for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-                add_report(3, std::to_string(run_ptr->reactions.at(react).coef.at(&run_ptr->species.at(specie))) + " " + run_ptr->species.at(specie).name + ",");
+                add_report(3, std::to_string(run_ptr->reactions.at(react).coef.at(&run_ptr->species.at(specie)).value()) + " " + run_ptr->species.at(specie).name + ",");
             }
             add_finishing_report(3,"");
         }
@@ -743,28 +899,33 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             exp_ptr->window_start = p.total_window_size;
             p.total_window_size += exp_ptr->window_size;
             
+            exp_ptr->channel_position.resize(exp_ptr->window_size, 0.0d);
+            exp_ptr->raw_experimental_profile.resize(exp_ptr->window_size, 0.0d);
             exp_ptr->experimental_profile.resize(exp_ptr->window_size, 0.0d);
             exp_ptr->model_profile.resize(exp_ptr->window_size, 0.0d);
             exp_ptr->experimental_derivative.resize(exp_ptr->window_size, 0.0d);
             exp_ptr->numeric_derivative.resize(exp_ptr->window_size, 0.0d);
             exp_ptr->error.resize(exp_ptr->window_size, 0.0d);
+            exp_ptr->numeric_difference.resize(exp_ptr->window_size, 0.0d);
+            exp_ptr->experimental_difference.resize(exp_ptr->window_size, 0.0d);
+            exp_ptr->analytical_zero.resize(exp_ptr->window_size, 0.0d);
 
             int x = 0;
             for (; x < p.exp_left_padding; x++) {
-                exp_ptr->experimental_profile.at(x) = 0.0d;
+                exp_ptr->raw_experimental_profile.at(x) = 0.0d;
             }
 
             int j = 0;
             while (getline(ss, s, '	')) { 
                 if (j >= (exp_ptr->beginning_of_channel) && j < exp_ptr->end_of_channel) { // Actual data 
-                    exp_ptr->experimental_profile.at(x) = std::stod(s);
+                    exp_ptr->raw_experimental_profile.at(x) = std::stod(s);
                     x++;
-                } else if (j >= exp_ptr->end_of_channel || x >= exp_ptr->experimental_profile.size()) {break;}
+                } else if (j >= exp_ptr->end_of_channel || x >= exp_ptr->raw_experimental_profile.size()) {break;}
                 j++;
             }
 
-            for (; x < exp_ptr->experimental_profile.size(); x++) {
-                exp_ptr->experimental_profile.at(x) = exp_ptr->experimental_profile.at(x - 1);
+            for (; x < exp_ptr->raw_experimental_profile.size(); x++) {
+                exp_ptr->raw_experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(x - 1);
             }
         } else if (criterion == "INLET_COND_ID") {
             add_report(0, "Value=" + value);
@@ -775,19 +936,55 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                 throw std::runtime_error("NULL in INLET_COND_ID");
             }
             pop_report(0);
-        } else if (criterion == "ZERO_REF") {
+        } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
             add_report(0, "Value=" + value);
             if (!value.empty()) {
-                for (int run = 0; run < p.experiment_runs.size(); run++) {
-                    if (value == p.experiment_runs.at(run).name) {
-                        exp_ptr->zero_run = &p.experiment_runs.at(run);
-                        break;
-                    } else if (run == p.experiment_runs.size() - 1) {
-                        exp_ptr->zero_run = run_ptr;
+                while (getline(ss, s, ' ')) {
+                    if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
+                        p.solve_for.push_back(s);
                     }
+                    p.solvables.emplace_back(solvable(s));
+                    p.solvables.back().source_name = run_ptr->name + "_" + exp_ptr->second_name;
+                    
+                    if (s == "left_edge") {
+                        exp_ptr->left_edge.source = &p.solvables.back();
+                        exp_ptr->left_edge.value() = run_ptr->left_edge.value();
+                        exp_ptr->left_edge.init();
+                    } else if (s == "width") {
+                        exp_ptr->width.source = &p.solvables.back();
+                        exp_ptr->width.value() = run_ptr->width.value();
+                        exp_ptr->width.init();         
+                    } /*else if (s == "p1") {
+                        exp_ptr->p1 = p.solvables.back();
+                    } else if (s == "keq1") {
+                        exp_ptr->keq1 = p.solvables.back();
+                    } else if (s == "QE1") {
+                        exp_ptr->QE1 = p.solvables.back();
+                    }*/
                 }
-            } else {
-                exp_ptr->zero_run = run_ptr;
+            }
+            pop_report(0);
+        } else if (criterion == "LEFT_EDGE") {
+            add_report(0, "LEFT_EDGE Value=" + value);
+            if (!value.empty() && exp_ptr->left_edge.param_init) {
+                exp_ptr->left_edge.value() = std::max(std::stod(value) + p.exp_left_padding, 0.0d);
+
+            }
+            pop_report(0);
+        } else if (criterion == "WIDTH") {
+            add_report(0, "WIDTH Value=" + value);
+            if (!value.empty() && exp_ptr->width.param_init) {
+                exp_ptr->width.value() = std::stod(value);
+            }
+            pop_report(0);
+        } else if (criterion == "OMIT") {
+            add_report(0, "Value=" + value);
+            exp_ptr->omit = false;
+            if (!value.empty()) {
+                std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+                if (value == "true") {
+                    exp_ptr->omit = true;
+                }
             }
             pop_report(0);
         }
@@ -801,13 +998,22 @@ void
 read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
 {
     add_report(3, "Reading experimental profiles from database:");
+    for (int i = 0; i < p.experiments.size(); i++) {
+        experiment_struct* exp_ptr = &p.experiments.at(i);
+        experiment_run_struct* run_ptr = exp_ptr->run;
+        exp_ptr->left_edge.source = &run_ptr->left_edge;
+        exp_ptr->width.source = &run_ptr->width;
+        /*exp_ptr->p1         = solvable(run_ptr->p1, "p1");
+        exp_ptr->keq1       = solvable(run_ptr->keq1, "keq1");
+        exp_ptr->QE1        = solvable(run_ptr->QE1, "QE1");*/
+    }
     add_report(1, "reading_db");
     char* errMsg = 0;
     std::string sqltext = "SELECT * FROM 'raw_profile' WHERE ";
     int number_of_runs = p.experiment_runs.size();
     for (int run = 0; run < number_of_runs; run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        sqltext.append("(NAME = '" + run_ptr->name + "' AND OMIT IS NULL)");
+        sqltext.append("(NAME = '" + run_ptr->name + "')");
         if (run != number_of_runs - 1) {
             sqltext.append(" OR ");
         } else {
@@ -816,24 +1022,26 @@ read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
     }
     const char* sql = sqltext.c_str();
     int rc = sqlite3_exec(db, sql, raw_profiles_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
         sqlite3_free(errMsg);
     }
     pop_and_add(1, "setting experiments.entrances size and flowrates");
+
     for (int row = 0; row < p.row_count; row++) {
-        p.experiments.at(row).entrances.resize(p.experiments.at(row).run->ENTRANCE_FLOWRATE.size());
-        for (int entrance = 0; entrance < p.experiments.at(row).entrances.size(); entrance++) {
-            p.experiments.at(row).entrances.at(entrance).ENTRANCE_FLOWRATE = p.experiments.at(row).run->ENTRANCE_FLOWRATE.at(entrance);
+        experiment_struct* exp_ptr = &p.experiments.at(row);
+        exp_ptr->entrances.resize(exp_ptr->run->ENTRANCE_FLOWRATE.size());
+        for (int entrance = 0; entrance < exp_ptr->entrances.size(); entrance++) {
+            exp_ptr->entrances.at(entrance).ENTRANCE_FLOWRATE = exp_ptr->run->ENTRANCE_FLOWRATE.at(entrance);
         }
         for (int zrow = 0; zrow < p.row_count; zrow++) {
-            if (p.experiments.at(row).zero_run == p.experiments.at(zrow).run && p.experiments.at(zrow).second_name == "0.0") {
-                p.experiments.at(row).zero_row_ptr = &p.experiments.at(zrow);
+            if (exp_ptr->run == p.experiments.at(zrow).run && p.experiments.at(zrow).second_name == "0.0") {
+                exp_ptr->zero_row_ptr = &p.experiments.at(zrow);
                 break;
             } else if (zrow == p.row_count - 1) {
-                p.experiments.at(row).zero_row_ptr = NULL;
+                exp_ptr->zero_row_ptr = NULL;
             }
         }
     }
@@ -938,7 +1146,7 @@ read_inlet_cond_from_db(sqlite3* db) //reading data using callback functions
     }
     const char* sql = sqltext.c_str();
     int rc = sqlite3_exec(db, sql, inlet_cond_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -1060,19 +1268,27 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
     char* errMsg = 0;
     std::string sqltext;
 
+    struct solution_ID_struct {
+        std::string EXPERIMENT_NAME;
+        std::string INLET_COND_ID;
+        solution_ID_struct(std::string EXPERIMENT_NAME, int INLET_COND_ID) 
+            : EXPERIMENT_NAME(std::move(EXPERIMENT_NAME))
+            , INLET_COND_ID(std::to_string(INLET_COND_ID))
+        {}
+    };
     std::vector<solution_ID_struct> solutions;
     for (int row = 0; row < p.experiments.size(); row++) {
-        solutions.emplace_back(p.SOLVE_SETTING_ID, p.experiments.at(row).run->name, p.experiments.at(row).INLET_COND_ID);
+        solutions.emplace_back(p.experiments.at(row).run->name, p.experiments.at(row).INLET_COND_ID);
     }
     for (int solution = 0; solution < solutions.size(); solution++) {
         sqltext.append("SELECT SOLUTION_ID, EXPERIMENT_NAME, INLET_COND_ID FROM solutions ");
-        sqltext.append("WHERE SOLVE_SETTING_ID = '" + solutions.at(solution).SOLVE_SETTING_ID + "' ");
+        sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
         sqltext.append("AND EXPERIMENT_NAME = '" + solutions.at(solution).EXPERIMENT_NAME + "' ");
         sqltext.append("AND INLET_COND_ID = '" + solutions.at(solution).INLET_COND_ID+ "'; ");
     }
 
     int rc = sqlite3_exec(db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -1091,7 +1307,7 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
         }
     }
     rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -1099,12 +1315,95 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
     }
     if (p.SOLUTION_ID_RECURSIVE_CALL == true && recursive_call_required) {
         throw std::runtime_error("SOLUTION_ID_RECURSIVE_CALL recursively called more than once.");
-    } else if(recursive_call_required) {
+    } else if (recursive_call_required) {
         p.SOLUTION_ID_RECURSIVE_CALL = true;
         get_SOLUTION_IDs_from_db(db); // recursive call to ensure SOLUTION_ID_RECURSIVE_CALL is set.
     } else {
         std::cout << "Done" << std::endl;
     }
+}
+
+
+int 
+get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames)
+{
+    //1st parameter of this function is received from 4th parameter of sqlite3_exec
+    //count->is the number of columns
+    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
+    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
+    std::string criterion;
+    std::string value;
+    experiment_run_struct* run_ptr;
+    experiment_struct* exp_ptr;
+    std::string parameter;
+    std::string source_name;
+    for(int i = 0; i < count; i++) {
+        criterion = columnNames[i];
+        if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
+        if (criterion == "SOURCE") {
+            source_name = value;
+            if (value.empty() || value == "global") {
+                // do nothing
+            } else {
+                for (ptrdiff_t j = 0; j < p.experiment_runs.size(); j++) {
+                    if (p.experiment_runs.at(j).name == value) {
+                        run_ptr = &p.experiment_runs.at(j);
+                        break;
+                    } else if (j == p.experiment_runs.size() - 1) {
+                        throw std::runtime_error("Could not find EXPERIMENT_NAME (" + value + ") in p.experiment_runs");
+                    }
+                }
+            }
+        } else if (criterion == "SOLUTION_ID") {
+            if (!value.empty() && value != "0") {
+                for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
+                    if (std::to_string(p.experiments.at(j).SOLUTION_ID) == value) {
+                        exp_ptr = &p.experiments.at(j);
+                        source_name = exp_ptr->run->name + "_" + exp_ptr->second_name;
+                        break;
+                    } else if (j == p.experiments.size() - 1) {
+                        throw std::runtime_error("Could not find INLET_COND_ID in p.experiments second_name that has matching run. while ");
+                    }
+                }
+            }
+        } else if (criterion == "PARAMETER") {
+            if (!value.empty()) {
+                parameter = value;
+            }
+        } else if (criterion == "VALUE") {
+            if (!value.empty()) {
+                for (int j = 0; j < p.solvables.size(); j++) {
+                    auto& s = p.solvables.at(j);
+                    if (s.name == parameter && s.source_name == source_name) {
+                        s.value() = stod(value);
+                        s.param_init = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+void 
+get_solvable_initial_values_from_db(sqlite3* db) //reading data using callback functions
+{
+    std::cout << "Retrieving solvable initial values from parameter_solutions table: ";
+    char* errMsg = 0;
+    std::string sqltext = "SELECT SOURCE, SOLUTION_ID, PARAMETER, VALUE FROM parameter_solutions ";
+    sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
+    int rc = sqlite3_exec(db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, 0, &errMsg);
+    if (rc != SQLITE_OK){
+        std::string error = errMsg;
+        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
+        //printf("Error in executing SQL: %s \n", errMsg);
+        sqlite3_free(errMsg);
+    }
+    sqltext.clear();
+    
+    std::cout << "Done" << std::endl;
+    
 }
 
 int 
@@ -1116,50 +1415,26 @@ alglib_input_db_callback(void *data, int count, char **argv, char **columnNames)
     //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
     std::string criterion;
     std::string current_variable;
-    bool variable_to_solve_for;
-    std::ptrdiff_t index;
-    for (int run = 0; run < p.experiment_runs.size(); run++) {
-        experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        for(int i = 0; i < count; i++) {
-            criterion = columnNames[i];
-            if (argv[i] == NULL) {throw std::runtime_error("No " + criterion + "for" + current_variable);}
-            if (criterion == "VARIABLE") {
-                current_variable = argv[i];
-                bool global_solve_for = (std::find(p.global_solve_for.begin(), p.global_solve_for.end(), current_variable) != p.global_solve_for.end());
-                bool run_specific_variable = (std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), current_variable) != run_ptr->solve_for.end());
-                
-                if (global_solve_for) {
-                    index = std::distance(p.solve_for.begin(), std::find(p.solve_for.begin(), p.solve_for.end(), current_variable));
-                } else if (run_specific_variable) {
-                    index = p.global_solve_for.size();
-                    for (int j = 0; j < run; j++) {
-                        index += p.experiment_runs.at(j).solve_for.size();
-                    }
-                    index += std::distance(run_ptr->solve_for.begin(), std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), current_variable));
-                }
-                variable_to_solve_for = global_solve_for || run_specific_variable;
-                if (variable_to_solve_for && (std::find(p.retrieved.begin(), p.retrieved.end(), current_variable) == p.retrieved.end())) {
-                    p.retrieved.emplace_back(current_variable);
-                }
-            } else if (!variable_to_solve_for) {
-                // do nothing. Short circuits if chain
-            } else if (criterion == "INITIAL VALUE") {
-                if (p.use_alglib_init_values) {
-                    variable_location(current_variable, run_ptr) = std::stod(argv[i]); // overide value from other tables when using init
-                }
-                p.initial_values_alglib[index] = variable_location(current_variable, run_ptr);
-            } else if (criterion == "LOWER BOUND") {
-                p.low_bound[index] = std::stod(argv[i]);
-            } else if (criterion == "UPPER BOUND") {
-                p.up_bound[index] = std::stod(argv[i]);
-            } else if (criterion == "SCALE") {
-                p.scale[index] = std::stod(argv[i]);
-                if (std::stod(argv[i]) == 0) {
-                    throw std::runtime_error("zero passed to SCALE, index:" + std::to_string(index) + ", run:" + std::to_string(run));
-                }
+
+    for(int i = 0; i < count; i++) {
+        criterion = columnNames[i];
+        if (argv[i] == NULL) {throw std::runtime_error("No " + criterion + "for" + current_variable);}
+        if (criterion == "VARIABLE") {
+            current_variable = argv[i];
+        } else if (criterion == "INITIAL VALUE") {
+            p.initial_values_alglib_map.insert({current_variable, std::stod(argv[i])});
+        } else if (criterion == "LOWER BOUND") {
+            p.low_bound_map.insert({current_variable, std::stod(argv[i])});
+        } else if (criterion == "UPPER BOUND") {
+            p.up_bound_map.insert({current_variable, std::stod(argv[i])});
+        } else if (criterion == "SCALE") {
+            if (std::stod(argv[i]) == 0) {
+                throw std::runtime_error("zero passed to SCALE from variable:" + current_variable);
             }
-        };
-    }
+            p.scale_map.insert({current_variable, std::stod(argv[i])});
+        }
+    };
+    //}
     return 0;
 }
 
@@ -1167,11 +1442,11 @@ void
 read_alglib_values_from_db(sqlite3* db) //reading data using callback functions
 {
     std::cout << "Reading alglib inputs from database: ";
-    p.scale                    = new double[p.number_of_variables];
-    p.initial_values_alglib    = new double[p.number_of_variables];
-    p.low_bound                = new double[p.number_of_variables];
-    p.up_bound                 = new double[p.number_of_variables];
-
+    p.scale                    = new double[p.solvables.size()];
+    p.initial_values_alglib    = new double[p.solvables.size()];
+    p.low_bound                = new double[p.solvables.size()];
+    p.up_bound                 = new double[p.solvables.size()];
+    
     char* errMsg = 0;
     std::string sqltext = "SELECT * FROM 'alglib_input' WHERE ";
     
@@ -1185,146 +1460,33 @@ read_alglib_values_from_db(sqlite3* db) //reading data using callback functions
     }
     
     int rc = sqlite3_exec(db, sqltext.c_str(), alglib_input_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
         sqlite3_free(errMsg);
     }
-    
-    for (int i = 0; i < p.solve_for.size(); i++) {
-        if (std::find(p.retrieved.begin(), p.retrieved.end(), p.solve_for.at(i)) == p.retrieved.end()) {
-            throw std::runtime_error("could not retrieve " + p.solve_for.at(i) + " from alglib_inputs table");
-        }
-    }
-    p.retrieved.clear();
-    p.retrieved.shrink_to_fit();
     std::cout << "Done" << std::endl;
     
-    std::cout << "global(";
-    for (int index = 0; index < p.global_solve_for.size(); index++) {
-        std::cout << p.solve_for[index] << ":" << p.initial_values_alglib[index];
-        if (index != p.global_solve_for.size() - 1) {
-            std::cout << " ";
-        }
-    }
-    std::cout << ")";
-    int displacement = p.global_solve_for.size();
-    for (int run = 0; run < p.experiment_runs.size(); run++) {
-        experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        std::cout << " " + run_ptr->name + "(";
-        for (int i = 0; i < run_ptr->solve_for.size(); i++) {
-            std::cout << run_ptr->solve_for.at(i) << ":" << p.initial_values_alglib[displacement + i];
-            if (i != run_ptr->solve_for.size() - 1) {
-                std::cout << " ";
-            }
-        }
-        std::cout << ")";
-        displacement += run_ptr->solve_for.size();
-    }
-    std::cout << std::endl;
-}
-
-
-int 
-get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
-{
-    //1st parameter of this function is received from 4th parameter of sqlite3_exec
-    //count->is the number of columns
-    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
-    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
-    if (argv[0] != NULL) {
-        p.SOLVE_SETTING_ID = std::stoi(argv[0]);
-        std::cout << argv[0] << " ";
-    }
-    return 0;
-}
-
-void 
-get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functions
-{
-    if (p.SOLVE_SETTING_ID == 0) {
-    std::cout << "Retrieving SOLUTION_SET_ID from database: ";
-    } else {
-        std::cout << "SOLUTION_SET_ID not found in database. Writing new entry: ";
-    }
-    char* errMsg = 0;
-    std::string sqltext;
-
-    std::vector<std::string> Individual_EXP_FITTED;
-    std::string ALL_EXP_FITTED;
-    for (int run = 0; run < p.experiment_runs.size(); run++) {
-        Individual_EXP_FITTED.emplace_back(p.experiment_runs.at(run).name);
-    }
-    sort(Individual_EXP_FITTED.begin(), Individual_EXP_FITTED.end());
-    for (int i = 0; i < Individual_EXP_FITTED.size(); i++) {
-        ALL_EXP_FITTED.append(Individual_EXP_FITTED.at(i));
-        if (i != Individual_EXP_FITTED.size() - 1) {
-            ALL_EXP_FITTED.append(" ");
-        }
-    }
-
-    std::vector<std::string> Individual_PARAMETERS_SOLVED_FOR;
-    std::string PARAMETERS_SOLVED_FOR;
-    for (int index = 0; index < p.global_solve_for.size(); index++) {
-        Individual_PARAMETERS_SOLVED_FOR.emplace_back(p.solve_for[index]);
-    }
-    sort(Individual_PARAMETERS_SOLVED_FOR.begin(), Individual_PARAMETERS_SOLVED_FOR.end());
-    for (int i = 0; i < Individual_PARAMETERS_SOLVED_FOR.size(); i++) {
-        PARAMETERS_SOLVED_FOR.append(Individual_PARAMETERS_SOLVED_FOR.at(i));
-        if (i != Individual_PARAMETERS_SOLVED_FOR.size() - 1) {
-            PARAMETERS_SOLVED_FOR.append(" ");
-        }
-    }
-
-    std::string REACTIONS_ENABLED;
-    if (p.disable_reactions) {
-        REACTIONS_ENABLED = "all reactions disabled";
-    } else if (p.disable_reverse_reactions) {
-        REACTIONS_ENABLED = "all reverse reactions disabled";
-    } else {
-        REACTIONS_ENABLED = "all reactions enabled";
-    }
-
-    std::string X_RESOLUTION = std::to_string(p.X);
-    std::string Z_RESOLUTION = std::to_string(p.Z);
-
-    sqltext.append("SELECT SOLVE_SETTING_ID FROM solve_settings ");
-    sqltext.append("WHERE ALL_EXP_FITTED = '" + ALL_EXP_FITTED + "' ");
-    sqltext.append("AND PARAMETERS_SOLVED_FOR = '" + PARAMETERS_SOLVED_FOR + "' ");
-    sqltext.append("AND REACTIONS_ENABLED = '" + REACTIONS_ENABLED + "' ");
-    sqltext.append("AND SCATTER_METHOD = '" + p.scatter_correction_type + "' ");
-    sqltext.append("AND X_RESOLUTION = '" + X_RESOLUTION + "' ");
-    sqltext.append("AND Z_RESOLUTION = '" + Z_RESOLUTION + "'; ");
-    int rc = sqlite3_exec(db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, 0, &errMsg);
-    if(rc != SQLITE_OK){
-        std::string error = errMsg;
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
-    }
-    sqltext.clear();
-
-    if (p.SOLVE_SETTING_ID == 0) {
-        sqltext.append("INSERT INTO solve_settings (ALL_EXP_FITTED, PARAMETERS_SOLVED_FOR, REACTIONS_ENABLED, SCATTER_METHOD, X_RESOLUTION, Z_RESOLUTION)");
-        sqltext.append(" VALUES ('" + ALL_EXP_FITTED + "','" + PARAMETERS_SOLVED_FOR + "','" + REACTIONS_ENABLED + "','" + p.scatter_correction_type + "','" + X_RESOLUTION + "','" + Z_RESOLUTION + "'); ");
-
-        int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-        if(rc != SQLITE_OK){
-            std::string error = errMsg;
-            throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg);
-            sqlite3_free(errMsg);
-        }
-        if (p.SOLVE_SETTING_RECURSIVE_CALL == true) {
-            throw std::runtime_error("SOLVE_SETTING_ID recursively called more than once.");
+    for (int i = 0; i < p.solvables.size(); i++) {
+        auto& s = p.solvables.at(i);
+        if ((p.use_alglib_init_values || s.source_name == "global") && !s.param_init) {
+            p.initial_values_alglib[i] = p.initial_values_alglib_map.at(s.name);
         } else {
-            p.SOLVE_SETTING_RECURSIVE_CALL = true;
-            get_solve_settings_ID_from_db(db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
+            p.initial_values_alglib[i] = s.value();
+        }
+        
+        p.low_bound[i] = p.low_bound_map.at(s.name);
+        p.up_bound[i] = p.up_bound_map.at(s.name); 
+        p.scale[i] = p.scale_map.at(s.name);
+
+        std::cout << "(" << s.source_name << ":" << s.name << ":" << p.initial_values_alglib[i] << ")";
+        if (i != p.solvables.size() - 1) {
+            std::cout << " ";
+        } else {
+            std::cout << std::endl;
         }
     }
-    
-    std::cout << "Done" << std::endl;
 }
 
 void 
@@ -1335,27 +1497,50 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     char* errMsg = 0;
     std::string sqltext;
     delete_values_from_db(db, "parameter_solutions", "SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "'");
+
+    struct parameter_solution_struct {
+        std::string PARAMETER;
+        std::string VALUE;
+        std::string UNITS;
+        std::string SOURCE;
+        std::string SOLUTION_ID;
+        parameter_solution_struct(std::string PARAMETER, std::string VALUE, std::string UNITS, std::string SOURCE, int SOLUTION_ID) 
+            : PARAMETER(std::move(PARAMETER))
+            , VALUE(std::move(VALUE))
+            , UNITS(std::move(UNITS))
+            , SOURCE(std::move(SOURCE))
+            , SOLUTION_ID(std::to_string(SOLUTION_ID))
+        {}
+    };
+
     std::vector<parameter_solution_struct> param_solutions;
     experiment_run_struct* run_ptr;
     experiment_struct* exp_ptr;
-    for (int index = 0; index < p.global_solve_for.size(); index++) {
-        param_solutions.emplace_back("global: " + p.solve_for[index], double_to_string(p.initial_values_alglib[index]), "");
-    }
-    for (int run = 0; run < p.experiment_runs.size(); run++) {
-        experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        int displacement = p.global_solve_for.size();
-        for (int j = 0; j < run; j++) {
-            displacement += p.experiment_runs.at(j).solve_for.size();
+    for (int i = 0; i < p.solvables.size(); i++) {
+        auto& s = p.solvables.at(i);
+        int SOLUTION_ID = 0;
+        std::string SOURCE = "global";
+        for (int j = 0; j < p.row_count; j++) {
+            auto& exp = p.experiments.at(j);
+            if (s.source_name == (exp.run->name + "_" + exp.second_name)) {
+                SOLUTION_ID = exp.SOLUTION_ID;
+                SOURCE.clear();
+                break;
+            } else if (s.source_name == (exp.run->name)) {
+                SOURCE = exp.run->name;
+                break;
+            } else if (s.source_name == "global") {
+                break;
+            }
         }
-        for (int index = 0; index < run_ptr->solve_for.size(); index++) {
-            assert(index + displacement < p.number_of_variables);
-            param_solutions.emplace_back(run_ptr->name + ": " + run_ptr->solve_for.at(index), double_to_string(p.initial_values_alglib[index + displacement]), "");
-        }
+        param_solutions.emplace_back(s.name, double_to_string(s.value()), "", SOURCE, SOLUTION_ID);
     }
+
     if (param_solutions.size() > 0) {
-        sqltext.append("INSERT INTO parameter_solutions (SOLVE_SETTING_ID, PARAMETER, VALUE, UNITS) VALUES ");
+        sqltext.append("INSERT INTO parameter_solutions (SOLVE_SETTING_ID, PARAMETER, VALUE, UNITS, SOURCE, SOLUTION_ID) VALUES ");
         for (int i = 0; i < param_solutions.size(); i++) {
-            sqltext.append("('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + param_solutions.at(i).PARAMETER + "','" + param_solutions.at(i).VALUE + "','" + param_solutions.at(i).UNITS + "') ");
+            auto ps = param_solutions.at(i);
+            sqltext.append("('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + ps.PARAMETER + "','" + ps.VALUE + "','" + ps.UNITS + "','" + ps.SOURCE + "','" + ps.SOLUTION_ID + "') ");
             if (i != param_solutions.size() - 1) {
                 sqltext.append(", ");
             } else {
@@ -1366,7 +1551,7 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     param_solutions.clear();
     param_solutions.shrink_to_fit();
     int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error);
 
@@ -1386,7 +1571,7 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         sqltext.append("WHERE SOLUTION_ID = '" +    std::to_string(exp_ptr->SOLUTION_ID) + "'; ");
     }
     rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + " " + sqltext);
         sqlite3_free(errMsg);
@@ -1394,6 +1579,27 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     sqltext.clear();
 
     pop_and_add(1, "preparing items into model_profiles table");
+    struct model_profile_struct {
+        std::string SOLUTION_ID;
+        std::string X;
+        std::string Free_Dye;
+        std::string Bound_Dye;
+        std::string Total_Dye;
+        std::string Unbound_Beads;
+        std::string Bound_Beads;
+        std::string Total_Beads;
+        std::string Experimental_Derivative;
+        std::string Numeric_Derivative;
+        std::string Experimental;
+        std::string Numeric;
+        std::string Error;
+        std::string experimental_difference;
+        std::string numeric_difference;
+        model_profile_struct(int SOLUTION_ID, double X) 
+            : SOLUTION_ID(std::to_string(SOLUTION_ID))
+            , X(double_to_string(X)) 
+        {}
+    };
     std::vector<model_profile_struct> model_profiles;
     for (int row = 0; row < p.row_count; row++) {
         add_report(0, "row:" + std::to_string(row));
@@ -1423,9 +1629,9 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         const double data_scale  = exp_ptr->scale_factor;
 
         int model_x = 0;
-        int data_x  = std::max(0, int(std::ceil(run_ptr->left_edge)));
+        int data_x  = 0;
         double X_model = 0.0;
-        double X_data = (data_x - run_ptr->left_edge) * data_scale;
+        double X_data = exp_ptr->channel_position.at(data_x);
         double last_X = -1;
 
         assert(data_scale > 0);
@@ -1433,9 +1639,11 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         bool data_match = false;
         pop_and_add(0, "while loop");
         while (X_model < p.W * 1e6 || X_data < p.W * 1e6) {
+            X_data = exp_ptr->channel_position.at(data_x);
+            X_model = model_scale * model_x;
             model_match = X_data >= X_model;
             data_match = X_model >= X_data;
-            if( (model_match && model_x < p.X) || (data_match && data_x < exp_ptr->window_size)) {
+            if ( (model_match && model_x < p.X) || (data_match && data_x < exp_ptr->window_size)) {
                 if (std::min(X_data, X_model) != last_X) {
                     model_profiles.emplace_back(ID, std::min(X_data, X_model));
                     last_X = std::min(X_data, X_model);
@@ -1450,13 +1658,12 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
                     profile.Bound_Dye               = double_to_string(bound_dye);
                     profile.Total_Dye               = double_to_string(free_dye + bound_dye);
                     const double unbound_beads = out[PS_beads][model_x] * bead_unit;
-                    const double bound_beads = out[Bound_Dye_1][model_x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr)) * bead_unit;
+                    const double bound_beads = out[Bound_Dye_1][model_x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value()) * bead_unit;
                     profile.Unbound_Beads           = double_to_string(unbound_beads);
                     profile.Bound_Beads             = double_to_string(bound_beads);
                     profile.Total_Beads             = double_to_string(unbound_beads + bound_beads);
                 }
                 model_x++;
-                X_model += model_scale;
             }
             if (data_match) {
                 if (data_x < exp_ptr->window_size) {
@@ -1464,9 +1671,11 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
                     profile.Numeric_Derivative      = double_to_string(exp_ptr->numeric_derivative.at(data_x));
                     profile.Experimental            = double_to_string(experiment.at(data_x) * run_ptr->dye_conc_mgml);
                     profile.Numeric                 = double_to_string(model.at(data_x) * FITC_unit);
+                    profile.Error                   = double_to_string(exp_ptr->error.at(data_x));
+                    profile.experimental_difference = double_to_string(exp_ptr->experimental_difference.at(data_x));
+                    profile.numeric_difference      = double_to_string(exp_ptr->numeric_difference.at(data_x));
                 }
                 data_x++;
-                X_data += data_scale;
             }
         }
         pop_report(0);
@@ -1474,11 +1683,11 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     }
     pop_and_add(1, "model_profile table");
     if (model_profiles.size() > 0) {
-        sqltext.append("INSERT INTO model_profile (SOLUTION_ID, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric) VALUES ");
+        sqltext.append("INSERT INTO model_profile (SOLUTION_ID, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES ");
         model_profile_struct* mp;
         for (int sol = 0; sol < model_profiles.size(); sol++) {
             mp = &model_profiles.at(sol);
-            sqltext.append("('" + mp->SOLUTION_ID + "','" + mp->X + "','" +  mp->Free_Dye + "','" +  mp->Bound_Dye + "','" +  mp->Total_Dye + "','" +  mp->Unbound_Beads + "','" +  mp->Bound_Beads + "','" +  mp->Total_Beads + "','" +  mp->Experimental_Derivative + "','" +  mp->Numeric_Derivative + "','" +  mp->Experimental + "','" +  mp->Numeric + "') ");
+            sqltext.append("('" + mp->SOLUTION_ID + "','" + mp->X + "','" +  mp->Free_Dye + "','" +  mp->Bound_Dye + "','" +  mp->Total_Dye + "','" +  mp->Unbound_Beads + "','" +  mp->Bound_Beads + "','" +  mp->Total_Beads + "','" +  mp->Experimental_Derivative + "','" +  mp->Numeric_Derivative + "','" +  mp->Experimental + "','" +  mp->Numeric + "','" +  mp->Error + "','" +  mp->experimental_difference + "','" +  mp->numeric_difference + "') ");
             if (sol != model_profiles.size() - 1) {
                 sqltext.append(", ");
             } else {
@@ -1490,7 +1699,7 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     }
 
     rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         struct tuple {
             int ID;
@@ -1530,7 +1739,7 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
     for (int index = 0; index < p.global_solve_for.size(); index++) {
         sqltext.append("UPDATE alglib_input SET 'INITIAL VALUE' = '" + double_to_string(p.initial_values_alglib[index]) + "' WHERE VARIABLE = '" + p.global_solve_for[index] + "'; ");
         if (p.initial_values_alglib[index] != 0) {
-            sqltext.append("UPDATE alglib_input SET 'SCALE' = '" + double_to_string(p.initial_values_alglib[index]) + "' WHERE VARIABLE = '" + p.global_solve_for[index] + "'; ");
+            //sqltext.append("UPDATE alglib_input SET 'SCALE' = '" + double_to_string(p.initial_values_alglib[index]) + "' WHERE VARIABLE = '" + p.global_solve_for[index] + "'; ");
         }
     }
     for (int run = 0; run < p.experiment_runs.size(); run++) {
@@ -1538,18 +1747,18 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
         pop_and_add(1, "run " + run_ptr->name); // removes init val state
         add_report(0, "QE");
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) { 
-            sqltext.append("UPDATE species SET 'QE' = '" + double_to_string(run_ptr->species.at(specie).QE) + "' WHERE SPECIES_NAME = '" + run_ptr->species.at(specie).name + "'; ");
+            sqltext.append("UPDATE species SET 'QE' = '" + double_to_string(run_ptr->species.at(specie).QE.value()) + "' WHERE SPECIES_NAME = '" + run_ptr->species.at(specie).name + "'; ");
         }
         for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
             reaction_struct* react_ptr = &run_ptr->reactions.at(reaction);
             pop_and_add(0, "reaction " + react_ptr->name); // removes QE state then previous reaction state
             add_report(0, "ks");
-            sqltext.append("UPDATE reactions SET 'Ks' = '" + double_to_string(react_ptr->k[0]) + " " + double_to_string(react_ptr->k[1]) + "' WHERE REACTION_NAME = '" + react_ptr->name + "'; ");
+            sqltext.append("UPDATE reactions SET 'Ks' = '" + double_to_string(react_ptr->k[0].value()) + " " + double_to_string(react_ptr->k[1].value()) + "' WHERE REACTION_NAME = '" + react_ptr->name + "'; ");
             pop_and_add(0, "coefs"); // removes ks state
             sqltext.append("UPDATE reactions SET 'COEFFICIENTS' = '");
             for (std::ptrdiff_t specie = 0; specie < react_ptr->specie_vect.size(); specie++) {
                 specie_struct* specie_ptr = react_ptr->specie_vect.at(specie);
-                sqltext.append(double_to_string(react_ptr->coef.at(specie_ptr)));
+                sqltext.append(double_to_string(react_ptr->coef.at(specie_ptr).value()));
                 if (specie != react_ptr->specie_vect.size() - 1) {
                     sqltext.append(" ");
                 }
@@ -1559,7 +1768,7 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
             sqltext.append("UPDATE reactions SET 'EXPONENTS' = '");
             for (std::ptrdiff_t specie = 0; specie < react_ptr->specie_vect.size(); specie++) {
                 specie_struct* specie_ptr = react_ptr->specie_vect.at(specie);
-                sqltext.append(double_to_string(react_ptr->exp.at(specie_ptr)));
+                sqltext.append(double_to_string(react_ptr->exp.at(specie_ptr).value()));
                 if (specie != react_ptr->specie_vect.size() - 1) {
                     sqltext.append(" ");
                 }
@@ -1568,12 +1777,19 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
             pop_report(0); // removes exponents state
         }
         pop_and_add(0, "edges"); // removes reaction state
-        sqltext.append("UPDATE experiments SET 'EDGES' = '" + double_to_string(run_ptr->left_edge) + " " + double_to_string(run_ptr->right_edge) + "' WHERE NAME = '" + run_ptr->name + "'; ");
+        sqltext.append("UPDATE experiments SET 'EDGES' = '" + double_to_string(run_ptr->left_edge.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
+        sqltext.append("UPDATE experiments SET 'WIDTH' = '" + double_to_string(run_ptr->width.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
         pop_report(0); // removes edges state
     }
+    add_report(0, "raw profile left_edge and width");
+    for (int i = 0; i < p.experiments.size(); i++) {
+        experiment_struct* exp_ptr = &p.experiments.at(i);
+        sqltext.append("UPDATE raw_profile SET 'LEFT_EDGE' = '" + double_to_string(exp_ptr->left_edge.value() - p.exp_left_padding) + "', 'WIDTH' = '" + double_to_string(exp_ptr->width.value()) + "' WHERE NAME = '" + exp_ptr->run->name + "' AND WT_PERCENT = '" + exp_ptr->second_name + "'; ");
+    }
+    pop_report(0);
     pop_and_add(1, "running sql"); // removes run state
     int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
-    if(rc != SQLITE_OK){
+    if (rc != SQLITE_OK){
         std::string error = errMsg;
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
         //printf("Error in executing SQL: %s \n", errMsg);
@@ -1588,15 +1804,10 @@ normalize_profile()
 {
     experiment_struct* exp_ptr;
     experiment_run_struct* run_ptr;
-    add_report(3, "Normalizing (");
+    add_report(3, "Normalizing");
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        std::cout << run_ptr->name << ":" << run_ptr->normalization_method;
-        if ( run != p.experiment_runs.size() - 1) {
-            std::cout << " ";
-        } else {
-            std::cout << ") ";
-        }
+        add_report(3, "(" + run_ptr->name + ":" + run_ptr->normalization_method + ")");
     }
     add_report(0, std::to_string(0));
     double low_ref, high_ref, peak_ref;
@@ -1604,19 +1815,19 @@ normalize_profile()
         pop_and_add(0, std::to_string(j));
         exp_ptr = &p.experiments.at(j);
         run_ptr = exp_ptr->run;
-        int exp_size = exp_ptr->experimental_profile.size();
+        int exp_size = exp_ptr->raw_experimental_profile.size();
         low_ref = 0.0d;
         high_ref = 0.0d;
         peak_ref = 0.0d;
         for (int i = run_ptr->low_ref_start + p.exp_left_padding; i < run_ptr->high_ref_end + p.exp_left_padding && i < exp_size; i++) {
             if (i <= run_ptr->low_ref_end + p.exp_left_padding) {
-                low_ref += exp_ptr->experimental_profile.at(i);
+                low_ref += exp_ptr->raw_experimental_profile.at(i);
             } else if (i >= run_ptr->high_ref_start + p.exp_left_padding) {
-                high_ref += exp_ptr->experimental_profile.at(i);
+                high_ref += exp_ptr->raw_experimental_profile.at(i);
             }
         }
         for (int i = p.exp_left_padding; i < run_ptr->high_ref_end + p.exp_left_padding && i < exp_size; i++) {
-            peak_ref = std::max(exp_ptr->experimental_profile.at(i), peak_ref);
+            peak_ref = std::max(exp_ptr->raw_experimental_profile.at(i), peak_ref);
         }
         if (run_ptr->low_ref_end < run_ptr->low_ref_start) {
             low_ref = 0;
@@ -1627,20 +1838,20 @@ normalize_profile()
         high_ref = high_ref / (double)(run_ptr->high_ref_end - run_ptr->high_ref_start);
         for (int i = 0; i < exp_size; i++) {
             if (run_ptr->normalization_method == "ridge linear scaling") {
-                if(i < run_ptr->low_ref_start + p.exp_left_padding) {
-                    exp_ptr->experimental_profile.at(i) = 0;
+                if (i < run_ptr->low_ref_start + p.exp_left_padding) {
+                    exp_ptr->raw_experimental_profile.at(i) = 0;
                 } else if (i >= run_ptr->high_ref_end + p.exp_left_padding) {  
-                    exp_ptr->experimental_profile.at(i) = 1;
+                    exp_ptr->raw_experimental_profile.at(i) = 1;
                 } else {
-                    exp_ptr->experimental_profile.at(i) = (exp_ptr->experimental_profile.at(i) - low_ref) / (high_ref - low_ref);
+                    exp_ptr->raw_experimental_profile.at(i) = (exp_ptr->raw_experimental_profile.at(i) - low_ref) / (high_ref - low_ref);
                 }
             } else if (run_ptr->normalization_method == "peak linear scaling") {
                 if (i < run_ptr->low_ref_start + p.exp_left_padding) {
-                    exp_ptr->experimental_profile.at(i) = 0;
-                } else if(i >= exp_size - p.exp_right_padding) {
-                    exp_ptr->experimental_profile.at(i) = (high_ref - low_ref) / (peak_ref - low_ref);
+                    exp_ptr->raw_experimental_profile.at(i) = 0;
+                } else if (i >= exp_size - p.exp_right_padding) {
+                    exp_ptr->raw_experimental_profile.at(i) = (high_ref - low_ref) / (peak_ref - low_ref);
                 } else {
-                    exp_ptr->experimental_profile.at(i) = (exp_ptr->experimental_profile.at(i) - low_ref) / (peak_ref - low_ref);
+                    exp_ptr->raw_experimental_profile.at(i) = (exp_ptr->raw_experimental_profile.at(i) - low_ref) / (peak_ref - low_ref);
                 }
             }
         }
@@ -1663,10 +1874,13 @@ scattering_correction(double species_1, double species_2, double coef, experimen
     }
 }
 
-double&
+solvable&
 variable_location(const std::string& variable_name, experiment_run_struct* run_ptr) {
     if (variable_name == "left_edge") {return run_ptr->left_edge;}
-    if (variable_name == "right_edge") {return run_ptr->right_edge;}
+    if (variable_name == "width") {return run_ptr->width;}
+    if (variable_name == "FITC_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "FITC")));}
+    if (variable_name == "bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "PS_40nm", "PS_20nm")));}
+    if (variable_name == "bound_bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "40nm_Bound_Dye_1", "20nm_Bound_Dye_1")));}
     if (variable_name == "kon1") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).k[0];}
     if (variable_name == "kon2") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_2", "FITC_20nm_2")).k[0];}
     if (variable_name == "keq1") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).k[1];}
@@ -1832,6 +2046,10 @@ std::string
 double_to_string(double arg)
 {
     std::string sign;
+    if (std::abs(arg) < 1e-307) {
+        arg = 0;
+    }
+   
     if (arg == 0) {
         return "0";
     } else if (arg < 0) {
@@ -1846,6 +2064,16 @@ double_to_string(double arg)
 double
 lin_interpolate(double x, double x1, double y1, double x2, double y2)
 {
+    if (x == x1) {
+        return y1;
+    } else if (x == x2) {
+        return y2;
+    } else if ((x > x1 && x > x2) || (x < x1 && x < x2)) {
+        throw std::runtime_error("lin_interpolate out of range :" + double_to_string(x) + " not between " + double_to_string(x1) + " and " + double_to_string(x2));
+    }
+    if (x2 == x1) {
+        return (y1 + y2) / 2;
+    }
     return (y2 * std::abs(x - x1) + y1 * std::abs(x2 - x)) / std::abs(x2 - x1);
 }
 
@@ -1881,14 +2109,25 @@ void
 model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row)
 {
     //std::cout << "row" << row << "start " << std::endl;
+    //add_report(0, "row:" + std::to_string(row) + "_start");
     experiment_struct* exp_ptr = &p.experiments.at(row);
     experiment_run_struct* run_ptr = exp_ptr->run;
-    double left_edge = run_ptr->left_edge;
-    double right_edge = run_ptr->right_edge;
-    exp_ptr->scale_factor = p.W * 1.0e6 / ((double)exp_ptr->window_size - run_ptr->left_edge - run_ptr->right_edge);
+    const double left_edge = exp_ptr->left_edge.value();
+    assert(left_edge >= 0);
+    const double width = exp_ptr->width.value();
+    assert(width > 0);
+    if ((double)exp_ptr->window_size < left_edge + width) {
+        std::runtime_error("exp_ptr->window_size < left_edge + width (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
+    }
+    exp_ptr->scale_factor = p.W * 1.0e6 / (width);
+    if (exp_ptr->scale_factor > 0) {
+        std::runtime_error("scale factor <= 0 (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
+    }
+    assert(exp_ptr->scale_factor > 0);
     double kon[run_ptr->number_of_reactions];
     double reaction_rate[run_ptr->number_of_reactions];
     double coef[run_ptr->number_of_reactions * run_ptr->number_of_species];
+    double exp[run_ptr->number_of_reactions * run_ptr->number_of_species];
     double specie_rate[run_ptr->number_of_species];
     double available[run_ptr->number_of_species];
     double r[run_ptr->number_of_species];
@@ -1902,22 +2141,28 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
     double* old_solution_ptr = old_solution;
     //The 3 Concentration Arrays.
     double** species_out = exp_ptr->species_out;
-    
+    //pop_and_add(0, "row:" + std::to_string(row) + "_coef");
 
+    
     for (int react = 0; react < run_ptr->number_of_reactions; react++) {
         reaction_struct* react_ptr = &run_ptr->reactions.at(react);
-        kon[react] = run_ptr->dt * react_ptr->k[0];
+        
+        kon[react] = run_ptr->dt * react_ptr->k[0].value();
+        assert(react_ptr->k[1].value() > 0);
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-            coef[specie + react * run_ptr->number_of_species] = react_ptr->coef.at(&run_ptr->species.at(specie));
+            coef[specie + react * run_ptr->number_of_species] = react_ptr->coef.at(&run_ptr->species.at(specie)).value();
+            exp[specie + react * run_ptr->number_of_species] = react_ptr->exp.at(&run_ptr->species.at(specie)).value();
         }
     }
     assert (coef[run_ptr->FITC] == -coef[run_ptr->Bound_Dye_1]);
+    //pop_and_add(0, "row:" + std::to_string(row) + "_preinlet");
     //std::cout << "row" << row << "preinlet " << std::endl;
     set_inlet_conc(exp_ptr, solution);
 
     for (int specie = 0; specie < run_ptr->species.size(); specie++) {
         r[specie] = run_ptr->species.at(specie).r;
     }
+    //pop_and_add(0, "row:" + std::to_string(row) + "_preZloop");
     //std::cout << "row" << row << "preZloop " << std::endl;
     for (int z = 0; z < p.Z; z++) {
         for (int i = 0; i < X; i++) { 
@@ -1942,16 +2187,16 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
                     reaction_struct* react_ptr = &run_ptr->reactions.at(reaction);
                     int specie_stagger = reaction * run_ptr->number_of_species;
                     reaction_rate[reaction] = kon[reaction];
-                    double reverse = kon[reaction] / react_ptr->k[1];
+                    double reverse = kon[reaction] / react_ptr->k[1].value();
                     if (p.disable_reverse_reactions) {
                         reverse = 0.0d;
                     }
                     for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
                         solution_ptr = &solution[specie * X];
                         if (coef[specie + specie_stagger] < 0.0d) {
-                            reaction_rate[reaction] *= solution_ptr[i]; // Forward Reaction
+                            reaction_rate[reaction] *= pow(solution_ptr[i], exp[specie]); // Forward Reaction
                         } else if (coef[specie + specie_stagger] > 0.0d) {
-                            reverse *= solution_ptr[i]; // Reverse Reaction
+                            reverse *= pow(solution_ptr[i], exp[specie]); // Reverse Reaction
                         }
                     }
                     reaction_rate[reaction] -= reverse;
@@ -2064,26 +2309,27 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             }             
         }
     }
-    
+    //pop_and_add(0, "row:" + std::to_string(row) + "_postZloop");
+    //add_report(0, "row:" + std::to_string(row) + "_postZloop");
     //std::cout << "row" << row << "postZloop " << std::endl;
-    double split = 99.5d;
-    int bottom_point, top_point;
-
-    double num_profile_width = (double)exp_ptr->window_size - left_edge - right_edge;
+    
+    //add_report(0, "row:" + std::to_string(row) + "_postunshift");
     for (int i = 0; i < exp_ptr->window_size; i++) {
         exp_ptr->model_profile.at(i) = 0.0d;
         //assert ((species_out[0][i] + species_out[2][i]) / run_ptr->dye_conc < 2.0); // model profile output is to high
     }
+    double split = 99.5d;
+    int bottom_point, top_point;
     for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
         specie_struct* specie_ptr = &run_ptr->species.at(specie);
-        const double QE = specie_ptr->QE;
+        const double QE = specie_ptr->QE.value();
         for (int i = 0; i < exp_ptr->window_size; i++) {
-            if (i < left_edge) {
-                exp_ptr->model_profile.at(i) += species_out[specie][X] * QE;
-            } else if (i < exp_ptr->window_size - right_edge) {
-                split = (double)(i - left_edge) * ((double)X) / num_profile_width; //* ((double)X - 1.0d) / (double)(p.num_profile_width - 1.0d);
+            if (i < width) {
+                split = (double)(i) * ((double)X) / width;
                 bottom_point = static_cast<int>(floor(split));
+                assert (bottom_point <= split);
                 top_point = static_cast<int>(ceil(split));
+                assert (top_point >= split);
                 if (top_point == bottom_point || bottom_point == (X - 1)) {
                     exp_ptr->model_profile.at(i) += species_out[specie][bottom_point] * QE;
                 } else {
@@ -2096,13 +2342,12 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             assert (!std::isinf(exp_ptr->model_profile.at(i)));
         }
     }
+    pop_and_add(0, "row:" + std::to_string(row) + "_residuals");
     //std::cout << "row" << row << "postrescale " << std::endl;
     for (int i = 0; i < exp_ptr->window_size; i++) {
         double scatter;
-        if (i < left_edge) {
-            scatter = scattering_correction(species_out[run_ptr->PS_beads][0], species_out[run_ptr->Bound_Dye_1][0], coef[0], run_ptr);
-        } else if (i < exp_ptr->window_size - right_edge) {
-            split = (double)(i - left_edge) * ((double)X) / num_profile_width; //* ((double)X - 1.0d) / (double)(p.num_profile_width - 1.0d);
+        if (i < width) {
+            split = (double)(i) * ((double)X) / width;
             bottom_point = static_cast<int>(floor(split));
             top_point = static_cast<int>(ceil(split));
             if (top_point == bottom_point || bottom_point == (X - 1)) {
@@ -2115,7 +2360,7 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
         }
 
         assert (i + exp_ptr->window_start < p.total_window_size); // residuals input is out of bounds
-        residuals[i + exp_ptr->window_start] = pow(exp_ptr->model_profile.at(i) * scatter / run_ptr->dye_conc - exp_ptr->experimental_profile.at(i), 2.0d);
+        residuals[i + exp_ptr->window_start] = pow(exp_ptr->model_profile.at(i) * scatter / run_ptr->dye_conc - exp_ptr->experimental_profile.at(i), 2.0d) * !exp_ptr->omit;
 
         exp_ptr->error.at(i) = residuals[i + exp_ptr->window_start];
 
@@ -2123,28 +2368,29 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             exp_ptr->experimental_derivative.at(i) = 0.0;
             exp_ptr->numeric_derivative.at(i) = 0.0;
         } else {
-            exp_ptr->experimental_derivative.at(i)  = (exp_ptr->experimental_profile.at(i + 1)  - exp_ptr->experimental_profile.at(i - 1))  / (2 * p.W * 1.0e+6 / exp_ptr->window_size);
-            exp_ptr->numeric_derivative.at(i)       = (exp_ptr->model_profile.at(i + 1)         - exp_ptr->model_profile.at(i - 1))         / (2 * p.W * 1.0e+6 / exp_ptr->window_size) / run_ptr->dye_conc;
+            exp_ptr->experimental_derivative.at(i)  = (exp_ptr->experimental_profile.at(i + 1)  - exp_ptr->experimental_profile.at(i - 1))  / (2 * exp_ptr->scale_factor);
+            exp_ptr->numeric_derivative.at(i)       = (exp_ptr->model_profile.at(i + 1)         - exp_ptr->model_profile.at(i - 1))         / (2 * exp_ptr->scale_factor) / run_ptr->dye_conc;
         }
         
         assert (!std::isnan(residuals[i + exp_ptr->window_start]));
         assert (!std::isinf(residuals[i + exp_ptr->window_start]));
     }
-
+    
     if (p.iterations > 1) {
+        pop_and_add(0, "row:" + std::to_string(row) + "_DAintegrals");
         double exp_d = std::numeric_limits<double>::lowest();
         double model_d = std::numeric_limits<double>::lowest();
         double exp_a = std::numeric_limits<double>::max();
         double model_a = std::numeric_limits<double>::max();
         double exp_integral = 0;
         double model_integral = 0;
+        double analytic_exp_integral = 0;
+        double analytic_model_integral = 0;
         int exp_window_count = 0;
         int model_window_count = 0;
        
         for (int x = 0; x < exp_ptr->window_size; x++) {
-            double x_time = (x  - run_ptr->left_edge) * exp_ptr->scale_factor;
-            //fout << x_time << "  ";
-            if (x_time > (double)p.X * 0.2d && x_time < (double)p.X * 0.8d ) {
+            if (exp_ptr->channel_position.at(x) > (double)p.W * 1e6 * 0.2d && exp_ptr->channel_position.at(x) < (double)p.W * 1e6 * 0.8d ) { // TODO: make 0.2 & 0.8 parameters. Make p.W a parameter
                 exp_d                   = std::max(exp_d, exp_ptr->experimental_derivative.at(x));
                 model_d                 = std::max(model_d, exp_ptr->numeric_derivative.at(x));
                 exp_a                   = std::min(exp_a, exp_ptr->experimental_derivative.at(x));
@@ -2153,24 +2399,60 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
                 model_window_count++;
                 if (exp_ptr->zero_row_ptr != NULL) {
                     auto& zero = exp_ptr->zero_row_ptr;
-                    const double x_split = x_time / zero->scale_factor + exp_ptr->zero_run->left_edge;
-                    const double bot_x = std::max(0.0, double(std::floor(x_split)));
-                    const double top_x = std::max(0.0, double(std::ceil(x_split)));
-    
-                    exp_integral            += std::abs(exp_ptr->experimental_profile.at(x) - lin_interpolate(x_split, bot_x, zero->experimental_profile.at(int(bot_x)), top_x, zero->experimental_profile.at(int(top_x))) );
-                    model_integral          += std::abs(exp_ptr->model_profile.at(x) - lin_interpolate(x_split, bot_x, zero->model_profile.at(int(bot_x)), top_x, zero->model_profile.at(int(top_x))) );
+                    const double x_split = exp_ptr->channel_position.at(x) / zero->scale_factor + left_edge;
+                    int bot_zero = 0;
+                    int top_zero = zero->channel_position.size() - 1;
+                    for (int j = 0; j < zero->channel_position.size(); j++) {
+                        if (zero->channel_position.at(j) > exp_ptr->channel_position.at(x)) {
+                            bot_zero = std::max(0, j - 1);
+                            top_zero = j;
+                            break;
+                        } else if (zero->channel_position.at(j) == exp_ptr->channel_position.at(x)) {
+                            bot_zero = j;
+                            top_zero = j;
+                            break;
+                        }
+                    }
+                    assert(exp_ptr->channel_position.at(x) >= zero->channel_position.at(bot_zero));
+                    assert(exp_ptr->channel_position.at(x) <= zero->channel_position.at(top_zero));
+                    const double zero_exp = lin_interpolate(exp_ptr->channel_position.at(x), zero->channel_position.at(bot_zero), zero->experimental_profile.at(bot_zero), zero->channel_position.at(top_zero), zero->experimental_profile.at(top_zero));
+                    const double zero_model = lin_interpolate(exp_ptr->channel_position.at(x), zero->channel_position.at(bot_zero), zero->model_profile.at(bot_zero), zero->channel_position.at(top_zero), zero->model_profile.at(top_zero));
+                    assert(!isnan(zero_exp));
+                    assert(!isnan(zero_model));
+                    const double exp_dif                    = std::abs(exp_ptr->experimental_profile.at(x) - zero_exp);
+                    exp_ptr->experimental_difference.at(x)  = exp_dif;
+                    exp_integral                            += exp_dif;
+                    assert(!isnan(exp_integral));
+                    const double num_dif                    = std::abs(exp_ptr->model_profile.at(x) - zero_model);
+                    exp_ptr->numeric_difference.at(x)       = num_dif;
+                    model_integral                          += num_dif;
+                    assert(!isnan(model_integral));
                 }
+                const double analytic_zero              = 1.0d / 2.0d * std::erfc(((250.0d - exp_ptr->channel_position.at(x)) * 1.0e-6d) / std::sqrt(4.0d * (double)p.Z * run_ptr->dt * 0.00000000049d));
+                exp_ptr->analytical_zero.at(x)          = analytic_zero * run_ptr->dye_conc;
+                const double analytic_exp_dif           = std::abs(exp_ptr->experimental_profile.at(x) - analytic_zero);
+                analytic_exp_integral                   += analytic_exp_dif;
+                const double analytic_num_dif           = std::abs(exp_ptr->model_profile.at(x) - analytic_zero * run_ptr->dye_conc);
+                analytic_model_integral                 += analytic_num_dif;
             }
         }
 
         exp_ptr->exp_DA = exp_d - exp_a;
         exp_ptr->model_DA = model_d - model_a;
-
+        assert(exp_window_count > 0);
         exp_integral /= (double)p.X * (0.8d - 0.2d) * exp_window_count;
+        analytic_exp_integral /= (double)p.X * (0.8d - 0.2d) * exp_window_count;
+        //assert(!isnan(exp_integral));
+        assert( model_window_count > 0);
         model_integral /= (double)p.X * (0.8d - 0.2d) * model_window_count * run_ptr->dye_conc;
+        analytic_model_integral /= (double)p.X * (0.8d - 0.2d) * model_window_count * run_ptr->dye_conc;
+        //assert(!isnan(model_integral));
         exp_ptr->exp_integral = exp_integral;
         exp_ptr->model_integral = model_integral;
+        exp_ptr->analytic_exp_integral = analytic_exp_integral;
+        exp_ptr->analytic_model_integral = analytic_model_integral;
     }
+    pop_report(0);
 }
 
 
@@ -2183,29 +2465,43 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
         return;
     } else {
         add_report(1, "setting control parmeters");
+        for (int i = 0; i < p.solvables.size(); i++) {
+            auto& s = p.solvables.at(i);
+            s.value() = control_parameters[i];
+        }
         for (int run = 0; run < p.experiment_runs.size(); run++) {
             experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-            for (int index = 0; index < p.global_solve_for.size(); index++) {
-                variable_location(p.solve_for[index], run_ptr) = control_parameters[index];
-            }
-            int displacement = p.global_solve_for.size();
-            for (int j = 0; j < run; j++) {
-                displacement += p.experiment_runs.at(j).solve_for.size();
-            }
-            for (int index = 0; index < run_ptr->solve_for.size(); index++) {
-                assert(index + displacement < p.number_of_variables);
-                variable_location(run_ptr->solve_for.at(index), run_ptr) = control_parameters[index + displacement];
-            }
-
             for (int i = 0; i < run_ptr->reactions.size(); i++) {
-                if (run_ptr->reactions.at(i).name == "FITC_40nm_1" || run_ptr->reactions.at(i).name == "FITC_20nm_1") {
-                    variable_location("ND1", run_ptr) = abs(variable_location("p1", run_ptr));
+                auto reaction = run_ptr->reactions.at(i);
+                if (reaction.name == "FITC_40nm_1" || reaction.name == "FITC_20nm_1") {
+                    variable_location("ND1", run_ptr).value() = abs(variable_location("p1", run_ptr).value());
                 }
-                if (run_ptr->reactions.at(i).name == "FITC_40nm_2" || run_ptr->reactions.at(i).name == "FITC_20nm_2") {
-                    variable_location("NDD2", run_ptr) = abs(variable_location("p2", run_ptr)) + abs(variable_location("ND2", run_ptr));
+                if (reaction.name == "FITC_40nm_2" || reaction.name == "FITC_20nm_2") {
+                    variable_location("NDD2", run_ptr).value() = abs(variable_location("p2", run_ptr).value()) + abs(variable_location("ND2", run_ptr).value());
                 }
             }
         }
+
+        for (int i = 0; i < p.experiments.size(); i++) {
+            experiment_struct* exp_ptr = &p.experiments.at(i);
+            int last_x = static_cast<int>(ceil(exp_ptr->left_edge.value()));
+            for (int x = 0; x < exp_ptr->window_size; x++) {
+                int x_unshift = static_cast<int>(ceil(x + exp_ptr->left_edge.value()));
+                exp_ptr->channel_position.at(x) = ((double)x_unshift - exp_ptr->left_edge.value()) * exp_ptr->scale_factor;
+                if (x == 0) {
+                    exp_ptr->channel_position.at(x) = 0;  // distorts the left edge to prevent a crash later. TODO: FIX
+                }
+                if (x < exp_ptr->width.value()) {
+                    exp_ptr->experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(x_unshift);
+                    last_x = x_unshift;
+                } else {
+                    exp_ptr->experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(last_x);
+                }
+                assert (!std::isnan(exp_ptr->experimental_profile.at(x)));
+                assert (!std::isinf(exp_ptr->experimental_profile.at(x)));
+            }
+        }
+        
         pop_report(1);
         unsigned long const hardware_threads = std::thread::hardware_concurrency();
         std::thread* threads = new std::thread[p.row_count];

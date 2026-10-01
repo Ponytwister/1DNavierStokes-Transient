@@ -22,6 +22,7 @@ main()
     read_raw_profiles_from_db(db);
     read_inlet_cond_from_db(db);
     get_SOLUTION_IDs_from_db(db);
+    //get_solvable_initial_values_from_db(db);
     read_alglib_values_from_db(db);
     normalize_profile();
     
@@ -38,18 +39,18 @@ main()
         s - scaling coefficients set by MinLMSetScale()
         Recommended values: 1E-9 ... 1E-12.
         */
-        double DiffStep = 0.000001;
+        double DiffStep = 0.0001;
         alglib::real_1d_array control_parameters;
-        control_parameters.setcontent(p.number_of_variables, p.initial_values_alglib);
+        control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib);
         alglib::real_1d_array s;
-        s.setcontent(p.number_of_variables, p.scale);
+        s.setcontent(p.solvables.size(), p.scale);
         alglib::real_1d_array bndl;
-        bndl.setcontent(p.number_of_variables, p.low_bound);
+        bndl.setcontent(p.solvables.size(), p.low_bound);
         alglib::real_1d_array bndu;
-        bndu.setcontent(p.number_of_variables, p.up_bound);
+        bndu.setcontent(p.solvables.size(), p.up_bound);
         alglib::minlmstate state;
         alglib::minlmreport rep;
-        alglib::minlmcreatev(p.number_of_variables, p.total_window_size, control_parameters, DiffStep, state);
+        alglib::minlmcreatev(p.solvables.size(), p.total_window_size, control_parameters, DiffStep, state);
         alglib::minlmsetbc(state, bndl, bndu);
         alglib::minlmsetcond(state, p.convergence_epsx, p.max_iterations);
         alglib::minlmsetscale(state, s);
@@ -59,35 +60,23 @@ main()
             alglib::minlmoptimize(state, alglib_solver);   // Optimize
             std::cout << p.iterations - 1 << ". Done" << std::endl;
             alglib::minlmresults(state, control_parameters, rep);
-            for (int index = 0; index < p.number_of_variables; index++) {
+
+            for (int index = 0; index < p.solvables.size(); index++) {
                 p.initial_values_alglib[index] = control_parameters[index];
             }
-            std::cout << "global(";
-            for (int index = 0; index < p.global_solve_for.size(); index++) {
-                std::cout << p.solve_for[index] << ":" << control_parameters[index];
-                if (index != p.global_solve_for.size() - 1) {
+                        
+            for (int i = 0; i < p.solvables.size(); i++) {
+                auto& s = p.solvables.at(i);
+                std::cout << "(" << s.source_name << ":" << s.name << ":" << s.value() << ")";
+                if (i != p.solvables.size() - 1) {
                     std::cout << " ";
                 }
             }
-            std::cout << ")";
-            int displacement = p.global_solve_for.size();
-            for (int run = 0; run < p.experiment_runs.size(); run++) {
-                experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-                for (int index = 0; index < p.global_solve_for.size(); index++) {
-                    variable_location(p.solve_for[index], run_ptr) = control_parameters[index];
-                }
-                std::cout << " " + run_ptr->name + "(";
-                for (int i = 0; i < run_ptr->solve_for.size(); i++) {
-                    std::cout << run_ptr->solve_for.at(i) << ":" << control_parameters[displacement + i];
-                    variable_location(run_ptr->solve_for.at(i), run_ptr) = control_parameters[displacement + i];
-                    if (i != run_ptr->solve_for.size() - 1) {
-                        std::cout << " ";
-                    }
-                }
-                displacement += run_ptr->solve_for.size();
-                std::cout << ")";
-            }
             std::cout << std::endl;
+        } else {
+            alglib::real_1d_array residuals;
+            void *ptr;
+            alglib_solver(control_parameters, residuals, ptr);
         };
 
         p.output_file_name.clear();

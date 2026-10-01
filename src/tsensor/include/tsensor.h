@@ -11,7 +11,18 @@
 #include <algorithm>
 #include <map>
 #include <assert.h>
+#include <deque>
 
+enum level {
+  all,
+  trace,
+  debug,
+  info,
+  warn,
+  error,
+  fatal,
+  off
+};
 // 7+ off
 // 6: fatal
 // 5: error
@@ -20,34 +31,101 @@
 // 2: debug
 // 1: trace
 // 0: all
+
+struct solvable {
+    double default_value = 0.0;
+    solvable* source = nullptr;
+    bool param_init = false;
+    std::string name;
+    std::string source_name;
+
+    solvable() = default;
+
+    explicit solvable(double value)
+        : default_value(value)
+    {}
+
+    solvable(double value, std::string name)
+        : default_value(value)
+        , name(std::move(name))
+    {}
+
+    solvable(std::string name)
+        : name(std::move(name))
+    {}
+
+    solvable(std::string name, std::string source_name)
+        : name(std::move(name))
+        , source_name(std::move(source_name))
+    {}
+
+    explicit solvable(solvable* source_ptr, std::string name = "")
+        : source(source_ptr)
+        , name(std::move(name))
+    {}
+
+    double& value()
+    {
+        solvable* current = this;
+
+        for (int i = 0; i < 100; ++i)
+        {
+            if (!current->source)
+                return current->default_value;
+
+            current = current->source;
+        }
+
+        throw std::runtime_error("Cycle detected in solvable chain");
+    }
+
+    bool is_linked() const
+    {
+        return source != nullptr;
+    }
+
+    void unlink()
+    {
+        if (source)
+        {
+            default_value = source->value();
+            source = nullptr;
+        }
+    }
+
+    void update()
+    {
+        if (source)
+        {
+            default_value = source->value();
+        }
+    }
+
+    void init()
+    {
+        solvable* current = this;
+        bool cycle_detected = true;
+        for (int i = 0; i < 100; ++i)
+        {
+            current->param_init = true;
+            if (!current->source) {
+                cycle_detected = false;
+                break;
+            }
+            current = current->source;
+        }
+        if (cycle_detected) {
+            throw std::runtime_error("Cycle detected in solvable chain");
+        }
+    }
+};
+
 struct report {
     int debug_level = 0;
     std::string report_text;
     report(int debug_level, std::string report_text) 
         : debug_level(debug_level)
         , report_text(std::move(report_text))
-    {}
-};
-
-struct parameter_solution_struct {
-    std::string PARAMETER;
-    std::string VALUE;
-    std::string UNITS;
-    parameter_solution_struct(std::string PARAMETER, std::string VALUE, std::string UNITS) 
-        : PARAMETER(std::move(PARAMETER))
-        , VALUE(std::move(VALUE))
-        , UNITS(std::move(UNITS)) 
-    {}
-};
-
-struct solution_ID_struct {
-    std::string SOLVE_SETTING_ID;
-    std::string EXPERIMENT_NAME;
-    std::string INLET_COND_ID;
-    solution_ID_struct(int SOLVE_SETTING_ID, std::string EXPERIMENT_NAME, int INLET_COND_ID) 
-        : SOLVE_SETTING_ID(std::to_string(SOLVE_SETTING_ID))
-        , EXPERIMENT_NAME(std::move(EXPERIMENT_NAME))
-        , INLET_COND_ID(std::to_string(INLET_COND_ID))
     {}
 };
 
@@ -58,7 +136,7 @@ struct specie_struct {
     double diameter;
     double particle_density;
     double molecular_weight;
-    double QE;
+    solvable QE;
     double r;
     int type; // 0 undefined, 1 molecule, 2 particle
     std::string input_units;
@@ -67,10 +145,10 @@ struct specie_struct {
 };
 
 struct reaction_struct {
-    double k[2];
+    solvable k[2];
     std::string name;
-    std::map<specie_struct*, double> coef;
-    std::map<specie_struct*, double> exp;
+    std::map<specie_struct*, solvable> coef;
+    std::map<specie_struct*, solvable> exp;
     std::vector<specie_struct*> specie_vect;
 };
 
@@ -83,8 +161,8 @@ struct experiment_run_struct {
     double total_flowrate = 0.0d;
     double dye_conc_mgml;                  //= 0.00336d; // mg/ml FITC
     double dye_conc;                       //= dye_conc_mgml * 1000.0d / 332.326d * 6.022e+23;     // molecules FITC / m3
-    double left_edge;
-    double right_edge;
+    solvable left_edge;
+    solvable width;
     double dt; // seconds
     double visc = 0.0010016d; // Dynamic viscosity of water at 20C in Pa.s
     double temperature = 20.0d + 273.15d;
@@ -119,17 +197,26 @@ struct experiment_struct {
     double model_DA;
     double exp_integral;
     double model_integral;
+    double analytic_exp_integral;
+    double analytic_model_integral;
     double scale_factor;
+    bool omit;
+    solvable left_edge;
+    solvable width;
     std::string second_name;
-    std::vector<entrance_struct> entrances; 
+    std::vector<entrance_struct> entrances;
+    std::vector<double> channel_position;
     std::vector<double> model_profile;
+    std::vector<double> raw_experimental_profile;
     std::vector<double> experimental_profile;
     std::vector<double> error;
     std::vector<double> numeric_derivative;
     std::vector<double> experimental_derivative;
+    std::vector<double> numeric_difference;
+    std::vector<double> experimental_difference;
+    std::vector<double> analytical_zero;
     experiment_run_struct* run;
     experiment_struct* zero_row_ptr;
-    experiment_run_struct* zero_run;
 };
 void set_inlet_conc(experiment_struct* exp_ptr, double* solution);
 
@@ -144,18 +231,18 @@ typedef struct parameters_struct {
     bool SOLUTION_ID_RECURSIVE_CALL = false;
     bool PROFILE_IDs_RECURSIVE_CALL = false;
     int Z, X, exp_left_padding, exp_right_padding;
-    alglib::ae_int_t max_iterations;
+    alglib::ae_int_t max_iterations = 0;
     int iterations = 0;
-    std::string output_file_name, scatter_correction_type;
+    std::string output_file_name, scatter_correction_type = "none";
     bool run_solver = true, disable_reactions = false, save_model_profiles = true, disable_reverse_reactions = false, use_alglib_init_values = true;
-    double convergence_epsx;
-    double time_step_convergence = 0.00001d;
+    double convergence_epsx = 1e-9;
+    double time_step_convergence = 0.0001d;
 
     // Experimental Parameters
-    int number_of_variables = 0;
     std::vector<std::string> solve_for;
     std::vector<std::string> global_solve_for;
     std::vector<std::string> retrieved;
+    std::deque<solvable> solvables;
     std::vector<experiment_run_struct> experiment_runs;
     std::vector<experiment_struct> experiments;
     int row_count = 0;
@@ -166,6 +253,11 @@ typedef struct parameters_struct {
     double* low_bound;
     double* up_bound; 
     double* scale;
+
+    std::map<std::string, double> initial_values_alglib_map;
+    std::map<std::string, double> low_bound_map;
+    std::map<std::string, double> up_bound_map; 
+    std::map<std::string, double> scale_map;
 } parameters_t;
 
 // Text FILE HANDLERS
@@ -176,7 +268,7 @@ void normalize_profile();
 void model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row);
 void alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
 double scattering_correction(double NS, double species_2, double p, experiment_run_struct* run_ptr);
-double& variable_location(const std::string& variable_name, experiment_run_struct* run_ptr);
+solvable& variable_location(const std::string& variable_name, experiment_run_struct* run_ptr);
 void clear_output(int debug_level, std::string text_to_clear);
 void add_report(int debug_level, std::string text_to_add);
 void pop_report(int debug_level);
@@ -206,6 +298,8 @@ void get_SOLUTION_IDs_from_db(sqlite3* db);
 int alglib_input_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_alglib_values_from_db(sqlite3* db);
 void get_solve_settings_ID_from_db(sqlite3* db);
+int get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames);
+void get_solvable_initial_values_from_db(sqlite3* db);
 void write_model_profile_to_db(sqlite3* db);
 void write_alglib_values_to_db(sqlite3* db);
 int specie_db_callback(void *data, int count, char **argv, char **columnNames);
@@ -213,22 +307,3 @@ int reaction_db_callback(void *data, int count, char **argv, char **columnNames)
 void read_specie_and_reaction_values_from_db(sqlite3* db);
 
 extern parameters_t p;
-
-struct model_profile_struct {
-    std::string SOLUTION_ID;
-    std::string X;
-    std::string Free_Dye;
-    std::string Bound_Dye;
-    std::string Total_Dye;
-    std::string Unbound_Beads;
-    std::string Bound_Beads;
-    std::string Total_Beads;
-    std::string Experimental_Derivative;
-    std::string Numeric_Derivative;
-    std::string Experimental;
-    std::string Numeric;
-    model_profile_struct(int SOLUTION_ID, double X) 
-        : SOLUTION_ID(std::to_string(SOLUTION_ID))
-        , X(double_to_string(X)) 
-    {}
-};
