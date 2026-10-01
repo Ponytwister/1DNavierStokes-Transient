@@ -1,0 +1,2 @@
+# Generated text reports, including exports into output subdirectories.
+/out/**/*.txt
