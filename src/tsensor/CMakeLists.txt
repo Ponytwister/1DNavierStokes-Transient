@@ -1,4 +1,4 @@
-add_library(tsensor STATIC sqlite_interface.cpp workflow.cpp application_options.cpp)
+add_library(tsensor STATIC sqlite_interface.cpp workflow.cpp application_options.cpp feedback.cpp)
 target_link_libraries(tsensor PUBLIC alglib)
 target_link_libraries(tsensor PUBLIC sqlite3)
 

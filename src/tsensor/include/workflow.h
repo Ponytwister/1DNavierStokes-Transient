@@ -7,13 +7,28 @@
 // run_session below, which owns state/connection and enforces operation order.
 namespace tsensor_workflow {
 
-// Load in the established order, including profile imports and solution-ID
-// creation (which can write to the database), then normalize the profiles.
+struct parameter_value {
+    std::string source;
+    std::string name;
+    double value;
+};
+
+struct run_result {
+    bool optimizer_ran = false;
+    int residual_evaluations = 0;
+    std::optional<alglib::ae_int_t> optimizer_iterations;
+    std::optional<alglib::ae_int_t> termination_type;
+    // Owned snapshot of the returned optimizer vector (or inputs if disabled).
+    std::vector<parameter_value> parameters;
+};
+
+// Load in the established order, including solve-settings/solution-ID creation
+// (which can write to the database), then normalize the profiles.
 void load_inputs(parameters_t& p, sqlite3* db);
 
 // Requires successfully loaded inputs. Retains the existing run_solver behavior
 // and optimizer settings; ALGLIB exceptions propagate to the caller.
-void run(parameters_t& p);
+run_result run(parameters_t& p);
 
 // Export into an explicit directory (created if absent), retaining the existing
 // experiment-based filename. Returns the written path; reports I/O errors by
@@ -34,7 +49,7 @@ enum class session_state { empty, loaded, completed, failed };
 // Calls on the same session must be serialized; this is not a background UI API.
 class run_session {
 public:
-    explicit run_session(const std::filesystem::path& database_path);
+    explicit run_session(const std::filesystem::path& database_path, progress_callback progress = {});
     ~run_session() = default;
     run_session(const run_session&) = delete;
     run_session& operator=(const run_session&) = delete;
@@ -42,12 +57,15 @@ public:
     run_session& operator=(run_session&&) = delete;
 
     void load_inputs();
-    void run();
+    run_result run();
     std::filesystem::path export_results(const std::filesystem::path& directory);
     void save_model_profiles();
     void save_fitted_parameters();
 
     session_state state() const noexcept { return state_; }
+    // Inspect after an operation returns. A throwing observer is disconnected;
+    // its exception is retained while the model operation continues normally.
+    std::exception_ptr progress_failure() const noexcept { return parameters_.progress_failure; }
     parameters_t& parameters() noexcept { return parameters_; }
     const parameters_t& parameters() const noexcept { return parameters_; }
     // Borrowed for component operations. Do not close it; finalize any statements
@@ -59,7 +77,7 @@ private:
     struct close_database {
         void operator()(sqlite3* db) const noexcept { sqlite3_close_v2(db); }
     };
-    void require_state(session_state expected) const;
+    void require_state(session_state expected, operation action) const;
     std::unique_ptr<sqlite3, close_database> database_;
     parameters_t parameters_{};
     session_state state_ = session_state::empty;

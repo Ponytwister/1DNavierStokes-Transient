@@ -14,6 +14,8 @@
 #include <assert.h>
 #include <deque>
 #include <mutex>
+#include <exception>
+#include <feedback.h>
 
 enum level {
   all,
@@ -235,6 +237,9 @@ typedef struct parameters_struct {
     int debug_level = 0;
     std::vector<report> state; // text output
     std::recursive_mutex report_mutex; // Shared by the existing model workers.
+    tsensor_workflow::progress_callback progress;
+    std::exception_ptr progress_failure;
+    tsensor_workflow::operation active_operation = tsensor_workflow::operation::none;
     // Model Control Parameters
     int SOLVE_SETTING_ID = 0;
     bool SOLVE_SETTING_RECURSIVE_CALL = false;
@@ -270,6 +275,10 @@ typedef struct parameters_struct {
     std::map<std::string, double> scale_map;
 } parameters_t;
 
+// Callback deliveries are serialized and synchronous, possibly on a model worker.
+// No callback means no console output. Do not reenter/mutate a running session.
+void publish_event(parameters_t& p, tsensor_workflow::progress_event event);
+
 // Text FILE HANDLERS
 void save_excel_output(parameters_t& p, const std::filesystem::path& file_name);
 
@@ -279,11 +288,9 @@ void model(parameters_t& p, const alglib::real_1d_array &control_parameters, alg
 void alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
 double scattering_correction(parameters_t& p, double NS, double species_2, double coef, experiment_run_struct* run_ptr);
 solvable& variable_location(const std::string& variable_name, experiment_run_struct* run_ptr);
-void clear_output(int debug_level, std::string text_to_clear);
 void add_report(parameters_t& p, int debug_level, std::string text_to_add);
 void pop_report(parameters_t& p, int debug_level);
 void pop_and_add(parameters_t& p, int debug_level, std::string text_to_add);
-void finish_report(int debug_level, std::string text_to_add);
 void add_finishing_report(parameters_t& p, int debug_level, std::string text_to_add);
 void removeSpaces(std::string &str);
 ptrdiff_t specie_index(experiment_run_struct* run_ptr, std::string specie_to_find, std::string second_specie_name = "na");

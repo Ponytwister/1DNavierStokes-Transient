@@ -13,7 +13,6 @@ public:
     sqlite_error_message(const sqlite_error_message&) = delete;
     sqlite_error_message& operator=(const sqlite_error_message&) = delete;
     ~sqlite_error_message() { sqlite3_free(message_); }
-    const char* get() const { return message_ ? message_ : "Unknown SQLite error"; }
     char** out() {
         sqlite3_free(message_);
         message_ = nullptr;
@@ -23,7 +22,7 @@ public:
 
 using row_callback = int (*)(void*, int, char**, char**);
 
-int execute_sql(parameters_t& p, sqlite3* db, const char* sql,
+void execute_sql(parameters_t& p, sqlite3* db, const char* sql,
                 row_callback callback, char** error)
 {
     struct callback_context {
@@ -44,14 +43,19 @@ int execute_sql(parameters_t& p, sqlite3* db, const char* sql,
     };
     const int rc = sqlite3_exec(db, sql, callback ? +invoke : nullptr, &context, error);
     if (context.failure) { std::rethrow_exception(context.failure); }
-    return rc;
+    if (rc != SQLITE_OK) {
+        throw tsensor_workflow::workflow_error(p.active_operation,
+            tsensor_workflow::error_code::database,
+            std::string("Error in executing SQL: ") + (error && *error ? *error : sqlite3_errmsg(db))
+                + "\n" + sql, rc);
+    }
 }
 } // namespace
 
 void
 save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
 {
-    std::cout << "Priming " << file_name << ": ";
+    add_report(p, 3, "Exporting results to " + file_name.string());
     std::ofstream fout;
     fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
     fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
@@ -73,7 +77,7 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
         fout << channel_position << "  ";
     }
     fout << std::endl;
-    std::cout << "Done" << std::endl;
+
 
     double dye_bead_ratio = 2000.0d;
     double total_dye = 0.0d;
@@ -232,12 +236,7 @@ delete_values_from_db(parameters_t& p, sqlite3* db, std::string table, std::stri
         return;
     }
     sqltext.append("DELETE FROM " + table + " WHERE " + where_conditions + ";");
-    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        printf("Error in executing deletion SQL: %s \n", errMsg.get());
-        std::cout << sqltext << std::endl;
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
 }
 
 int 
@@ -328,13 +327,7 @@ read_model_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using
     sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'model_controls';";
     const char* sql = sqltext.c_str();
-    int rc = execute_sql(p, db, sql, read_model_parameters_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sql, read_model_parameters_db_callback, errMsg.out());
     add_finishing_report(p, 3, "Done");
 
     std::string runs =std::to_string(p.experiment_runs.size()) + " runs (";
@@ -391,7 +384,7 @@ raw_profile_row_count_db_callback(void *data, int count, char **argv, char **col
 void
 lines_from_profile_text(parameters_t& p, sqlite3* db)
 {
-    std::cout << "Retrieving line count: ";
+    add_report(p, 3, "Retrieving profile row count");
     sqlite_error_message errMsg;
     std::string sqltext = "SELECT NAME, WT_PERCENT FROM 'raw_profile' WHERE ";
     int number_of_runs = p.experiment_runs.size();
@@ -405,14 +398,8 @@ lines_from_profile_text(parameters_t& p, sqlite3* db)
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = execute_sql(p, db, sql, raw_profile_row_count_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
-    std::cout << p.row_count << " Done" << std::endl;
+    execute_sql(p, db, sql, raw_profile_row_count_db_callback, errMsg.out());
+    add_report(p, 3, "Loaded " + std::to_string(p.row_count) + " profile rows");
 }
 
 int 
@@ -517,36 +504,22 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
 void 
 read_exp_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    std::cout << "Reading experimental parameters from database: ";
+    add_report(p, 3, "Reading experimental parameters from database");
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
 
         sqlite_error_message errMsg;
         std::string sqltext = "SELECT * FROM 'experiments' WHERE NAME='" + run_ptr->name + "';";
         const char* sql = sqltext.c_str();
-        int rc = execute_sql(p, db, sql, exp_parameters_db_callback, errMsg.out());
-        if (rc != SQLITE_OK){
-            std::string error = errMsg.get();
-            throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg.get());
-
-        }
+        execute_sql(p, db, sql, exp_parameters_db_callback, errMsg.out());
         if (run_ptr->number_of_species == 0) {throw std::runtime_error(run_ptr->name + " number_of_species is zero");}
 
         double restime      = p.W * p.H * p.L / (run_ptr->total_flowrate); // seconds
         run_ptr->dt         = restime / p.Z; // seconds
     }
 
-    std::cout << "Done" << std::endl;
-    std::cout << p.solvables.size() << " solvables for " << p.solve_for.size() << " variables ";
-    for (int item = 0; item < p.solvables.size(); item++) {
-        std::cout << "(" << p.solvables.at(item).source_name << "_" << p.solvables.at(item).name << ")";
-        if (item != p.solvables.size() - 1) {
-            std::cout << " ";
-        } else {
-            std::cout << std::endl;
-        }
-    }
+    add_report(p, 3, std::to_string(p.solvables.size()) + " solvables for "
+                     + std::to_string(p.solve_for.size()) + " variables");
 }
 
 int 
@@ -559,7 +532,7 @@ get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char 
     //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
     if (argv[0] != NULL) {
         p.SOLVE_SETTING_ID = std::stoi(argv[0]);
-        std::cout << argv[0] << " ";
+        add_report(p, 3, "Solve settings ID: " + std::string(argv[0]));
     }
     return 0;
 }
@@ -567,11 +540,7 @@ get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char 
 void 
 get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    if (p.SOLVE_SETTING_ID == 0) {
-    std::cout << "Retrieving SOLUTION_SET_ID from database: ";
-    } else {
-        std::cout << "SOLUTION_SET_ID not found in database. Writing new entry: ";
-    }
+    add_report(p, 3, "Retrieving solve settings ID from database");
     sqlite_error_message errMsg;
     std::string sqltext;
 
@@ -620,26 +589,15 @@ get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db) //reading data using
     sqltext.append("AND SCATTER_METHOD = '" + p.scatter_correction_type + "' ");
     sqltext.append("AND X_RESOLUTION = '" + X_RESOLUTION + "' ");
     sqltext.append("AND Z_RESOLUTION = '" + Z_RESOLUTION + "'; ");
-    int rc = execute_sql(p, db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, errMsg.out());
     sqltext.clear();
 
     if (p.SOLVE_SETTING_ID == 0) {
+        add_report(p, 3, "Creating a solve_settings record");
         sqltext.append("INSERT INTO solve_settings (ALL_EXP_FITTED, PARAMETERS_SOLVED_FOR, REACTIONS_ENABLED, SCATTER_METHOD, X_RESOLUTION, Z_RESOLUTION)");
         sqltext.append(" VALUES ('" + ALL_EXP_FITTED + "','" + PARAMETERS_SOLVED_FOR + "','" + REACTIONS_ENABLED + "','" + p.scatter_correction_type + "','" + X_RESOLUTION + "','" + Z_RESOLUTION + "'); ");
 
-        int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-        if (rc != SQLITE_OK){
-            std::string error = errMsg.get();
-            throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg.get());
-
-        }
+        execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
         if (p.SOLVE_SETTING_RECURSIVE_CALL == true) {
             throw std::runtime_error("SOLVE_SETTING_ID recursively called more than once.");
         } else {
@@ -647,8 +605,7 @@ get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db) //reading data using
             get_solve_settings_ID_from_db(p, db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
         }
     }
-    
-    std::cout << "Done" << std::endl;
+
 }
 
 int 
@@ -820,13 +777,7 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
                 sqltext.append(";");
             }
         }
-        int rc = execute_sql(p, db, sqltext.c_str(), specie_db_callback, errMsg.out());
-        if (rc != SQLITE_OK){
-            std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg.get());
-
-        }
+        execute_sql(p, db, sqltext.c_str(), specie_db_callback, errMsg.out());
 
         sqltext = "SELECT '" + std::to_string(run_index) + "' AS run, * FROM 'reactions' WHERE ";
         for (int react = 0; react < run_ptr->number_of_reactions; react++) {
@@ -837,13 +788,7 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
                 sqltext.append(";");
             }
         }
-        rc = execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
-        if (rc != SQLITE_OK){
-            std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg.get());
-
-        }
+        execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
 
         for (int item = 0; item < p.solvables.size(); item++) {
             auto& s = p.solvables.at(item);
@@ -1074,13 +1019,7 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
     pop_and_add(p, 1, "setting experiments.entrances size and flowrates");
 
     for (int row = 0; row < p.row_count; row++) {
@@ -1199,13 +1138,7 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = execute_sql(p, db, sql, inlet_cond_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sql, inlet_cond_db_callback, errMsg.out());
     pop_and_add(p, 1, "post_db:");
 
     for (int row = 0; row < p.row_count; row++) {
@@ -1312,11 +1245,7 @@ get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **colu
 void 
 get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    if (p.SOLUTION_ID_RECURSIVE_CALL == false) {
-    std::cout << "Retrieving SOLUTION_IDs from database: ";
-    } else {
-        std::cout << "some SOLUTION_IDs not found in database. Writing new entries: ";
-    }
+    add_report(p, 3, "Retrieving solution IDs from database");
     sqlite_error_message errMsg;
     std::string sqltext;
 
@@ -1339,13 +1268,7 @@ get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using call
         sqltext.append("AND INLET_COND_ID = '" + solutions.at(solution).INLET_COND_ID+ "'; ");
     }
 
-    int rc = execute_sql(p, db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, errMsg.out());
     sqltext.clear();
 
     experiment_struct* exp_ptr;
@@ -1353,25 +1276,18 @@ get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using call
     for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
         exp_ptr = &p.experiments.at(j);
         if (exp_ptr->SOLUTION_ID == 0) {
+            add_report(p, 3, "Creating a solutions record for " + exp_ptr->run->name);
             recursive_call_required = true;
             sqltext.append("INSERT INTO solutions (SOLVE_SETTING_ID, EXPERIMENT_NAME, INLET_COND_ID)");
             sqltext.append(" VALUES ('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + exp_ptr->run->name + "','" + std::to_string(exp_ptr->INLET_COND_ID) + "'); ");
         }
     }
-    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (p.SOLUTION_ID_RECURSIVE_CALL == true && recursive_call_required) {
         throw std::runtime_error("SOLUTION_ID_RECURSIVE_CALL recursively called more than once.");
     } else if (recursive_call_required) {
         p.SOLUTION_ID_RECURSIVE_CALL = true;
         get_SOLUTION_IDs_from_db(p, db); // recursive call to ensure SOLUTION_ID_RECURSIVE_CALL is set.
-    } else {
-        std::cout << "Done" << std::endl;
     }
 }
 
@@ -1442,20 +1358,13 @@ get_solvable_initial_values_from_db_callback(void *data, int count, char **argv,
 void 
 get_solvable_initial_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    std::cout << "Retrieving solvable initial values from parameter_solutions table: ";
+    add_report(p, 3, "Retrieving initial values from parameter_solutions");
     sqlite_error_message errMsg;
     std::string sqltext = "SELECT SOURCE, SOLUTION_ID, PARAMETER, VALUE FROM parameter_solutions ";
     sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
-    int rc = execute_sql(p, db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, errMsg.out());
     sqltext.clear();
-    
-    std::cout << "Done" << std::endl;
+
     
 }
 
@@ -1495,7 +1404,7 @@ alglib_input_db_callback(void *data, int count, char **argv, char **columnNames)
 void 
 read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    std::cout << "Reading alglib inputs from database: ";
+    add_report(p, 3, "Reading ALGLIB inputs from database");
     p.scale.resize(p.solvables.size());
     p.initial_values_alglib.resize(p.solvables.size());
     p.low_bound.resize(p.solvables.size());
@@ -1513,14 +1422,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         }
     }
     
-    int rc = execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
+    execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
 
-    }
-    std::cout << "Done" << std::endl;
     
     for (int i = 0; i < p.solvables.size(); i++) {
         auto& s = p.solvables.at(i);
@@ -1534,12 +1437,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         p.up_bound[i] = p.up_bound_map.at(s.name); 
         p.scale[i] = p.scale_map.at(s.name);
 
-        std::cout << "(" << s.source_name << ":" << s.name << ":" << p.initial_values_alglib[i] << ")";
-        if (i != p.solvables.size() - 1) {
-            std::cout << " ";
-        } else {
-            std::cout << std::endl;
-        }
+        add_report(p, 3, "Initial parameter " + s.source_name + ":" + s.name + " = "
+                         + double_to_string(p.initial_values_alglib[i]));
     }
 }
 
@@ -1604,12 +1503,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     param_solutions.clear();
     param_solutions.shrink_to_fit();
-    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error);
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     sqltext.clear();
 
     pop_and_add(p, 1, "solutions table");
@@ -1623,12 +1517,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         sqltext.append("SECOND_NAME = '" +          exp_ptr->second_name + "' ");
         sqltext.append("WHERE SOLUTION_ID = '" +    std::to_string(exp_ptr->SOLUTION_ID) + "'; ");
     }
-    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + " " + sqltext);
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     sqltext.clear();
 
     pop_and_add(p, 1, "preparing items into model_profiles table");
@@ -1751,33 +1640,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         //model_profiles.shrink_to_fit();
     }
 
-    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        struct tuple {
-            int ID;
-            double X;
-            tuple(int ID, double X) 
-            : ID(ID)
-            , X(X) 
-            {}
-        };
-        std::vector<tuple> ID_Xs;
-        model_profile_struct* mp;
-        for (int sol = 0; sol < model_profiles.size(); sol++) {
-            mp = &model_profiles.at(sol);
-            for (int i = 0; i < ID_Xs.size(); i++) {
-                if (std::stod(mp->X) == ID_Xs.at(i).X) {
-                    error.append(" " + mp->SOLUTION_ID + ":" + mp->X); 
-                } else if (i == ID_Xs.size() - 1) {
-                    ID_Xs.emplace_back(std::stod(mp->SOLUTION_ID), std::stod(mp->X));
-                    break;
-                }
-            }
-        }
-        throw std::runtime_error("Error in executing SQL: " + error);
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
 }
@@ -1841,13 +1704,7 @@ write_alglib_values_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     pop_report(p, 0);
     pop_and_add(p, 1, "running sql"); // removes run state
-    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (rc != SQLITE_OK){
-        std::string error = errMsg.get();
-        throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg.get());
-
-    }
+    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
 }
@@ -1949,20 +1806,13 @@ variable_location(const std::string& variable_name, experiment_run_struct* run_p
 }
 
 void
-clear_output(std::string text_to_clear)
-{
-    for (int j = 0; j < text_to_clear.size(); j++) {
-        std::cout << '\b' << ' ' << '\b';
-    }
-}
-
-void
 add_report(parameters_t& p, int debug_level, std::string text_to_add)
 {
     std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
     if (p.debug_level <= debug_level) {
         p.state.emplace_back(debug_level, text_to_add + " ");
-        std::cout << text_to_add + " ";
+        publish_event(p, {tsensor_workflow::event_kind::message, p.active_operation,
+                          std::move(text_to_add), debug_level});
     }
 }
 
@@ -1971,7 +1821,6 @@ pop_report(parameters_t& p, int debug_level)
 {
     std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
     if (!p.state.empty() && p.state.back().debug_level <= debug_level) {
-        clear_output(p.state.back().report_text);
         p.state.pop_back();
     }
 }
@@ -1992,7 +1841,6 @@ pop_finishing_report(parameters_t& p, int debug_level, std::string text_to_add)
     if (p.debug_level <= debug_level) {
         pop_and_add(p, debug_level, text_to_add);
         p.state.clear();
-        std::cout << std::endl;
     }
 }
 
@@ -2003,7 +1851,6 @@ add_finishing_report(parameters_t& p, int debug_level, std::string text_to_add)
     if (p.debug_level <= debug_level) {
         add_report(p, debug_level, text_to_add);
         p.state.clear();
-        std::cout << std::endl;
     }
 }
 
@@ -2166,7 +2013,7 @@ set_inlet_conc(parameters_t& p, experiment_struct* exp_ptr, double* solution)
 void
 model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row)
 {
-    //std::cout << "row" << row << "start " << std::endl;
+
     //add_report(p, 0, "row:" + std::to_string(row) + "_start");
     experiment_struct* exp_ptr = &p.experiments.at(row);
     experiment_run_struct* run_ptr = exp_ptr->run;
@@ -2214,14 +2061,14 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     }
     assert (coef[run_ptr->FITC] == -coef[run_ptr->Bound_Dye_1]);
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preinlet");
-    //std::cout << "row" << row << "preinlet " << std::endl;
+
     set_inlet_conc(p, exp_ptr, solution);
 
     for (int specie = 0; specie < run_ptr->species.size(); specie++) {
         r[specie] = run_ptr->species.at(specie).r;
     }
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preZloop");
-    //std::cout << "row" << row << "preZloop " << std::endl;
+
     for (int z = 0; z < p.Z; z++) {
         for (int i = 0; i < X; i++) { 
             for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
@@ -2369,7 +2216,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     }
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_postZloop");
     //add_report(p, 0, "row:" + std::to_string(row) + "_postZloop");
-    //std::cout << "row" << row << "postZloop " << std::endl;
+
     
     //add_report(p, 0, "row:" + std::to_string(row) + "_postunshift");
     for (int i = 0; i < exp_ptr->window_size; i++) {
@@ -2401,7 +2248,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
         }
     }
     pop_and_add(p, 0, "row:" + std::to_string(row) + "_residuals");
-    //std::cout << "row" << row << "postrescale " << std::endl;
+
     for (int i = 0; i < exp_ptr->window_size; i++) {
         double scatter;
         if (i < width) {
@@ -2591,4 +2438,6 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
     }
     pop_report(p, 3);
     p.iterations = p.iterations + 1;
+    publish_event(p, {tsensor_workflow::event_kind::evaluation, p.active_operation,
+                      "Residual evaluation completed", 3, p.iterations});
 }

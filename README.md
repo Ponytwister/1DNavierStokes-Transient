@@ -50,6 +50,8 @@ Path tests cover option parsing, exports to disposable directories, file-open er
 and CLI rejection of missing database files without creating an empty database.
 Session tests cover independent state and links, owned concentration buffers,
 partial-load failures, SQLite statement/connection cleanup, and worker exceptions.
+Feedback tests cover silent core execution, lifecycle/error events, serialized
+callbacks, evaluation counts, returned parameter snapshots, and explicit saves.
 
 ## Running the application
 
@@ -85,6 +87,8 @@ full solve or fit.
 - `src/tsensor/application_options.cpp`: terminal path options and legacy defaults.
 - `src/tsensor/workflow.cpp` and `include/workflow.h`: shared loading, fitting,
   export, save, and owned run sessions in the `tsensor` library.
+- `src/tsensor/feedback.cpp` and `include/feedback.h`: progress delivery and typed
+  workflow errors; terminal formatting lives in `tsensor.cpp`.
 - `src/tsensor/include/tsensor.h`: parameters, experiment structures, and interfaces.
 - `src/tsensor/sqlite_interface.cpp`: database I/O, numerical helpers, and model routines.
 - `src/alglib-cpp`, `src/sqlite3`, `src/eigen-3.4.0`: bundled dependencies.
@@ -103,7 +107,7 @@ A terminal or future UI caller can use the same operations:
 ```cpp
 tsensor_workflow::run_session session(database_path);
 session.load_inputs();
-session.run();
+const auto result = session.run();
 const auto written_file = session.export_results(output_directory);
 session.save_model_profiles();
 // Call session.save_fitted_parameters() only when the user chooses to save.
@@ -130,8 +134,61 @@ also owned. Existing model workers use joining thread owners, capture exceptions
 and report them back after joining the batch. Their shared report stack is
 synchronized, and a zero hardware-concurrency hint falls back to one worker.
 
-This step changes ownership and error cleanup, not numerical equations, units,
-boundary conditions, optimizer settings, or convergence tolerances. Console
-reporting remains. Calls on one session must be serialized; background UI work,
-cancellation, and structured progress reporting are later steps. Component and
-lifetime tests do not establish full transient-solver or parameter-fit correctness.
+These preparation steps do not change numerical equations, units, boundary
+conditions, optimizer settings, or convergence tolerances. Calls on one session
+must be serialized; background UI work and cancellation are later steps. Component
+and lifetime tests do not establish full transient-solver or parameter-fit correctness.
+
+## Progress, results, and errors
+
+The core neither reads terminal input nor writes to stdout/stderr. With no
+observer it is silent. Pass an optional callback to the session constructor:
+
+```cpp
+tsensor_workflow::run_session session(database_path,
+    [](const tsensor_workflow::progress_event& event) {
+        // Copy the event into a UI queue or record it in a log.
+    });
+```
+
+Events identify their operation and kind: started, message, evaluation, completed,
+or failed. Messages have the existing detail level; the model's debug setting
+filters messages but does not suppress lifecycle/evaluation events. Evaluation
+events count completed residual evaluations, **not** optimizer iterations or a
+percentage of work. The total amount of fitting work is not known in advance.
+
+Callbacks are synchronous and serialized per session. Some run on model workers;
+a future GUI must marshal copies to its UI thread. Callbacks must be short and
+must not reenter the session, mutate its state, or wait for its workers. If a
+callback throws, it is disconnected and its exception is available through
+`session.progress_failure()` after the operation returns. Display failures do not
+change model results or database-write behavior. No thread dispatcher is provided
+yet. The terminal subscribes to these events and retains the explicit save prompt.
+
+`run()` returns an owned `run_result`: whether the optimizer ran, its iteration
+count and ALGLIB termination code when applicable, completed residual evaluations,
+and named parameter values from the returned optimizer vector. If optimization
+is disabled, the existing branch is preserved and the parameter snapshot contains
+its input vector. The summary can outlive the session; larger profile arrays remain
+in the session's parameters. A completed operation is not a claim of convergence:
+callers must inspect the termination code.
+
+Session failures throw `workflow_error`, with `action`, `code`, and an optional
+native `sqlite_code`, alongside the human-readable `what()` message. Categories
+include invalid state/input, database, solver, I/O, and internal failures. Failure
+events carry the same fields. Callers should use these fields instead of parsing
+message strings. SQL errors now follow one error path, including failed deletes
+that previously only printed a warning and let saving continue.
+
+## Database writes in the workflow
+
+- Loading may insert missing `solve_settings` and `solutions` identity records.
+  Progress messages identify these insertions. It does not save fitted inputs.
+- `save_model_profiles()` respects its setting and writes `parameter_solutions`,
+  updates `solutions` metrics, and replaces the selected `model_profile` rows.
+- Only an explicit `save_fitted_parameters()` call updates fitted initial inputs
+  in `alglib_input`, `species`, `reactions`, `experiments`, and `raw_profile`.
+
+These are existing persistence semantics, now documented for future UI callers.
+No transaction or rollback behavior is added: a failed operation may already have
+committed earlier statements. Use a disposable database for automated checks.

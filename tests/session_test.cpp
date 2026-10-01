@@ -6,6 +6,20 @@
 namespace {
 using tsensor_workflow::run_session;
 using tsensor_workflow::session_state;
+using tsensor_workflow::error_code;
+using tsensor_workflow::operation;
+
+template<class Action>
+void expect_workflow_error(Action action, error_code code, operation expected_operation)
+{
+    try {
+        action();
+        FAIL() << "Expected a workflow error";
+    } catch (const tsensor_workflow::workflow_error& error) {
+        EXPECT_EQ(error.code, code);
+        EXPECT_EQ(error.action, expected_operation);
+    }
+}
 
 static_assert(!std::is_copy_constructible_v<run_session>);
 static_assert(!std::is_move_constructible_v<run_session>);
@@ -117,14 +131,14 @@ TEST(RunSession, FailedLoadCannotBeReusedOrSaved)
 {
     run_session session(":memory:");
     session.parameters().debug_level = 7;
-    EXPECT_THROW(session.run(), std::logic_error);
-    EXPECT_THROW(session.export_results("unused"), std::logic_error);
-    EXPECT_THROW(session.save_fitted_parameters(), std::logic_error);
-    EXPECT_THROW(session.load_inputs(), std::runtime_error); // Missing schema.
+    expect_workflow_error([&] { session.run(); }, error_code::invalid_state, operation::solve);
+    expect_workflow_error([&] { session.export_results("unused"); }, error_code::invalid_state, operation::export_results);
+    expect_workflow_error([&] { session.save_fitted_parameters(); }, error_code::invalid_state, operation::save_fitted_parameters);
+    expect_workflow_error([&] { session.load_inputs(); }, error_code::database, operation::load_inputs);
     EXPECT_EQ(session.state(), session_state::failed);
-    EXPECT_THROW(session.load_inputs(), std::logic_error);
-    EXPECT_THROW(session.run(), std::logic_error);
-    EXPECT_THROW(session.save_model_profiles(), std::logic_error);
+    expect_workflow_error([&] { session.load_inputs(); }, error_code::invalid_state, operation::load_inputs);
+    expect_workflow_error([&] { session.run(); }, error_code::invalid_state, operation::solve);
+    expect_workflow_error([&] { session.save_model_profiles(); }, error_code::invalid_state, operation::save_model_profiles);
     EXPECT_EQ(sqlite3_next_stmt(session.database(), nullptr), nullptr);
 }
 
@@ -136,7 +150,7 @@ TEST(RunSession, CallbackExceptionFinalizesStatementBeforeRethrowing)
         CREATE TABLE model_controls (criterion TEXT, value TEXT);
         INSERT INTO model_controls VALUES ('width resolution (X)', 'invalid integer');
     )");
-    EXPECT_THROW(session.load_inputs(), std::invalid_argument);
+    expect_workflow_error([&] { session.load_inputs(); }, error_code::invalid_input, operation::load_inputs);
     EXPECT_EQ(session.state(), session_state::failed);
     EXPECT_EQ(sqlite3_next_stmt(session.database(), nullptr), nullptr);
     // SQLite remains usable: the failure did not unwind through its C stack.
