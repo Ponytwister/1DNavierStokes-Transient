@@ -2,9 +2,54 @@
 #include <sstream>
 #include <bits/stdc++.h>
 #include <algorithm>
+#include <exception>
+
+namespace {
+// Own SQLite's allocated error text, including when a caller throws.
+class sqlite_error_message {
+    char* message_ = nullptr;
+public:
+    sqlite_error_message() = default;
+    sqlite_error_message(const sqlite_error_message&) = delete;
+    sqlite_error_message& operator=(const sqlite_error_message&) = delete;
+    ~sqlite_error_message() { sqlite3_free(message_); }
+    const char* get() const { return message_ ? message_ : "Unknown SQLite error"; }
+    char** out() {
+        sqlite3_free(message_);
+        message_ = nullptr;
+        return &message_;
+    }
+};
+
+using row_callback = int (*)(void*, int, char**, char**);
+
+int execute_sql(parameters_t& p, sqlite3* db, const char* sql,
+                row_callback callback, char** error)
+{
+    struct callback_context {
+        parameters_t& parameters;
+        row_callback callback;
+        std::exception_ptr failure;
+    } context{p, callback, {}};
+    // Never unwind C++ exceptions through sqlite3_exec. Returning nonzero lets
+    // SQLite finalize its statement before the original exception is rethrown.
+    const auto invoke = [](void* data, int count, char** values, char** columns) noexcept -> int {
+        auto& context = *static_cast<callback_context*>(data);
+        try {
+            return context.callback(&context.parameters, count, values, columns);
+        } catch (...) {
+            context.failure = std::current_exception();
+            return 1;
+        }
+    };
+    const int rc = sqlite3_exec(db, sql, callback ? +invoke : nullptr, &context, error);
+    if (context.failure) { std::rethrow_exception(context.failure); }
+    return rc;
+}
+} // namespace
 
 void
-save_excel_output(const std::filesystem::path& file_name)
+save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
 {
     std::cout << "Priming " << file_name << ": ";
     std::ofstream fout;
@@ -54,7 +99,7 @@ save_excel_output(const std::filesystem::path& file_name)
         FITC_Bead_1_ptr = &run_ptr->reactions.at(FITC_Bead_1);
         std::vector<double> model = exp_ptr->model_profile;
         std::vector<double> experiment = exp_ptr->experimental_profile;
-        double** out = exp_ptr->species_out;
+        const auto& out = exp_ptr->species_out;
         fout << "sec"                       << "  "; //1
         fout << "(" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units << "_FITC)  "; //2
         fout << "forward_reaction_rate_1"   << "  "; //3
@@ -178,26 +223,27 @@ save_excel_output(const std::filesystem::path& file_name)
 }
 
 void 
-delete_values_from_db(sqlite3* db, std::string table, std::string where_conditions) //reading data using callback functions
+delete_values_from_db(parameters_t& p, sqlite3* db, std::string table, std::string where_conditions) //reading data using callback functions
 {
     int row = 0;
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext;
     if (where_conditions.empty()) {
         return;
     }
     sqltext.append("DELETE FROM " + table + " WHERE " + where_conditions + ";");
-    int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        printf("Error in executing deletion SQL: %s \n", errMsg);
+        printf("Error in executing deletion SQL: %s \n", errMsg.get());
         std::cout << sqltext << std::endl;
-        sqlite3_free(errMsg);
+
     }
 }
 
 int 
 read_model_parameters_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -276,20 +322,20 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
 }
 
 void 
-read_model_parameters_from_db(sqlite3* db) //reading data using callback functions
+read_model_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Retrieving model control parameters:");
-    char* errMsg = 0;
+    add_report(p, 3, "Retrieving model control parameters:");
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'model_controls';";
     const char* sql = sqltext.c_str();
-    int rc = sqlite3_exec(db, sql, read_model_parameters_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sql, read_model_parameters_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
-    add_finishing_report(3, "Done");
+    add_finishing_report(p, 3, "Done");
 
     std::string runs =std::to_string(p.experiment_runs.size()) + " runs (";
     for (int run = 0; run < p.experiment_runs.size(); run++) {
@@ -300,12 +346,13 @@ read_model_parameters_from_db(sqlite3* db) //reading data using callback functio
             runs.append(")");
         }
     }
-    add_finishing_report(3, runs);
+    add_finishing_report(p, 3, runs);
 }
 
 int
 raw_profile_row_count_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -342,10 +389,10 @@ raw_profile_row_count_db_callback(void *data, int count, char **argv, char **col
 }
 
 void
-lines_from_profile_text(sqlite3* db)
+lines_from_profile_text(parameters_t& p, sqlite3* db)
 {
     std::cout << "Retrieving line count: ";
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT NAME, WT_PERCENT FROM 'raw_profile' WHERE ";
     int number_of_runs = p.experiment_runs.size();
     for (int run = 0; run < number_of_runs; run++) {
@@ -358,12 +405,12 @@ lines_from_profile_text(sqlite3* db)
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = sqlite3_exec(db, sql, raw_profile_row_count_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sql, raw_profile_row_count_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     std::cout << p.row_count << " Done" << std::endl;
 }
@@ -371,6 +418,7 @@ lines_from_profile_text(sqlite3* db)
 int 
 exp_parameters_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -467,21 +515,21 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
 }
 
 void 
-read_exp_parameters_from_db(sqlite3* db) //reading data using callback functions
+read_exp_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     std::cout << "Reading experimental parameters from database: ";
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
 
-        char* errMsg = 0;
+        sqlite_error_message errMsg;
         std::string sqltext = "SELECT * FROM 'experiments' WHERE NAME='" + run_ptr->name + "';";
         const char* sql = sqltext.c_str();
-        int rc = sqlite3_exec(db, sql, exp_parameters_db_callback, 0, &errMsg);
+        int rc = execute_sql(p, db, sql, exp_parameters_db_callback, errMsg.out());
         if (rc != SQLITE_OK){
-            std::string error = errMsg;
+            std::string error = errMsg.get();
             throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg);
-            sqlite3_free(errMsg);
+            //printf("Error in executing SQL: %s \n", errMsg.get());
+
         }
         if (run_ptr->number_of_species == 0) {throw std::runtime_error(run_ptr->name + " number_of_species is zero");}
 
@@ -504,6 +552,7 @@ read_exp_parameters_from_db(sqlite3* db) //reading data using callback functions
 int 
 get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -516,14 +565,14 @@ get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char 
 }
 
 void 
-get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functions
+get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     if (p.SOLVE_SETTING_ID == 0) {
     std::cout << "Retrieving SOLUTION_SET_ID from database: ";
     } else {
         std::cout << "SOLUTION_SET_ID not found in database. Writing new entry: ";
     }
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext;
 
     std::vector<std::string> Individual_EXP_FITTED;
@@ -571,12 +620,12 @@ get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functio
     sqltext.append("AND SCATTER_METHOD = '" + p.scatter_correction_type + "' ");
     sqltext.append("AND X_RESOLUTION = '" + X_RESOLUTION + "' ");
     sqltext.append("AND Z_RESOLUTION = '" + Z_RESOLUTION + "'; ");
-    int rc = sqlite3_exec(db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     sqltext.clear();
 
@@ -584,18 +633,18 @@ get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functio
         sqltext.append("INSERT INTO solve_settings (ALL_EXP_FITTED, PARAMETERS_SOLVED_FOR, REACTIONS_ENABLED, SCATTER_METHOD, X_RESOLUTION, Z_RESOLUTION)");
         sqltext.append(" VALUES ('" + ALL_EXP_FITTED + "','" + PARAMETERS_SOLVED_FOR + "','" + REACTIONS_ENABLED + "','" + p.scatter_correction_type + "','" + X_RESOLUTION + "','" + Z_RESOLUTION + "'); ");
 
-        int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+        int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
         if (rc != SQLITE_OK){
-            std::string error = errMsg;
+            std::string error = errMsg.get();
             throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg);
-            sqlite3_free(errMsg);
+            //printf("Error in executing SQL: %s \n", errMsg.get());
+
         }
         if (p.SOLVE_SETTING_RECURSIVE_CALL == true) {
             throw std::runtime_error("SOLVE_SETTING_ID recursively called more than once.");
         } else {
             p.SOLVE_SETTING_RECURSIVE_CALL = true;
-            get_solve_settings_ID_from_db(db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
+            get_solve_settings_ID_from_db(p, db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
         }
     }
     
@@ -605,6 +654,7 @@ get_solve_settings_ID_from_db(sqlite3* db) //reading data using callback functio
 int 
 specie_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -673,6 +723,7 @@ specie_db_callback(void *data, int count, char **argv, char **columnNames)
 int 
 reaction_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -752,14 +803,14 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
 }
 
 void 
-read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callback functions
+read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Reading specie and reaction values from database:"); // TODO introduce species lookup and unit correction
-    add_report(1, "pre_db");
+    add_report(p, 3, "Reading specie and reaction values from database:"); // TODO introduce species lookup and unit correction
+    add_report(p, 1, "pre_db");
     experiment_run_struct* run_ptr;
     for (int run_index = 0; run_index < p.experiment_runs.size(); run_index++ ) {
         run_ptr = &p.experiment_runs.at(run_index);
-        char* errMsg = 0;
+        sqlite_error_message errMsg;
         std::string sqltext = "SELECT '" + std::to_string(run_index) + "' AS run, * FROM 'species' WHERE ";
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
             sqltext.append("SPECIES_NAME = '" + run_ptr->species.at(specie).name + "'");
@@ -769,12 +820,12 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
                 sqltext.append(";");
             }
         }
-        int rc = sqlite3_exec(db, sqltext.c_str(), specie_db_callback, 0, &errMsg);
+        int rc = execute_sql(p, db, sqltext.c_str(), specie_db_callback, errMsg.out());
         if (rc != SQLITE_OK){
-            std::string error = errMsg;
+            std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg);
-            sqlite3_free(errMsg);
+            //printf("Error in executing SQL: %s \n", errMsg.get());
+
         }
 
         sqltext = "SELECT '" + std::to_string(run_index) + "' AS run, * FROM 'reactions' WHERE ";
@@ -786,12 +837,12 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
                 sqltext.append(";");
             }
         }
-        rc = sqlite3_exec(db, sqltext.c_str(), reaction_db_callback, 0, &errMsg);
+        rc = execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
         if (rc != SQLITE_OK){
-            std::string error = errMsg;
+            std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-            //printf("Error in executing SQL: %s \n", errMsg);
-            sqlite3_free(errMsg);
+            //printf("Error in executing SQL: %s \n", errMsg.get());
+
         }
 
         for (int item = 0; item < p.solvables.size(); item++) {
@@ -807,7 +858,7 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
         }
     
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-            add_report(0, "specie: " + std::to_string(specie));
+            add_report(p, 0, "specie: " + std::to_string(specie));
             specie_struct* specie_ptr = &run_ptr->species.at(specie);
             if (specie_ptr->type == 2 && specie_ptr->diameter != 0.0d && specie_ptr->particle_density != 0.0d) {
                 specie_ptr->diffusion_rate = 1.380649e-23d * run_ptr->temperature / (3.0d * M_PI * run_ptr->visc * specie_ptr->diameter);
@@ -818,11 +869,11 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
                 throw std::runtime_error("SPECIE:" + std::to_string(specie) + " diffusion_rate undefined (check Type, Diameter, or Density)");
             }
             specie_ptr->r = specie_ptr->diffusion_rate * run_ptr->dt / (p.W * p.W) * p.X * p.X;
-            pop_report(0);
+            pop_report(p, 0);
         }
     }
-    pop_report(1);
-    add_finishing_report(3, "Done");
+    pop_report(p, 1);
+    add_finishing_report(p, 3, "Done");
 
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         run_ptr = &p.experiment_runs.at(run);
@@ -833,11 +884,11 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
         run_ptr->FITC_Bead_1 = reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1");
         //run_ptr->FITC_Bead_2 = reaction_index(run_ptr, "FITC_40nm_2", "FITC_20nm_2");
         for (int react = 0; react < run_ptr->number_of_reactions; react++) {
-            add_report(3, "Reaction: " + run_ptr->reactions.at(react).name + ":");
+            add_report(p, 3, "Reaction: " + run_ptr->reactions.at(react).name + ":");
             for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-                add_report(3, std::to_string(run_ptr->reactions.at(react).coef.at(&run_ptr->species.at(specie)).value()) + " " + run_ptr->species.at(specie).name + ",");
+                add_report(p, 3, std::to_string(run_ptr->reactions.at(react).coef.at(&run_ptr->species.at(specie)).value()) + " " + run_ptr->species.at(specie).name + ",");
             }
-            add_finishing_report(3,"");
+            add_finishing_report(p, 3,"");
         }
     }
 }
@@ -845,7 +896,8 @@ read_specie_and_reaction_values_from_db(sqlite3* db) //reading data using callba
 int 
 raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
 {
-    add_report(0, "callback_start");
+    auto& p = *static_cast<parameters_t*>(data);
+    add_report(p, 0, "callback_start");
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -865,7 +917,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
         if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
         removeSpaces(value);
         std::stringstream ss(value); // constructing stream from the string
-        pop_and_add(0, criterion);
+        pop_and_add(p, 0, criterion);
         if (criterion == "NAME") {
             for (ptrdiff_t j = 0; j < p.experiment_runs.size(); j++) {
                 if (p.experiment_runs.at(j).name == value) {
@@ -880,12 +932,12 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                         exp_ptr = &p.experiments.at(j);
                         break;
                     } else if (j == p.experiments.size() - 1) {
-                        pop_report(0); // clear criterion
+                        pop_report(p, 0); // clear criterion
                         return 0; // omit this experiment. 
                     }
                 }
-                pop_and_add(0, "row:" + std::to_string(row) + " " + exp_ptr->run->name + " " + exp_ptr->second_name);
-                add_report(0, criterion); // re-add criterion once row is found
+                pop_and_add(p, 0, "row:" + std::to_string(row) + " " + exp_ptr->run->name + " " + exp_ptr->second_name);
+                add_report(p, 0, criterion); // re-add criterion once row is found
             } else {throw std::runtime_error("No value in secondary name field in raw_profiles");}
         } else if (criterion == "CHANNEL_LEFT_EDGE") {
             if (!value.empty()) {
@@ -929,16 +981,16 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                 exp_ptr->raw_experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(x - 1);
             }
         } else if (criterion == "INLET_COND_ID") {
-            add_report(0, "Value=" + value);
+            add_report(p, 0, "Value=" + value);
             if (!value.empty()) {
                 int entrance = 0;
                 exp_ptr->INLET_COND_ID = std::stoi(value);
             } else {
                 throw std::runtime_error("NULL in INLET_COND_ID");
             }
-            pop_report(0);
+            pop_report(p, 0);
         } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
-            add_report(0, "Value=" + value);
+            add_report(p, 0, "Value=" + value);
             if (!value.empty()) {
                 while (getline(ss, s, ' ')) {
                     if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
@@ -964,22 +1016,22 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                     }*/
                 }
             }
-            pop_report(0);
+            pop_report(p, 0);
         } else if (criterion == "LEFT_EDGE") {
-            add_report(0, "LEFT_EDGE Value=" + value);
+            add_report(p, 0, "LEFT_EDGE Value=" + value);
             if (!value.empty() && exp_ptr->left_edge.param_init) {
                 exp_ptr->left_edge.value() = std::max(std::stod(value) + p.exp_left_padding, 0.0d);
 
             }
-            pop_report(0);
+            pop_report(p, 0);
         } else if (criterion == "WIDTH") {
-            add_report(0, "WIDTH Value=" + value);
+            add_report(p, 0, "WIDTH Value=" + value);
             if (!value.empty() && exp_ptr->width.param_init) {
                 exp_ptr->width.value() = std::stod(value);
             }
-            pop_report(0);
+            pop_report(p, 0);
         } else if (criterion == "OMIT") {
-            add_report(0, "Value=" + value);
+            add_report(p, 0, "Value=" + value);
             exp_ptr->omit = false;
             if (!value.empty()) {
                 std::transform(value.begin(), value.end(), value.begin(), ::tolower);
@@ -987,18 +1039,18 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                     exp_ptr->omit = true;
                 }
             }
-            pop_report(0);
+            pop_report(p, 0);
         }
     };
-    pop_report(0); // clear final criterion
-    pop_report(0); // clear row count
+    pop_report(p, 0); // clear final criterion
+    pop_report(p, 0); // clear row count
     return 0;
 }
 
 void 
-read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
+read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Reading experimental profiles from database:");
+    add_report(p, 3, "Reading experimental profiles from database:");
     for (int i = 0; i < p.experiments.size(); i++) {
         experiment_struct* exp_ptr = &p.experiments.at(i);
         experiment_run_struct* run_ptr = exp_ptr->run;
@@ -1008,8 +1060,8 @@ read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
         exp_ptr->keq1       = solvable(run_ptr->keq1, "keq1");
         exp_ptr->QE1        = solvable(run_ptr->QE1, "QE1");*/
     }
-    add_report(1, "reading_db");
-    char* errMsg = 0;
+    add_report(p, 1, "reading_db");
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'raw_profile' WHERE ";
     int number_of_runs = p.experiment_runs.size();
     for (int run = 0; run < number_of_runs; run++) {
@@ -1022,14 +1074,14 @@ read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = sqlite3_exec(db, sql, raw_profiles_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
-    pop_and_add(1, "setting experiments.entrances size and flowrates");
+    pop_and_add(p, 1, "setting experiments.entrances size and flowrates");
 
     for (int row = 0; row < p.row_count; row++) {
         experiment_struct* exp_ptr = &p.experiments.at(row);
@@ -1046,15 +1098,16 @@ read_raw_profiles_from_db(sqlite3* db) //reading data using callback functions
             }
         }
     }
-    pop_report(1);
-    add_finishing_report(3, "Done");
+    pop_report(p, 1);
+    add_finishing_report(p, 3, "Done");
 }
 
 
 int 
 inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames)
 {
-    add_report(0, "callback_start");
+    auto& p = *static_cast<parameters_t*>(data);
+    add_report(p, 0, "callback_start");
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -1074,7 +1127,7 @@ inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames)
         criterion = columnNames[i];
         if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
         removeSpaces(value);
-        pop_and_add(0, criterion);
+        pop_and_add(p, 0, criterion);
         if (criterion == "INLET_COND_ID") {
             exp_ptrs.clear();
             exp_ptrs.shrink_to_fit();
@@ -1107,21 +1160,21 @@ inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames)
     for (int sub_row = 0; sub_row < exp_ptrs.size(); sub_row++) {
         exp_ptr = exp_ptrs.at(sub_row);
         run_ptr = exp_ptr->run;
-        pop_and_add(0, "setting inlet concs for exp: " + run_ptr->name + " " + exp_ptr->second_name);
+        pop_and_add(p, 0, "setting inlet concs for exp: " + run_ptr->name + " " + exp_ptr->second_name);
         if (SPECIE_CONC > 0.0d) {
             exp_ptr->entrances.at(ENTRANCE_NUMBER).CONC.insert({&run_ptr->species.at(specie_index(run_ptr, SPECIES_NAME)), SPECIE_CONC});
         }
     }
-    pop_report(0); // clear final criterion
+    pop_report(p, 0); // clear final criterion
     return 0;
 }
 
 void 
-read_inlet_cond_from_db(sqlite3* db) //reading data using callback functions
+read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Reading inlet conditions from database:");
-    add_report(1, "reading_db:");
-    char* errMsg = 0;
+    add_report(p, 3, "Reading inlet conditions from database:");
+    add_report(p, 1, "reading_db:");
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'inlet_conditions' WHERE ";
     std::vector<int> IDS;
     for (int row = 0; row < p.row_count; row++) {
@@ -1146,25 +1199,22 @@ read_inlet_cond_from_db(sqlite3* db) //reading data using callback functions
         }
     }
     const char* sql = sqltext.c_str();
-    int rc = sqlite3_exec(db, sql, inlet_cond_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sql, inlet_cond_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
-    pop_and_add(1, "post_db:");
+    pop_and_add(p, 1, "post_db:");
 
     for (int row = 0; row < p.row_count; row++) {
         //initialize the concentration inlet arrays.
         experiment_struct* exp_ptr = &p.experiments.at(row);
         experiment_run_struct* run_ptr = exp_ptr->run;
         // The inlet and outlet Concentration Arrays.
-        exp_ptr->species_out = new double*[run_ptr->number_of_species];
-        for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-            exp_ptr->species_out[specie] = new double[p.X]{};
-        }
-        pop_and_add(1, "intit row:" + std::to_string(row));
+        exp_ptr->species_out.assign(run_ptr->number_of_species, std::vector<double>(p.X, 0.0));
+        pop_and_add(p, 1, "intit row:" + std::to_string(row));
         for (int entrance = 0; entrance < exp_ptr->entrances.size(); entrance++) {
             entrance_struct* entr_ptr = &exp_ptr->entrances.at(entrance);
             for (auto specie : entr_ptr->CONC) {
@@ -1176,15 +1226,15 @@ read_inlet_cond_from_db(sqlite3* db) //reading data using callback functions
         }
         run_ptr->dye_conc = run_ptr->dye_conc_mgml * unit_conversion(run_ptr, run_ptr->FITC, run_ptr->species.at(run_ptr->FITC).input_units, run_ptr->species.at(run_ptr->FITC).model_units);
     }
-    pop_report(1);
-    add_finishing_report(3, "Done");
+    pop_report(p, 1);
+    add_finishing_report(p, 3, "Done");
 
     for (int entrance = 0; entrance < p.experiments.at(3).entrances.size(); entrance++) {
         int row = 3;
         experiment_struct* exp_ptr = &p.experiments.at(row);
         entrance_struct* entr_ptr = &exp_ptr->entrances.at(entrance);
         experiment_run_struct* run_ptr = exp_ptr->run;
-        add_report(3, "Entrance " + std::to_string(entrance) + ": ");
+        add_report(p, 3, "Entrance " + std::to_string(entrance) + ": ");
         for (int specie = 0; specie < run_ptr->species.size(); specie++) {
             specie_struct* specie_ptr = &run_ptr->species.at(specie);
             double conc = 0;
@@ -1194,15 +1244,16 @@ read_inlet_cond_from_db(sqlite3* db) //reading data using callback functions
                     break;
                 }
             }
-            add_report(3, std::to_string(conc * unit_conversion(run_ptr, specie, run_ptr->species.at(specie).input_units, run_ptr->species.at(specie).model_units)) + " " + run_ptr->species.at(specie).model_units + " " + specie_ptr->name + ",");
+            add_report(p, 3, std::to_string(conc * unit_conversion(run_ptr, specie, run_ptr->species.at(specie).input_units, run_ptr->species.at(specie).model_units)) + " " + run_ptr->species.at(specie).model_units + " " + specie_ptr->name + ",");
         }
-        add_finishing_report(3, "");
+        add_finishing_report(p, 3, "");
     }
 }
 
 int 
 get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -1259,14 +1310,14 @@ get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **colu
 }
 
 void 
-get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
+get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     if (p.SOLUTION_ID_RECURSIVE_CALL == false) {
     std::cout << "Retrieving SOLUTION_IDs from database: ";
     } else {
         std::cout << "some SOLUTION_IDs not found in database. Writing new entries: ";
     }
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext;
 
     struct solution_ID_struct {
@@ -1288,12 +1339,12 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
         sqltext.append("AND INLET_COND_ID = '" + solutions.at(solution).INLET_COND_ID+ "'; ");
     }
 
-    int rc = sqlite3_exec(db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     sqltext.clear();
 
@@ -1307,18 +1358,18 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
             sqltext.append(" VALUES ('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + exp_ptr->run->name + "','" + std::to_string(exp_ptr->INLET_COND_ID) + "'); ");
         }
     }
-    rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     if (p.SOLUTION_ID_RECURSIVE_CALL == true && recursive_call_required) {
         throw std::runtime_error("SOLUTION_ID_RECURSIVE_CALL recursively called more than once.");
     } else if (recursive_call_required) {
         p.SOLUTION_ID_RECURSIVE_CALL = true;
-        get_SOLUTION_IDs_from_db(db); // recursive call to ensure SOLUTION_ID_RECURSIVE_CALL is set.
+        get_SOLUTION_IDs_from_db(p, db); // recursive call to ensure SOLUTION_ID_RECURSIVE_CALL is set.
     } else {
         std::cout << "Done" << std::endl;
     }
@@ -1328,6 +1379,7 @@ get_SOLUTION_IDs_from_db(sqlite3* db) //reading data using callback functions
 int 
 get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -1388,18 +1440,18 @@ get_solvable_initial_values_from_db_callback(void *data, int count, char **argv,
 }
 
 void 
-get_solvable_initial_values_from_db(sqlite3* db) //reading data using callback functions
+get_solvable_initial_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     std::cout << "Retrieving solvable initial values from parameter_solutions table: ";
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT SOURCE, SOLUTION_ID, PARAMETER, VALUE FROM parameter_solutions ";
     sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
-    int rc = sqlite3_exec(db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     sqltext.clear();
     
@@ -1410,6 +1462,7 @@ get_solvable_initial_values_from_db(sqlite3* db) //reading data using callback f
 int 
 alglib_input_db_callback(void *data, int count, char **argv, char **columnNames)
 {
+    auto& p = *static_cast<parameters_t*>(data);
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
     //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
@@ -1440,15 +1493,15 @@ alglib_input_db_callback(void *data, int count, char **argv, char **columnNames)
 }
 
 void 
-read_alglib_values_from_db(sqlite3* db) //reading data using callback functions
+read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     std::cout << "Reading alglib inputs from database: ";
-    p.scale                    = new double[p.solvables.size()];
-    p.initial_values_alglib    = new double[p.solvables.size()];
-    p.low_bound                = new double[p.solvables.size()];
-    p.up_bound                 = new double[p.solvables.size()];
+    p.scale.resize(p.solvables.size());
+    p.initial_values_alglib.resize(p.solvables.size());
+    p.low_bound.resize(p.solvables.size());
+    p.up_bound.resize(p.solvables.size());
     
-    char* errMsg = 0;
+    sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'alglib_input' WHERE ";
     
     for (int i = 0; i < p.solve_for.size(); i++) {
@@ -1460,12 +1513,12 @@ read_alglib_values_from_db(sqlite3* db) //reading data using callback functions
         }
     }
     
-    int rc = sqlite3_exec(db, sqltext.c_str(), alglib_input_db_callback, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
     std::cout << "Done" << std::endl;
     
@@ -1491,13 +1544,13 @@ read_alglib_values_from_db(sqlite3* db) //reading data using callback functions
 }
 
 void 
-write_model_profile_to_db(sqlite3* db) //reading data using callback functions
+write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Writing model profiles to database:");
-    add_report(1, "parameter_solutions table");
-    char* errMsg = 0;
+    add_report(p, 3, "Writing model profiles to database:");
+    add_report(p, 1, "parameter_solutions table");
+    sqlite_error_message errMsg;
     std::string sqltext;
-    delete_values_from_db(db, "parameter_solutions", "SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "'");
+    delete_values_from_db(p, db, "parameter_solutions", "SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "'");
 
     struct parameter_solution_struct {
         std::string PARAMETER;
@@ -1551,16 +1604,15 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     }
     param_solutions.clear();
     param_solutions.shrink_to_fit();
-    int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error);
 
-        sqlite3_free(errMsg);
     }
     sqltext.clear();
 
-    pop_and_add(1, "solutions table");
+    pop_and_add(p, 1, "solutions table");
     for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
         exp_ptr = &p.experiments.at(j);
         sqltext.append("UPDATE solutions SET ");
@@ -1571,15 +1623,15 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         sqltext.append("SECOND_NAME = '" +          exp_ptr->second_name + "' ");
         sqltext.append("WHERE SOLUTION_ID = '" +    std::to_string(exp_ptr->SOLUTION_ID) + "'; ");
     }
-    rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + " " + sqltext);
-        sqlite3_free(errMsg);
+
     }
     sqltext.clear();
 
-    pop_and_add(1, "preparing items into model_profiles table");
+    pop_and_add(p, 1, "preparing items into model_profiles table");
     struct model_profile_struct {
         std::string SOLUTION_ID;
         std::string X;
@@ -1603,11 +1655,11 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
     };
     std::vector<model_profile_struct> model_profiles;
     for (int row = 0; row < p.row_count; row++) {
-        add_report(0, "row:" + std::to_string(row));
-        add_report(0, "pre-while loop");
+        add_report(p, 0, "row:" + std::to_string(row));
+        add_report(p, 0, "pre-while loop");
         exp_ptr = &p.experiments.at(row);
         int ID = exp_ptr->SOLUTION_ID;
-        delete_values_from_db(db, "model_profile", "SOLUTION_ID = '" + std::to_string(ID) + "'");
+        delete_values_from_db(p, db, "model_profile", "SOLUTION_ID = '" + std::to_string(ID) + "'");
         run_ptr = exp_ptr->run;
         const double inv_dye_conc = 1.0 / run_ptr->dye_conc;
         ptrdiff_t FITC = run_ptr->FITC;
@@ -1624,7 +1676,7 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         const double bead_unit = unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
         std::vector<double> model = exp_ptr->model_profile;
         std::vector<double> experiment = exp_ptr->experimental_profile;
-        double** out = exp_ptr->species_out;    
+        const auto& out = exp_ptr->species_out;
 
         const double model_scale = p.W * 1e6 / p.X;
         const double data_scale  = exp_ptr->scale_factor;
@@ -1638,7 +1690,7 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         assert(data_scale > 0);
         bool model_match = false;
         bool data_match = false;
-        pop_and_add(0, "while loop");
+        pop_and_add(p, 0, "while loop");
         while (X_model < p.W * 1e6 || X_data < p.W * 1e6) {
             X_data = exp_ptr->channel_position.at(data_x);
             X_model = model_scale * model_x;
@@ -1679,10 +1731,10 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
                 data_x++;
             }
         }
-        pop_report(0);
-        pop_report(0);
+        pop_report(p, 0);
+        pop_report(p, 0);
     }
-    pop_and_add(1, "model_profile table");
+    pop_and_add(p, 1, "model_profile table");
     if (model_profiles.size() > 0) {
         sqltext.append("INSERT INTO model_profile (SOLUTION_ID, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES ");
         model_profile_struct* mp;
@@ -1699,9 +1751,9 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
         //model_profiles.shrink_to_fit();
     }
 
-    rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         struct tuple {
             int ID;
             double X;
@@ -1724,18 +1776,18 @@ write_model_profile_to_db(sqlite3* db) //reading data using callback functions
             }
         }
         throw std::runtime_error("Error in executing SQL: " + error);
-        sqlite3_free(errMsg);
+
     }
-    pop_report(1);
-    add_finishing_report(3, "Done");
+    pop_report(p, 1);
+    add_finishing_report(p, 3, "Done");
 }
 
 void 
-write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
+write_alglib_values_to_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
-    add_report(3, "Writing alglib_values to database:");
-    add_report(1, "init values and scale");
-    char* errMsg = 0;
+    add_report(p, 3, "Writing alglib_values to database:");
+    add_report(p, 1, "init values and scale");
+    sqlite_error_message errMsg;
     std::string sqltext;
     for (int index = 0; index < p.global_solve_for.size(); index++) {
         sqltext.append("UPDATE alglib_input SET 'INITIAL VALUE' = '" + double_to_string(p.initial_values_alglib[index]) + "' WHERE VARIABLE = '" + p.global_solve_for[index] + "'; ");
@@ -1745,17 +1797,17 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
     }
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        pop_and_add(1, "run " + run_ptr->name); // removes init val state
-        add_report(0, "QE");
+        pop_and_add(p, 1, "run " + run_ptr->name); // removes init val state
+        add_report(p, 0, "QE");
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) { 
             sqltext.append("UPDATE species SET 'QE' = '" + double_to_string(run_ptr->species.at(specie).QE.value()) + "' WHERE SPECIES_NAME = '" + run_ptr->species.at(specie).name + "'; ");
         }
         for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
             reaction_struct* react_ptr = &run_ptr->reactions.at(reaction);
-            pop_and_add(0, "reaction " + react_ptr->name); // removes QE state then previous reaction state
-            add_report(0, "ks");
+            pop_and_add(p, 0, "reaction " + react_ptr->name); // removes QE state then previous reaction state
+            add_report(p, 0, "ks");
             sqltext.append("UPDATE reactions SET 'Ks' = '" + double_to_string(react_ptr->k[0].value()) + " " + double_to_string(react_ptr->k[1].value()) + "' WHERE REACTION_NAME = '" + react_ptr->name + "'; ");
-            pop_and_add(0, "coefs"); // removes ks state
+            pop_and_add(p, 0, "coefs"); // removes ks state
             sqltext.append("UPDATE reactions SET 'COEFFICIENTS' = '");
             for (std::ptrdiff_t specie = 0; specie < react_ptr->specie_vect.size(); specie++) {
                 specie_struct* specie_ptr = react_ptr->specie_vect.at(specie);
@@ -1765,7 +1817,7 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
                 }
             }
             sqltext.append("' WHERE REACTION_NAME = '" + react_ptr->name + "'; ");
-            pop_and_add(0, "exponents"); // removes coef state
+            pop_and_add(p, 0, "exponents"); // removes coef state
             sqltext.append("UPDATE reactions SET 'EXPONENTS' = '");
             for (std::ptrdiff_t specie = 0; specie < react_ptr->specie_vect.size(); specie++) {
                 specie_struct* specie_ptr = react_ptr->specie_vect.at(specie);
@@ -1775,45 +1827,45 @@ write_alglib_values_to_db(sqlite3* db) //reading data using callback functions
                 }
             }
             sqltext.append("' WHERE REACTION_NAME = '" + react_ptr->name + "'; ");
-            pop_report(0); // removes exponents state
+            pop_report(p, 0); // removes exponents state
         }
-        pop_and_add(0, "edges"); // removes reaction state
+        pop_and_add(p, 0, "edges"); // removes reaction state
         sqltext.append("UPDATE experiments SET 'EDGES' = '" + double_to_string(run_ptr->left_edge.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
         sqltext.append("UPDATE experiments SET 'WIDTH' = '" + double_to_string(run_ptr->width.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
-        pop_report(0); // removes edges state
+        pop_report(p, 0); // removes edges state
     }
-    add_report(0, "raw profile left_edge and width");
+    add_report(p, 0, "raw profile left_edge and width");
     for (int i = 0; i < p.experiments.size(); i++) {
         experiment_struct* exp_ptr = &p.experiments.at(i);
         sqltext.append("UPDATE raw_profile SET 'LEFT_EDGE' = '" + double_to_string(exp_ptr->left_edge.value() - p.exp_left_padding) + "', 'WIDTH' = '" + double_to_string(exp_ptr->width.value()) + "' WHERE NAME = '" + exp_ptr->run->name + "' AND WT_PERCENT = '" + exp_ptr->second_name + "'; ");
     }
-    pop_report(0);
-    pop_and_add(1, "running sql"); // removes run state
-    int rc = sqlite3_exec(db, sqltext.c_str(), 0, 0, &errMsg);
+    pop_report(p, 0);
+    pop_and_add(p, 1, "running sql"); // removes run state
+    int rc = execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (rc != SQLITE_OK){
-        std::string error = errMsg;
+        std::string error = errMsg.get();
         throw std::runtime_error("Error in executing SQL: " + error + "\n" + sqltext);
-        //printf("Error in executing SQL: %s \n", errMsg);
-        sqlite3_free(errMsg);
+        //printf("Error in executing SQL: %s \n", errMsg.get());
+
     }
-    pop_report(1);
-    add_finishing_report(3, "Done");
+    pop_report(p, 1);
+    add_finishing_report(p, 3, "Done");
 }
 
 void 
-normalize_profile() 
+normalize_profile(parameters_t& p)
 {
     experiment_struct* exp_ptr;
     experiment_run_struct* run_ptr;
-    add_report(3, "Normalizing");
+    add_report(p, 3, "Normalizing");
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
-        add_report(3, "(" + run_ptr->name + ":" + run_ptr->normalization_method + ")");
+        add_report(p, 3, "(" + run_ptr->name + ":" + run_ptr->normalization_method + ")");
     }
-    add_report(0, std::to_string(0));
+    add_report(p, 0, std::to_string(0));
     double low_ref, high_ref, peak_ref;
     for (int j = 0; j < p.row_count; j++) {
-        pop_and_add(0, std::to_string(j));
+        pop_and_add(p, 0, std::to_string(j));
         exp_ptr = &p.experiments.at(j);
         run_ptr = exp_ptr->run;
         int exp_size = exp_ptr->raw_experimental_profile.size();
@@ -1857,12 +1909,12 @@ normalize_profile()
             }
         }
     }
-    pop_report(0);
-    add_finishing_report(3, std::to_string(p.row_count) + " Done");
+    pop_report(p, 0);
+    add_finishing_report(p, 3, std::to_string(p.row_count) + " Done");
 }
 
 double
-scattering_correction(double species_1, double species_2, double coef, experiment_run_struct* run_ptr)
+scattering_correction(parameters_t& p, double species_1, double species_2, double coef, experiment_run_struct* run_ptr)
 {
     if (p.scatter_correction_type == "NS_ND") {
         double bead_wt = (species_1 + species_2 / coef) * unit_conversion(run_ptr, run_ptr->PS_beads, run_ptr->species.at(run_ptr->PS_beads).model_units, "wt%");
@@ -1905,8 +1957,9 @@ clear_output(std::string text_to_clear)
 }
 
 void
-add_report(int debug_level, std::string text_to_add)
+add_report(parameters_t& p, int debug_level, std::string text_to_add)
 {
+    std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
     if (p.debug_level <= debug_level) {
         p.state.emplace_back(debug_level, text_to_add + " ");
         std::cout << text_to_add + " ";
@@ -1914,37 +1967,41 @@ add_report(int debug_level, std::string text_to_add)
 }
 
 void
-pop_report(int debug_level)
+pop_report(parameters_t& p, int debug_level)
 {
-    if (p.state.back().debug_level <= debug_level) {
+    std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
+    if (!p.state.empty() && p.state.back().debug_level <= debug_level) {
         clear_output(p.state.back().report_text);
         p.state.pop_back();
     }
 }
 
 void
-pop_and_add(int debug_level, std::string text_to_add)
+pop_and_add(parameters_t& p, int debug_level, std::string text_to_add)
 {
-    pop_report(debug_level);
-    add_report(debug_level, text_to_add);
+    std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
+    pop_report(p, debug_level);
+    add_report(p, debug_level, text_to_add);
 }
 
 
 void
-pop_finishing_report(int debug_level, std::string text_to_add)
+pop_finishing_report(parameters_t& p, int debug_level, std::string text_to_add)
 {
+    std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
     if (p.debug_level <= debug_level) {
-        pop_and_add(debug_level, text_to_add);
+        pop_and_add(p, debug_level, text_to_add);
         p.state.clear();
         std::cout << std::endl;
     }
 }
 
 void
-add_finishing_report(int debug_level, std::string text_to_add)
+add_finishing_report(parameters_t& p, int debug_level, std::string text_to_add)
 {
+    std::lock_guard<std::recursive_mutex> lock(p.report_mutex);
     if (p.debug_level <= debug_level) {
-        add_report(debug_level, text_to_add);
+        add_report(p, debug_level, text_to_add);
         p.state.clear();
         std::cout << std::endl;
     }
@@ -2080,7 +2137,7 @@ lin_interpolate(double x, double x1, double y1, double x2, double y2)
 
 
 void
-set_inlet_conc(experiment_struct* exp_ptr, double* solution)
+set_inlet_conc(parameters_t& p, experiment_struct* exp_ptr, double* solution)
 {
     double FLOWRATE_ACCOUNTED_FOR = 0.0d;
     experiment_run_struct* run_ptr = exp_ptr->run;
@@ -2107,10 +2164,10 @@ set_inlet_conc(experiment_struct* exp_ptr, double* solution)
 }
 
 void
-model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row)
+model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row)
 {
     //std::cout << "row" << row << "start " << std::endl;
-    //add_report(0, "row:" + std::to_string(row) + "_start");
+    //add_report(p, 0, "row:" + std::to_string(row) + "_start");
     experiment_struct* exp_ptr = &p.experiments.at(row);
     experiment_run_struct* run_ptr = exp_ptr->run;
     const double left_edge = exp_ptr->left_edge.value();
@@ -2141,8 +2198,8 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
     double* solution_ptr     = solution;
     double* old_solution_ptr = old_solution;
     //The 3 Concentration Arrays.
-    double** species_out = exp_ptr->species_out;
-    //pop_and_add(0, "row:" + std::to_string(row) + "_coef");
+    auto& species_out = exp_ptr->species_out;
+    //pop_and_add(p, 0, "row:" + std::to_string(row) + "_coef");
 
     
     for (int react = 0; react < run_ptr->number_of_reactions; react++) {
@@ -2156,14 +2213,14 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
         }
     }
     assert (coef[run_ptr->FITC] == -coef[run_ptr->Bound_Dye_1]);
-    //pop_and_add(0, "row:" + std::to_string(row) + "_preinlet");
+    //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preinlet");
     //std::cout << "row" << row << "preinlet " << std::endl;
-    set_inlet_conc(exp_ptr, solution);
+    set_inlet_conc(p, exp_ptr, solution);
 
     for (int specie = 0; specie < run_ptr->species.size(); specie++) {
         r[specie] = run_ptr->species.at(specie).r;
     }
-    //pop_and_add(0, "row:" + std::to_string(row) + "_preZloop");
+    //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preZloop");
     //std::cout << "row" << row << "preZloop " << std::endl;
     for (int z = 0; z < p.Z; z++) {
         for (int i = 0; i < X; i++) { 
@@ -2310,11 +2367,11 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             }             
         }
     }
-    //pop_and_add(0, "row:" + std::to_string(row) + "_postZloop");
-    //add_report(0, "row:" + std::to_string(row) + "_postZloop");
+    //pop_and_add(p, 0, "row:" + std::to_string(row) + "_postZloop");
+    //add_report(p, 0, "row:" + std::to_string(row) + "_postZloop");
     //std::cout << "row" << row << "postZloop " << std::endl;
     
-    //add_report(0, "row:" + std::to_string(row) + "_postunshift");
+    //add_report(p, 0, "row:" + std::to_string(row) + "_postunshift");
     for (int i = 0; i < exp_ptr->window_size; i++) {
         exp_ptr->model_profile.at(i) = 0.0d;
         //assert ((species_out[0][i] + species_out[2][i]) / run_ptr->dye_conc < 2.0); // model profile output is to high
@@ -2343,7 +2400,7 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             assert (!std::isinf(exp_ptr->model_profile.at(i)));
         }
     }
-    pop_and_add(0, "row:" + std::to_string(row) + "_residuals");
+    pop_and_add(p, 0, "row:" + std::to_string(row) + "_residuals");
     //std::cout << "row" << row << "postrescale " << std::endl;
     for (int i = 0; i < exp_ptr->window_size; i++) {
         double scatter;
@@ -2352,12 +2409,12 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
             bottom_point = static_cast<int>(floor(split));
             top_point = static_cast<int>(ceil(split));
             if (top_point == bottom_point || bottom_point == (X - 1)) {
-                scatter = scattering_correction(species_out[run_ptr->PS_beads][bottom_point], species_out[run_ptr->Bound_Dye_1][bottom_point], coef[0], run_ptr);
+                scatter = scattering_correction(p, species_out[run_ptr->PS_beads][bottom_point], species_out[run_ptr->Bound_Dye_1][bottom_point], coef[0], run_ptr);
             } else {
-                scatter = scattering_correction(species_out[run_ptr->PS_beads][bottom_point] * ((double)top_point - split) + species_out[run_ptr->PS_beads][top_point] * (split - (double)bottom_point), species_out[run_ptr->Bound_Dye_1][bottom_point] * ((double)top_point - split) + species_out[run_ptr->Bound_Dye_1][top_point] * (split - (double)bottom_point), coef[0], run_ptr);
+                scatter = scattering_correction(p, species_out[run_ptr->PS_beads][bottom_point] * ((double)top_point - split) + species_out[run_ptr->PS_beads][top_point] * (split - (double)bottom_point), species_out[run_ptr->Bound_Dye_1][bottom_point] * ((double)top_point - split) + species_out[run_ptr->Bound_Dye_1][top_point] * (split - (double)bottom_point), coef[0], run_ptr);
             }
         } else {
-            scatter = scattering_correction(species_out[run_ptr->PS_beads][X - 1], species_out[run_ptr->Bound_Dye_1][X - 1], coef[0], run_ptr);
+            scatter = scattering_correction(p, species_out[run_ptr->PS_beads][X - 1], species_out[run_ptr->Bound_Dye_1][X - 1], coef[0], run_ptr);
         }
 
         assert (i + exp_ptr->window_start < p.total_window_size); // residuals input is out of bounds
@@ -2378,7 +2435,7 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
     }
     
     if (p.iterations > 1) {
-        pop_and_add(0, "row:" + std::to_string(row) + "_DAintegrals");
+        pop_and_add(p, 0, "row:" + std::to_string(row) + "_DAintegrals");
         double exp_d = std::numeric_limits<double>::lowest();
         double model_d = std::numeric_limits<double>::lowest();
         double exp_a = std::numeric_limits<double>::max();
@@ -2453,7 +2510,7 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
         exp_ptr->analytic_exp_integral = analytic_exp_integral;
         exp_ptr->analytic_model_integral = analytic_model_integral;
     }
-    pop_report(0);
+    pop_report(p, 0);
 }
 
 
@@ -2461,11 +2518,13 @@ model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &re
 void
 alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr)
 {
-    add_report(3, std::to_string(p.iterations));
+    if (!ptr) { throw std::invalid_argument("Missing solver state"); }
+    auto& p = *static_cast<parameters_t*>(ptr);
+    add_report(p, 3, std::to_string(p.iterations));
     if (!p.run_solver) {
         return;
     } else {
-        add_report(1, "setting control parmeters");
+        add_report(p, 1, "setting control parmeters");
         for (int i = 0; i < p.solvables.size(); i++) {
             auto& s = p.solvables.at(i);
             s.value() = control_parameters[i];
@@ -2503,23 +2562,33 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             }
         }
         
-        pop_report(1);
-        unsigned long const hardware_threads = std::thread::hardware_concurrency();
-        std::thread* threads = new std::thread[p.row_count];
+        pop_report(p, 1);
+        unsigned long const hardware_threads = std::max(1u, std::thread::hardware_concurrency());
+        std::vector<std::exception_ptr> failures(p.row_count);
+        // jthread also joins if creating a later worker throws.
+        std::vector<std::jthread> threads(p.row_count);
         int start_row = 0;
         int row = 0;
         while (row < p.row_count) {
             start_row = row;
             for (int i = 0; i < hardware_threads && row < p.row_count; i++) {
-                threads[row] = std::thread(model, control_parameters, std::ref(residuals), row);
+                threads[row] = std::jthread([&p, &control_parameters, &residuals, &failures, row] {
+                    try {
+                        model(p, control_parameters, residuals, row);
+                    } catch (...) {
+                        failures[row] = std::current_exception();
+                    }
+                });
                 row++;
             }
             for (int i = 0; i < hardware_threads && start_row + i < p.row_count; i++) {
                 threads[start_row + i].join();
             }
+            for (int i = start_row; i < row; ++i) {
+                if (failures[i]) { std::rethrow_exception(failures[i]); }
+            }
         }
-        delete[] threads;
     }
-    pop_report(3);
+    pop_report(p, 3);
     p.iterations = p.iterations + 1;
 }

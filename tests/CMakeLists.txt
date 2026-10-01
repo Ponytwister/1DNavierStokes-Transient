@@ -7,7 +7,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-add_executable(tsensor_test tsensor_test.cpp application_paths_test.cpp)
+add_executable(tsensor_test tsensor_test.cpp application_paths_test.cpp session_test.cpp)
 
 target_link_libraries(tsensor_test
  PRIVATE

@@ -48,6 +48,8 @@ See `tests/fixtures/README.md` for input formats, expected-value derivations, an
 These are component regressions, not validation of a full transient solve or parameter fit.
 Path tests cover option parsing, exports to disposable directories, file-open errors,
 and CLI rejection of missing database files without creating an empty database.
+Session tests cover independent state and links, owned concentration buffers,
+partial-load failures, SQLite statement/connection cleanup, and worker exceptions.
 
 ## Running the application
 
@@ -82,7 +84,7 @@ full solve or fit.
 - `tsensor.cpp`: terminal entry point, database connection, and save prompt.
 - `src/tsensor/application_options.cpp`: terminal path options and legacy defaults.
 - `src/tsensor/workflow.cpp` and `include/workflow.h`: shared loading, fitting,
-  export, save, and successful-run cleanup operations in the `tsensor` library.
+  export, save, and owned run sessions in the `tsensor` library.
 - `src/tsensor/include/tsensor.h`: parameters, experiment structures, and interfaces.
 - `src/tsensor/sqlite_interface.cpp`: database I/O, numerical helpers, and model routines.
 - `src/alglib-cpp`, `src/sqlite3`, `src/eigen-3.4.0`: bundled dependencies.
@@ -94,23 +96,42 @@ selectively; repository artifact cleanup is separate from this setup.
 
 ## Shared application workflow
 
-`tsensor_workflow` separates the application operations from `main()`. A caller
-defines the existing global `parameters_t p`, opens the database, then calls
-`load_inputs`, `run`, `export_results(output_directory)`, and `save_model_profiles`
-in that order. `export_results` accepts a filesystem path and returns the written
-file path. A future UI can supply its selected directory directly; CLI parsing is
-independent of the shared workflow.
-`save_fitted_parameters` is a separate, explicit action; the terminal application
-still asks whether to perform it. After the last export/save, the existing
-`release_run_resources` operation runs, and the caller closes the database.
+`tsensor_workflow::run_session` owns one database connection and one run's
+`parameters_t`, optimizer buffers, and per-experiment concentration buffers.
+A terminal or future UI caller can use the same operations:
 
-This is an extraction of the current single-run workflow, not yet a GUI/session
-API: global state and console reporting remain, and general resource ownership is
-still unchanged. The terminal reports path and standard exceptions, closes its
-database on failure, and returns a nonzero exit code. Loading can create database
-records. The profile-save
-operation respects `p.save_model_profiles`. Cleanup must only run once after a
-successful load/run; it does not reset all state for another run. Callers must not
-run these operations concurrently. Optimizer settings, numerical equations, and
-the existing `run_solver` branches are unchanged. The unused callback context in
-the direct-call branch is now explicitly null instead of indeterminate.
+```cpp
+tsensor_workflow::run_session session(database_path);
+session.load_inputs();
+session.run();
+const auto written_file = session.export_results(output_directory);
+session.save_model_profiles();
+// Call session.save_fitted_parameters() only when the user chooses to save.
+```
+
+Destruction frees the buffers and closes the database on success or exception;
+there is no manual cleanup call. `save_model_profiles` still respects the loaded
+`save_model_profiles` setting. Loading and saving can write database records;
+cleanup does not undo already committed writes or exported files.
+
+Use a **fresh session for each new run**. A session accepts one load followed by
+one solve, then exports/saves. A failed load/solve marks it failed; further
+load/solve/save attempts are rejected. Export or save failures leave completed
+results available for retry. Session and parameter-state objects cannot be copied
+or moved because parameter links refer to objects inside them. Borrowed parameter
+references/database handles must not outlive the session; do not resize linked
+containers or change parameters while model workers are running.
+
+The low-level component functions take an explicit `parameters_t&`; there is no
+global parameter object. SQLite row callbacks and ALGLIB receive that same state
+through their context pointers. SQLite callback exceptions are captured and
+rethrown after SQLite finalizes the active statement; error-message buffers are
+also owned. Existing model workers use joining thread owners, capture exceptions,
+and report them back after joining the batch. Their shared report stack is
+synchronized, and a zero hardware-concurrency hint falls back to one worker.
+
+This step changes ownership and error cleanup, not numerical equations, units,
+boundary conditions, optimizer settings, or convergence tolerances. Console
+reporting remains. Calls on one session must be serialized; background UI work,
+cancellation, and structured progress reporting are later steps. Component and
+lifetime tests do not establish full transient-solver or parameter-fit correctness.

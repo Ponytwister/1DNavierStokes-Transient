@@ -2,22 +2,79 @@
 
 namespace tsensor_workflow {
 
-void load_inputs(sqlite3* db)
+run_session::run_session(const std::filesystem::path& database_path)
 {
-    read_model_parameters_from_db(db);
-    lines_from_profile_text(db);
-    read_exp_parameters_from_db(db);
-    get_solve_settings_ID_from_db(db);
-    read_specie_and_reaction_values_from_db(db);
-    read_raw_profiles_from_db(db);
-    read_inlet_cond_from_db(db);
-    get_SOLUTION_IDs_from_db(db);
-    //get_solvable_initial_values_from_db(db);
-    read_alglib_values_from_db(db);
-    normalize_profile();
+    if (database_path.empty()) {
+        throw std::invalid_argument("Database path must not be empty");
+    }
+    const auto utf8 = database_path.u8string();
+    sqlite3* raw = nullptr;
+    const int rc = sqlite3_open_v2(reinterpret_cast<const char*>(utf8.c_str()),
+                                  &raw, SQLITE_OPEN_READWRITE, nullptr);
+    database_.reset(raw); // Also owns the handle returned on an open failure.
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("Cannot open database " + database_path.string()
+                                 + ": " + sqlite3_errmsg(raw));
+    }
 }
 
-void run()
+void run_session::require_state(session_state expected) const
+{
+    if (state_ != expected) {
+        throw std::logic_error("Invalid session operation order; use a fresh session for a new run");
+    }
+}
+
+void run_session::load_inputs()
+{
+    require_state(session_state::empty);
+    state_ = session_state::failed;
+    tsensor_workflow::load_inputs(parameters_, database_.get());
+    state_ = session_state::loaded;
+}
+
+void run_session::run()
+{
+    require_state(session_state::loaded);
+    state_ = session_state::failed;
+    tsensor_workflow::run(parameters_);
+    state_ = session_state::completed;
+}
+
+std::filesystem::path run_session::export_results(const std::filesystem::path& directory)
+{
+    require_state(session_state::completed);
+    return tsensor_workflow::export_results(parameters_, directory);
+}
+
+void run_session::save_model_profiles()
+{
+    require_state(session_state::completed);
+    tsensor_workflow::save_model_profiles(parameters_, database_.get());
+}
+
+void run_session::save_fitted_parameters()
+{
+    require_state(session_state::completed);
+    tsensor_workflow::save_fitted_parameters(parameters_, database_.get());
+}
+
+void load_inputs(parameters_t& p, sqlite3* db)
+{
+    read_model_parameters_from_db(p, db);
+    lines_from_profile_text(p, db);
+    read_exp_parameters_from_db(p, db);
+    get_solve_settings_ID_from_db(p, db);
+    read_specie_and_reaction_values_from_db(p, db);
+    read_raw_profiles_from_db(p, db);
+    read_inlet_cond_from_db(p, db);
+    get_SOLUTION_IDs_from_db(p, db);
+    //get_solvable_initial_values_from_db(p, db);
+    read_alglib_values_from_db(p, db);
+    normalize_profile(p);
+}
+
+void run(parameters_t& p)
 {
     /*
     double epsx = 1e-11;
@@ -32,13 +89,13 @@ void run()
     */
     double DiffStep = 0.0001;
     alglib::real_1d_array control_parameters;
-    control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib);
+    control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib.data());
     alglib::real_1d_array s;
-    s.setcontent(p.solvables.size(), p.scale);
+    s.setcontent(p.solvables.size(), p.scale.data());
     alglib::real_1d_array bndl;
-    bndl.setcontent(p.solvables.size(), p.low_bound);
+    bndl.setcontent(p.solvables.size(), p.low_bound.data());
     alglib::real_1d_array bndu;
-    bndu.setcontent(p.solvables.size(), p.up_bound);
+    bndu.setcontent(p.solvables.size(), p.up_bound.data());
     alglib::minlmstate state;
     alglib::minlmreport rep;
     alglib::minlmcreatev(p.solvables.size(), p.total_window_size, control_parameters, DiffStep, state);
@@ -48,7 +105,7 @@ void run()
     alglib::minlmsetnonmonotonicsteps(state, 2);
     if (p.run_solver) {
         std::cout << "minlmoptimize: iteration ";
-        alglib::minlmoptimize(state, alglib_solver);   // Optimize
+        alglib::minlmoptimize(state, alglib_solver, nullptr, &p);   // Optimize
         std::cout << p.iterations - 1 << ". Done" << std::endl;
         alglib::minlmresults(state, control_parameters, rep);
 
@@ -66,12 +123,11 @@ void run()
         std::cout << std::endl;
     } else {
         alglib::real_1d_array residuals;
-        void *ptr = nullptr;
-        alglib_solver(control_parameters, residuals, ptr);
+        alglib_solver(control_parameters, residuals, &p);
     };
 }
 
-std::filesystem::path export_results(const std::filesystem::path& output_directory)
+std::filesystem::path export_results(parameters_t& p, const std::filesystem::path& output_directory)
 {
     if (output_directory.empty()) {
         throw std::invalid_argument("Output directory must not be empty");
@@ -88,7 +144,7 @@ std::filesystem::path export_results(const std::filesystem::path& output_directo
     std::filesystem::create_directories(output_directory);
     const auto output_path = output_directory / (p.output_file_name + ".txt");
     try {
-        save_excel_output(output_path);
+        save_excel_output(p, output_path);
     } catch (const std::ios_base::failure& error) {
         throw std::runtime_error("Cannot export results to " + output_path.string()
                                  + ": " + error.what());
@@ -96,37 +152,16 @@ std::filesystem::path export_results(const std::filesystem::path& output_directo
     return output_path;
 }
 
-void save_model_profiles(sqlite3* db)
+void save_model_profiles(parameters_t& p, sqlite3* db)
 {
     if (p.save_model_profiles) {
-        write_model_profile_to_db(db);
+        write_model_profile_to_db(p, db);
     }
 }
 
-void save_fitted_parameters(sqlite3* db)
+void save_fitted_parameters(parameters_t& p, sqlite3* db)
 {
-    write_alglib_values_to_db(db);
-}
-
-void release_run_resources()
-{
-    // cleanup for potential loop
-    p.output_file_name.clear();
-    p.scatter_correction_type.clear();
-
-    p.experiment_runs.clear();
-    p.experiment_runs.shrink_to_fit();
-    p.solve_for.clear();
-    p.solve_for.shrink_to_fit();
-    p.global_solve_for.clear();
-    p.global_solve_for.shrink_to_fit();
-    p.experiments.clear();
-    p.experiments.shrink_to_fit();
-
-    delete[] p.initial_values_alglib;
-    delete[] p.low_bound;
-    delete[] p.up_bound;
-    delete[] p.scale;
+    write_alglib_values_to_db(p, db);
 }
 
 } // namespace tsensor_workflow

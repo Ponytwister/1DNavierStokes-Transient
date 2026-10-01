@@ -2,11 +2,7 @@
 #include <gtest/gtest.h>
 #include <iterator>
 #include <memory>
-#include <new>
 #include <sstream>
-
-// The application owns this global; tests supply their own instance.
-parameters_t p;
 
 namespace {
 constexpr double absolute_tolerance = 1e-12;
@@ -79,11 +75,9 @@ TEST(UnitConversion, MolecularMassAndRoundTrip)
 
 class ModelInputs : public ::testing::Test {
 protected:
+    parameters_t p{};
     void SetUp() override
     {
-        // parameters_t has const members; reconstruct to isolate each test.
-        p.~parameters_t();
-        new (&p) parameters_t{};
         p.debug_level = 7;
     }
 };
@@ -111,7 +105,7 @@ TEST_F(ModelInputs, InletProfileMatchesAnalyticFixture)
     experiment.entrances = {{{{&species, concentration_a}}, flow_a},
                            {{{&species, concentration_b}}, flow_b}};
     std::vector<double> solution(2 * cells, -1.0);
-    set_inlet_conc(&experiment, solution.data());
+    set_inlet_conc(p, &experiment, solution.data());
     for (int i = 0; i < cells; ++i) {
         double expected;
         ASSERT_TRUE(static_cast<bool>(input >> expected));
@@ -132,7 +126,7 @@ TEST_F(ModelInputs, LoadsControlsFromDisposableDatabase)
     const auto sql = fixture_text("model_controls.sql");
     ASSERT_EQ(sqlite3_exec(db.get(), sql.c_str(), nullptr, nullptr, nullptr), SQLITE_OK)
         << sqlite3_errmsg(db.get());
-    read_model_parameters_from_db(db.get());
+    read_model_parameters_from_db(p, db.get());
     EXPECT_EQ(p.X, 4);
     EXPECT_EQ(p.Z, 2);
     EXPECT_TRUE(p.disable_reactions);

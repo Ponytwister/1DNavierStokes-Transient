@@ -13,6 +13,7 @@
 #include <map>
 #include <assert.h>
 #include <deque>
+#include <mutex>
 
 enum level {
   all,
@@ -186,8 +187,7 @@ struct experiment_run_struct {
 };
 
 struct experiment_struct {
-    double*species_in;
-    double**species_out;
+    std::vector<std::vector<double>> species_out;
     int beginning_of_channel;
     int end_of_channel;
     int window_size;
@@ -216,22 +216,31 @@ struct experiment_struct {
     std::vector<double> numeric_difference;
     std::vector<double> experimental_difference;
     std::vector<double> analytical_zero;
-    experiment_run_struct* run;
-    experiment_struct* zero_row_ptr;
+    experiment_run_struct* run = nullptr; // Non-owning, within this session.
+    experiment_struct* zero_row_ptr = nullptr;
 };
-void set_inlet_conc(experiment_struct* exp_ptr, double* solution);
+struct parameters_struct;
+void set_inlet_conc(parameters_struct& p, experiment_struct* exp_ptr, double* solution);
 
 typedef struct parameters_struct {
+    parameters_struct() = default;
+    // Links point into this state's containers. Copying or moving would leave
+    // pointers referring to the old owner; create a fresh state for each run.
+    parameters_struct(const parameters_struct&) = delete;
+    parameters_struct& operator=(const parameters_struct&) = delete;
+    parameters_struct(parameters_struct&&) = delete;
+    parameters_struct& operator=(parameters_struct&&) = delete;
     // Device Dimenssions
     const double W = 5e-4, H = 4e-5, L = 0.025;  //meters: 500 um, 40 um, 2.5 cm
     int debug_level = 0;
     std::vector<report> state; // text output
+    std::recursive_mutex report_mutex; // Shared by the existing model workers.
     // Model Control Parameters
     int SOLVE_SETTING_ID = 0;
     bool SOLVE_SETTING_RECURSIVE_CALL = false;
     bool SOLUTION_ID_RECURSIVE_CALL = false;
     bool PROFILE_IDs_RECURSIVE_CALL = false;
-    int Z, X, exp_left_padding, exp_right_padding;
+    int Z = 0, X = 0, exp_left_padding = 0, exp_right_padding = 0;
     alglib::ae_int_t max_iterations = 0;
     int iterations = 0;
     std::string output_file_name, scatter_correction_type = "none";
@@ -250,10 +259,10 @@ typedef struct parameters_struct {
     int total_window_size = 0;
 
     // Alglib Inputs
-    double* initial_values_alglib;
-    double* low_bound;
-    double* up_bound; 
-    double* scale;
+    std::vector<double> initial_values_alglib;
+    std::vector<double> low_bound;
+    std::vector<double> up_bound;
+    std::vector<double> scale;
 
     std::map<std::string, double> initial_values_alglib_map;
     std::map<std::string, double> low_bound_map;
@@ -262,20 +271,20 @@ typedef struct parameters_struct {
 } parameters_t;
 
 // Text FILE HANDLERS
-void save_excel_output(const std::filesystem::path& file_name);
+void save_excel_output(parameters_t& p, const std::filesystem::path& file_name);
 
 // MODEL
-void normalize_profile();
-void model(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row);
+void normalize_profile(parameters_t& p);
+void model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, int row);
 void alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_array &residuals, void *ptr);
-double scattering_correction(double NS, double species_2, double p, experiment_run_struct* run_ptr);
+double scattering_correction(parameters_t& p, double NS, double species_2, double coef, experiment_run_struct* run_ptr);
 solvable& variable_location(const std::string& variable_name, experiment_run_struct* run_ptr);
 void clear_output(int debug_level, std::string text_to_clear);
-void add_report(int debug_level, std::string text_to_add);
-void pop_report(int debug_level);
-void pop_and_add(int debug_level, std::string text_to_add);
+void add_report(parameters_t& p, int debug_level, std::string text_to_add);
+void pop_report(parameters_t& p, int debug_level);
+void pop_and_add(parameters_t& p, int debug_level, std::string text_to_add);
 void finish_report(int debug_level, std::string text_to_add);
-void add_finishing_report(int debug_level, std::string text_to_add);
+void add_finishing_report(parameters_t& p, int debug_level, std::string text_to_add);
 void removeSpaces(std::string &str);
 ptrdiff_t specie_index(experiment_run_struct* run_ptr, std::string specie_to_find, std::string second_specie_name = "na");
 ptrdiff_t reaction_index(experiment_run_struct* run_ptr, std::string reaction_to_find, std::string second_reaction_name = "na");
@@ -284,27 +293,25 @@ double lin_interpolate(double x, double x1, double y1, double x2, double y2);
 std::string double_to_string(double arg);
 
 // DB HANDLERS
-void lines_from_profile_text(sqlite3* db);
-void delete_values_from_db(sqlite3* db, std::string table, std::string where_conditions);
+void lines_from_profile_text(parameters_t& p, sqlite3* db);
+void delete_values_from_db(parameters_t& p, sqlite3* db, std::string table, std::string where_conditions);
 int exp_parameters_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_exp_parameters_from_db(sqlite3* db);
+void read_exp_parameters_from_db(parameters_t& p, sqlite3* db);
 int read_model_parameters_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_model_parameters_from_db(sqlite3* db);
+void read_model_parameters_from_db(parameters_t& p, sqlite3* db);
 int raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_raw_profiles_from_db(sqlite3* db);
+void read_raw_profiles_from_db(parameters_t& p, sqlite3* db);
 int inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_inlet_cond_from_db(sqlite3* db);
+void read_inlet_cond_from_db(parameters_t& p, sqlite3* db);
 int get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **columnNames);
-void get_SOLUTION_IDs_from_db(sqlite3* db);
+void get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db);
 int alglib_input_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_alglib_values_from_db(sqlite3* db);
-void get_solve_settings_ID_from_db(sqlite3* db);
+void read_alglib_values_from_db(parameters_t& p, sqlite3* db);
+void get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db);
 int get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames);
-void get_solvable_initial_values_from_db(sqlite3* db);
-void write_model_profile_to_db(sqlite3* db);
-void write_alglib_values_to_db(sqlite3* db);
+void get_solvable_initial_values_from_db(parameters_t& p, sqlite3* db);
+void write_model_profile_to_db(parameters_t& p, sqlite3* db);
+void write_alglib_values_to_db(parameters_t& p, sqlite3* db);
 int specie_db_callback(void *data, int count, char **argv, char **columnNames);
 int reaction_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_specie_and_reaction_values_from_db(sqlite3* db);
-
-extern parameters_t p;
+void read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db);

@@ -4,7 +4,6 @@
 
 #include <chrono>
 #include <iterator>
-#include <new>
 
 namespace {
 namespace fs = std::filesystem;
@@ -41,6 +40,7 @@ TEST(ApplicationOptions, RejectsUnknownAndMissingArguments)
 
 class ApplicationPaths : public ::testing::Test {
 protected:
+    parameters_t p{};
     fs::path root;
     fs::path original_directory;
     bool owns_directory = false;
@@ -52,8 +52,6 @@ protected:
         root = original_directory / ("path-test-" + std::to_string(stamp));
         owns_directory = fs::create_directory(root);
         ASSERT_TRUE(owns_directory);
-        p.~parameters_t();
-        new (&p) parameters_t{};
         p.X = 1;
         // Header-only export: no solver or experimental data is needed.
         p.row_count = 0;
@@ -64,8 +62,6 @@ protected:
     void TearDown() override
     {
         fs::current_path(original_directory);
-        p.~parameters_t();
-        new (&p) parameters_t{};
         std::error_code error;
         if (owns_directory) {
             fs::remove_all(root, error);
@@ -78,7 +74,7 @@ TEST_F(ApplicationPaths, ExportsToAbsoluteDirectoryFromAnotherWorkingDirectory)
     fs::create_directory(root / "launch");
     fs::current_path(root / "launch");
     const auto destination = root / "results with spaces" / "nested";
-    const auto result = tsensor_workflow::export_results(destination);
+    const auto result = tsensor_workflow::export_results(p, destination);
     EXPECT_EQ(result, destination / "sample run,.txt");
     ASSERT_TRUE(fs::is_regular_file(result));
     std::ifstream input(result);
@@ -91,7 +87,7 @@ TEST_F(ApplicationPaths, ExportsToAbsoluteDirectoryFromAnotherWorkingDirectory)
 TEST_F(ApplicationPaths, RelativeOutputUsesWorkingDirectory)
 {
     fs::current_path(root);
-    tsensor_workflow::export_results("relative results");
+    tsensor_workflow::export_results(p, "relative results");
     EXPECT_TRUE(fs::is_regular_file(root / "relative results" / "sample run,.txt"));
 }
 
@@ -99,17 +95,17 @@ TEST_F(ApplicationPaths, ReportsInvalidDirectoryAndFileOpenFailures)
 {
     const auto blocked = root / "a file";
     { std::ofstream file(blocked); file << "keep"; }
-    EXPECT_THROW(tsensor_workflow::export_results(blocked / "results"), fs::filesystem_error);
-    EXPECT_THROW(tsensor_workflow::export_results({}), std::invalid_argument);
+    EXPECT_THROW(tsensor_workflow::export_results(p, blocked / "results"), fs::filesystem_error);
+    EXPECT_THROW(tsensor_workflow::export_results(p, {}), std::invalid_argument);
     // A directory at the exact filename causes a deterministic file-open error.
     fs::create_directory(root / "sample run,.txt");
-    EXPECT_THROW(tsensor_workflow::export_results(root), std::runtime_error);
+    EXPECT_THROW(tsensor_workflow::export_results(p, root), std::runtime_error);
 }
 
 TEST_F(ApplicationPaths, RejectsExperimentNamesThatEscapeOutputDirectory)
 {
     p.experiment_runs.back().name = "../escaped";
-    EXPECT_THROW(tsensor_workflow::export_results(root / "results"), std::invalid_argument);
+    EXPECT_THROW(tsensor_workflow::export_results(p, root / "results"), std::invalid_argument);
     EXPECT_FALSE(fs::exists(root / "escaped,.txt"));
 }
 
