@@ -2,6 +2,7 @@
 #include <cmath>
 #include <string>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <optimization.h>
 #include <solvers.h>
@@ -261,7 +262,7 @@ typedef struct parameters_struct {
 } parameters_t;
 
 // Text FILE HANDLERS
-void save_excel_output(std::string file_name);
+void save_excel_output(const std::filesystem::path& file_name);
 
 // MODEL
 void normalize_profile();

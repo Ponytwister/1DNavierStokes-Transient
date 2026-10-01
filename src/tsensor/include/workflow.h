@@ -16,8 +16,10 @@ void load_inputs(sqlite3* db);
 // and optimizer settings; ALGLIB exceptions propagate to the caller.
 void run();
 
-// Export the current results using the existing relative path/name convention.
-void export_results();
+// Export into an explicit directory (created if absent), retaining the existing
+// experiment-based filename. Returns the written path; reports I/O errors by
+// exception. Relative paths are relative to the caller's working directory.
+std::filesystem::path export_results(const std::filesystem::path& output_directory);
 
 // Save profiles only when p.save_model_profiles is enabled.
 void save_model_profiles(sqlite3* db);

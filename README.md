@@ -37,7 +37,8 @@ preset. To build only the application without fetching GoogleTest, configure wit
 `-DBUILD_TESTING=OFF`; reconfigure with `-DBUILD_TESTING=ON` before running tests.
 
 CTest discovers the individual GoogleTest cases. A failing assertion or no discovered
-tests causes a failing test command. Tests do not launch the interactive application.
+tests causes a failing test command. CLI checks launch only help and invalid-input
+paths; they do not run the interactive solver.
 
 ## Test coverage and numerical fixtures
 
@@ -45,19 +46,41 @@ The initial suite checks linked parameter writes/unlinking, cycle rejection, int
 and its domain, molecular unit conversion, inlet initialization, and SQLite control loading.
 See `tests/fixtures/README.md` for input formats, expected-value derivations, and tolerances.
 These are component regressions, not validation of a full transient solve or parameter fit.
+Path tests cover option parsing, exports to disposable directories, file-open errors,
+and CLI rejection of missing database files without creating an empty database.
 
 ## Running the application
 
-`Navier.exe` currently opens `../../navier.db` relative to the working directory. With a
-preset build, launch it from `out/codex-debug` or `out/codex-release`, not the repository
-root. Runs can import profiles, write database results, produce files under `out`, and
-prompt to save fitted parameters. Use a disposable copy of the project/data for experiments
-when the original database must be preserved. There is no isolated command-line smoke
-mode yet; automated verification uses the test executable instead.
+Pass `--database PATH` and `--output-dir DIRECTORY` to choose the existing experiment
+database and export location. For example, from the repository root:
+
+```powershell
+.\out\codex-debug\Navier.exe --database ".\navier.db" --output-dir ".\out\results"
+```
+
+Relative paths are resolved against the launch working directory. Absolute paths
+allow launching from any directory, including through a desktop shortcut. Quote
+paths containing spaces. Use `--help` (or `-h`) to display usage without opening a
+database. Unknown options and missing path values exit with an error.
+
+With no options, the legacy defaults remain `../../navier.db` and `..`; launch from
+`out/codex-debug` or `out/codex-release` to use them. Missing output directories are
+created. Missing databases are rejected instead of silently creating empty files.
+An output directory that cannot be created fails before model loading; export
+open/write failures are also reported, though a failed write may leave a partial
+file. Existing files with the same experiment-based name are still overwritten.
+Experiment names containing `/`, `\`, or `:` are rejected at export so they cannot
+redirect the file outside the selected directory.
+
+Runs can write database results and prompt to save fitted parameters. Selecting a
+different output directory does not isolate database writes: use a disposable copy
+of the database when the original must be preserved. Automated checks do not run a
+full solve or fit.
 
 ## Source layout
 
 - `tsensor.cpp`: terminal entry point, database connection, and save prompt.
+- `src/tsensor/application_options.cpp`: terminal path options and legacy defaults.
 - `src/tsensor/workflow.cpp` and `include/workflow.h`: shared loading, fitting,
   export, save, and successful-run cleanup operations in the `tsensor` library.
 - `src/tsensor/include/tsensor.h`: parameters, experiment structures, and interfaces.
@@ -73,14 +96,19 @@ selectively; repository artifact cleanup is separate from this setup.
 
 `tsensor_workflow` separates the application operations from `main()`. A caller
 defines the existing global `parameters_t p`, opens the database, then calls
-`load_inputs`, `run`, `export_results`, and `save_model_profiles` in that order.
+`load_inputs`, `run`, `export_results(output_directory)`, and `save_model_profiles`
+in that order. `export_results` accepts a filesystem path and returns the written
+file path. A future UI can supply its selected directory directly; CLI parsing is
+independent of the shared workflow.
 `save_fitted_parameters` is a separate, explicit action; the terminal application
 still asks whether to perform it. After the last export/save, the existing
 `release_run_resources` operation runs, and the caller closes the database.
 
 This is an extraction of the current single-run workflow, not yet a GUI/session
-API: global state, console reporting, relative paths, and existing error handling
-remain. Loading can import profiles and create database records. The profile-save
+API: global state and console reporting remain, and general resource ownership is
+still unchanged. The terminal reports path and standard exceptions, closes its
+database on failure, and returns a nonzero exit code. Loading can create database
+records. The profile-save
 operation respects `p.save_model_profiles`. Cleanup must only run once after a
 successful load/run; it does not reset all state for another run. Callers must not
 run these operations concurrently. Optimizer settings, numerical equations, and

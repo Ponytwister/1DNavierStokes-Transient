@@ -71,15 +71,29 @@ void run()
     };
 }
 
-void export_results()
+std::filesystem::path export_results(const std::filesystem::path& output_directory)
 {
+    if (output_directory.empty()) {
+        throw std::invalid_argument("Output directory must not be empty");
+    }
     p.output_file_name.clear();
     for (int run = 0; run < p.experiment_runs.size(); run++) {
         experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
         p.output_file_name.append(run_ptr->name + ",");
     }
-    save_excel_output("../" + p.output_file_name + ".txt");
-    //save_csv_out("../csv_out/" + p.output_file_name + ".csv");
+    // Experiment names must not redirect the export outside the chosen directory.
+    if (p.output_file_name.find_first_of("/\\:") != std::string::npos) {
+        throw std::invalid_argument("Experiment names must not contain path separators or colons");
+    }
+    std::filesystem::create_directories(output_directory);
+    const auto output_path = output_directory / (p.output_file_name + ".txt");
+    try {
+        save_excel_output(output_path);
+    } catch (const std::ios_base::failure& error) {
+        throw std::runtime_error("Cannot export results to " + output_path.string()
+                                 + ": " + error.what());
+    }
+    return output_path;
 }
 
 void save_model_profiles(sqlite3* db)

@@ -4,10 +4,11 @@
 #include <algorithm>
 
 void
-save_excel_output(std::string file_name)
+save_excel_output(const std::filesystem::path& file_name)
 {
     std::cout << "Priming " << file_name << ": ";
     std::ofstream fout;
+    fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
     fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
     fout << "res_time"                  << "  "; //1
     fout << "bind_ratio(p1)"            << "  "; //2

@@ -7,7 +7,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-add_executable(tsensor_test tsensor_test.cpp)
+add_executable(tsensor_test tsensor_test.cpp application_paths_test.cpp)
 
 target_link_libraries(tsensor_test
  PRIVATE
@@ -20,3 +20,9 @@ target_compile_definitions(tsensor_test PRIVATE
 include(GoogleTest)
 gtest_discover_tests(tsensor_test DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
+
+add_test(NAME Application.CommandLinePaths
+    COMMAND ${CMAKE_COMMAND} -DNAVIER=$<TARGET_FILE:Navier>
+            -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-path-test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_paths.cmake)
+set_tests_properties(Application.CommandLinePaths PROPERTIES TIMEOUT 30)
