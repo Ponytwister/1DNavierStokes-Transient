@@ -6,18 +6,17 @@ FetchContent_Declare(
     GIT_TAG        release-1.11.0
 )
 FetchContent_MakeAvailable(googletest)
-add_library(GTest::GTest INTERFACE IMPORTED)
-target_link_libraries(GTest::GTest INTERFACE gtest_main)
 
 add_executable(tsensor_test tsensor_test.cpp)
 
 target_link_libraries(tsensor_test
  PRIVATE
-    GTest::GTest
+    gtest_main
     tsensor
 )
 
-add_test(
-  NAME tsensor_test
-  COMMAND tsensor --test
-)
+target_compile_definitions(tsensor_test PRIVATE
+    TSENSOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+include(GoogleTest)
+gtest_discover_tests(tsensor_test DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 30)
