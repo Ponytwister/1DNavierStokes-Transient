@@ -57,7 +57,9 @@ mode yet; automated verification uses the test executable instead.
 
 ## Source layout
 
-- `tsensor.cpp`: interactive application and fitting orchestration.
+- `tsensor.cpp`: terminal entry point, database connection, and save prompt.
+- `src/tsensor/workflow.cpp` and `include/workflow.h`: shared loading, fitting,
+  export, save, and successful-run cleanup operations in the `tsensor` library.
 - `src/tsensor/include/tsensor.h`: parameters, experiment structures, and interfaces.
 - `src/tsensor/sqlite_interface.cpp`: database I/O, numerical helpers, and model routines.
 - `src/alglib-cpp`, `src/sqlite3`, `src/eigen-3.4.0`: bundled dependencies.
@@ -66,3 +68,21 @@ mode yet; automated verification uses the test executable instead.
 
 Generated files are already tracked in parts of this repository. Stage source changes
 selectively; repository artifact cleanup is separate from this setup.
+
+## Shared application workflow
+
+`tsensor_workflow` separates the application operations from `main()`. A caller
+defines the existing global `parameters_t p`, opens the database, then calls
+`load_inputs`, `run`, `export_results`, and `save_model_profiles` in that order.
+`save_fitted_parameters` is a separate, explicit action; the terminal application
+still asks whether to perform it. After the last export/save, the existing
+`release_run_resources` operation runs, and the caller closes the database.
+
+This is an extraction of the current single-run workflow, not yet a GUI/session
+API: global state, console reporting, relative paths, and existing error handling
+remain. Loading can import profiles and create database records. The profile-save
+operation respects `p.save_model_profiles`. Cleanup must only run once after a
+successful load/run; it does not reset all state for another run. Callers must not
+run these operations concurrently. Optimizer settings, numerical equations, and
+the existing `run_solver` branches are unchanged. The unused callback context in
+the direct-call branch is now explicitly null instead of indeterminate.
