@@ -1,6 +1,7 @@
 #include <main_window.h>
 #include <controls_dialog.h>
 #include <model_controls.h>
+#include <setup_file.h>
 #include <QCheckBox>
 #include <QComboBox>
 #include <gtest/gtest.h>
@@ -67,6 +68,59 @@ int controlRow(QTableWidget* table, const QString& name) {
 model_controls::Row& control(std::vector<model_controls::Row>& rows, const QString& name) {
     for (auto& row : rows) if (row.name == name) return row;
     throw std::runtime_error("Control missing");
+}
+
+TEST(SetupFile, RoundTripAndTransactionalRestore)
+{
+    Inputs input;
+    input.execute("INSERT INTO model_controls VALUES('future_control',NULL)");
+    const auto original = model_controls::load(input.database);
+    const auto filename = input.directory.filePath(QString::fromUtf8("saved setup ü.navier.json"));
+    setup_file::Setup setup{input.database, input.directory.filePath("output with spaces"), original.rows};
+    setup_file::save(filename, setup);
+    const auto loaded = setup_file::load(filename);
+    EXPECT_EQ(loaded.database, setup.database);
+    EXPECT_EQ(loaded.outputDirectory, setup.outputDirectory);
+    EXPECT_EQ(loaded.controls, original.rows);
+    input.execute("UPDATE model_controls SET value='7' WHERE criterion='max_iterations'");
+    const auto changed = model_controls::load(input.database);
+    setup_file::restore(loaded, changed);
+    EXPECT_EQ(model_controls::load(input.database), original);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+    EXPECT_THROW(setup_file::restore(loaded, changed), std::runtime_error);
+    auto incompatible = loaded;
+    incompatible.controls.pop_back();
+    EXPECT_THROW(setup_file::restore(incompatible, original), std::runtime_error);
+    EXPECT_EQ(model_controls::load(input.database), original);
+    EXPECT_THROW(setup_file::save(input.database, setup), std::runtime_error);
+    EXPECT_EQ(model_controls::load(input.database), original);
+    setup.controls.push_back(setup.controls.front());
+    EXPECT_THROW(setup_file::save(filename, setup), std::runtime_error);
+    EXPECT_EQ(setup_file::load(filename).controls, original.rows);
+}
+
+TEST(SetupFile, ValidatesFileAndResolvesRelativePaths)
+{
+    QTemporaryDir directory;
+    const auto filename = directory.filePath("setup.json");
+    auto write = [&](const QByteArray& bytes) {
+        QFile file(filename); ASSERT_TRUE(file.open(QIODevice::WriteOnly)); file.write(bytes);
+    };
+    write(R"({"format":"navier-setup","version":1,"database":"inputs.db","outputDirectory":"reports","controls":[{"name":"max_iterations","value":"3"}]})");
+    const auto loaded = setup_file::load(filename);
+    EXPECT_EQ(loaded.database, directory.filePath("inputs.db"));
+    EXPECT_EQ(loaded.outputDirectory, directory.filePath("reports"));
+    for (const auto& bytes : {
+        QByteArray("{"),
+        QByteArray(R"({"format":"navier-setup","version":2})"),
+        QByteArray(R"({"format":"navier-setup","version":1,"database":"a","outputDirectory":"b","controls":[{"name":"max_iterations","value":"-1"}]})"),
+        QByteArray(R"({"format":"navier-setup","version":1,"database":"a","outputDirectory":"b","controls":[{"name":"max_iterations"}]})"),
+        QByteArray(R"({"format":"navier-setup","version":1,"database":"a","outputDirectory":"b","controls":[{"name":"x","value":null},{"name":"x","value":""}]})")}) {
+        write(bytes);
+        EXPECT_THROW(setup_file::load(filename), std::runtime_error);
+    }
+    EXPECT_THROW(setup_file::load(directory.filePath("missing.json")), std::runtime_error);
+    EXPECT_THROW(setup_file::save(directory.filePath("missing/setup.json"), loaded), std::runtime_error);
 }
 
 TEST(ModelControls, SupportsRealColumnNamesNullsAndPreservesOtherData)
@@ -162,6 +216,8 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
         auto* save = widget<QPushButton>(*dialog, "saveControlsButton");
         if (!until([&] { return save->isEnabled(); })) { ADD_FAILURE() << "Loading timed out"; dialog->reject(); return; }
         EXPECT_FALSE(run->isEnabled());
+        EXPECT_FALSE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
+        EXPECT_FALSE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
         auto* table = widget<QTableWidget>(*dialog, "controlsTable");
         auto* iterations = qobject_cast<QLineEdit*>(table->cellWidget(controlRow(table, "max_iterations"), 1));
         iterations->setText("bad"); save->click();
@@ -178,7 +234,11 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 0);
     run->click();
     EXPECT_FALSE(widget<QPushButton>(window, "modelControlsButton")->isEnabled());
+    EXPECT_FALSE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
+    EXPECT_FALSE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_TRUE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
+    EXPECT_TRUE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
 }
 

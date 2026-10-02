@@ -32,6 +32,7 @@ and output selection, Run/Cancel, progress, parameter results, and explicit save
 The **Model controls...** button edits the selected database's controls before a
 run, with validated values and explicit Save to database / Cancel actions.
 The original presets remain terminal-only and require no Qt.
+
 For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).
 
 GoogleTest is pinned to the existing `release-1.11.0` tag. Configuration normally fetches
@@ -108,6 +109,30 @@ Runs can write database results and prompt to save fitted parameters. Selecting 
 different output directory does not isolate database writes: use a disposable copy
 of the database when the original must be preserved. Automated checks do not run a
 full solve or fit.
+
+## Saving and opening a setup
+
+In the desktop UI, choose a database and output directory, then select **Save
+setup…** to write a `.navier.json` file containing both locations and a snapshot
+of all model controls currently saved in that database. Save changes in the
+Model controls dialog before saving a setup. Saving a setup does not run the
+model or change the database. Existing setup files are replaced atomically.
+
+Use **Open setup…** to restore the paths and controls. If the database controls
+differ, the application asks before applying the saved values to that database.
+Restoration uses one transaction and rejects changed control names, incompatible
+controls, or concurrent database edits without partial updates. Unknown controls
+are preserved in the file but cannot overwrite different unknown database values.
+Opening a setup clears previous run results; run again to calculate new results.
+Setup actions are disabled while a run, results save, or controls editor is active.
+
+The version 1 JSON format uses `format: "navier-setup"`, `version: 1`, `database`,
+`outputDirectory`, and a `controls` array of `{ "name": "...", "value": "..." }`
+rows. Values are strings or JSON `null` (SQL NULL). Saved paths are absolute;
+manually supplied relative paths resolve against the setup file's directory.
+The referenced database must still exist. A setup file does not contain experiment
+data or results and is not a database backup. No database schema migration is
+required. The terminal application's options are unchanged.
 
 ## Source layout
 

@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include "controls_dialog.h"
+#include "setup_file.h"
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -41,6 +42,13 @@ MainWindow::MainWindow()
     makePath("Database", "databasePath", database_, browseDatabase_);
     makePath("Output directory", "outputPath", output_, browseOutput_);
     layout->addLayout(form);
+    auto* setupButtons = new QHBoxLayout;
+    openSetup_ = new QPushButton("Open setup…"); openSetup_->setObjectName("openSetupButton");
+    saveSetup_ = new QPushButton("Save setup…"); saveSetup_->setObjectName("saveSetupButton");
+    setupButtons->addWidget(openSetup_); setupButtons->addWidget(saveSetup_); setupButtons->addStretch();
+    layout->addLayout(setupButtons);
+    connect(openSetup_, &QPushButton::clicked, this, [this] { openSetup(); });
+    connect(saveSetup_, &QPushButton::clicked, this, [this] { saveSetup(); });
     auto* note = new QLabel("Running may create solution records in the selected database. Results and fitted inputs are saved only when you choose to save.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* controls = new QHBoxLayout;
@@ -113,6 +121,36 @@ void MainWindow::setStatus(const QString& value) {
     log_->appendPlainText(value);
 }
 
+void MainWindow::saveSetup() {
+    if (work_ != Work::idle || closing_ || editingControls_) return;
+    const auto filename = QFileDialog::getSaveFileName(this, "Save setup", {}, "Navier setup (*.navier.json)");
+    if (filename.isEmpty()) return;
+    try {
+        const auto database = database_->text().trimmed();
+        setup_file::save(filename, {database, output_->text().trimmed(), model_controls::load(database).rows});
+        setStatus("Setup saved: " + filename);
+    } catch (...) { reportFailure(std::current_exception()); }
+}
+
+void MainWindow::openSetup() {
+    if (work_ != Work::idle || closing_ || editingControls_) return;
+    const auto filename = QFileDialog::getOpenFileName(this, "Open setup", {}, "Navier setup (*.navier.json);;JSON files (*.json)");
+    if (filename.isEmpty()) return;
+    try {
+        const auto setup = setup_file::load(filename);
+        const auto original = model_controls::load(setup.database);
+        if (original.rows != setup.controls) {
+            if (QMessageBox::question(this, "Restore model controls",
+                "Opening this setup will replace model controls in\n" + setup.database +
+                "\nwith the saved values. Continue?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+            setup_file::restore(setup, original);
+        }
+        clearResult();
+        database_->setText(setup.database); output_->setText(setup.outputDirectory);
+        setStatus("Setup opened: " + filename);
+    } catch (...) { reportFailure(std::current_exception()); }
+}
+
 void MainWindow::clearResult()
 {
     session_.reset(); activeDatabase_.clear(); values_->setRowCount(0); summary_->clear(); resultDatabase_->clear();
@@ -123,6 +161,8 @@ void MainWindow::clearResult()
 void MainWindow::updateControls()
 {
     const bool idle = work_ == Work::idle && !closing_ && !editingControls_;
+    openSetup_->setEnabled(idle);
+    saveSetup_->setEnabled(idle && !database_->text().trimmed().isEmpty() && !output_->text().trimmed().isEmpty());
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());

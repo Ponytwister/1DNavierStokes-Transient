@@ -20,6 +20,8 @@ private:
     enum class Work { idle, solve, save };
     struct ActionResult { QString message; std::exception_ptr error; };
     void startRun();
+    void saveSetup();
+    void openSetup();
     void poll();
     void updateControls();
     void clearResult();
@@ -36,6 +38,7 @@ private:
     // Destroy/join pending work before destroying the session it borrows.
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
+    QPushButton *openSetup_, *saveSetup_;
     QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_, *controls_;
     QLabel *status_, *summary_, *resultDatabase_;
     QPlainTextEdit* log_;

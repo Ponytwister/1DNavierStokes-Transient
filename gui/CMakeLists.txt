@@ -17,7 +17,7 @@ if(NOT qt_compiler_target STREQUAL "${NAVIER_QT_ARCHITECTURE}-w64-mingw32")
 endif()
 
 find_package(Qt6 ${NAVIER_QT_VERSION} EXACT REQUIRED COMPONENTS ${NAVIER_QT_COMPONENTS})
-add_library(navier_gui STATIC main_window.cpp main_window.h controls_dialog.cpp controls_dialog.h model_controls.cpp model_controls.h)
+add_library(navier_gui STATIC main_window.cpp main_window.h controls_dialog.cpp controls_dialog.h model_controls.cpp model_controls.h setup_file.cpp setup_file.h)
 target_link_libraries(navier_gui PUBLIC tsensor Qt6::Widgets)
 target_include_directories(navier_gui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(navier_gui PROPERTIES AUTOMOC ON)
