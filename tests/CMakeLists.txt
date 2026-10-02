@@ -36,3 +36,11 @@ add_test(NAME Application.CommandLineWorkflow
             -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-workflow-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_workflow.cmake)
 set_tests_properties(Application.CommandLineWorkflow PROPERTIES TIMEOUT 60)
+
+if(NAVIER_BUILD_GUI)
+    add_executable(navier_gui_test gui_test.cpp)
+    target_link_libraries(navier_gui_test PRIVATE gtest navier_gui)
+    target_compile_definitions(navier_gui_test PRIVATE TSENSOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    gtest_discover_tests(navier_gui_test DISCOVERY_MODE PRE_TEST
+        PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()

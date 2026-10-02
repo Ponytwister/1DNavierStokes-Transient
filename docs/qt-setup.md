@@ -109,12 +109,49 @@ $env:QT_PLUGIN_PATH = "C:\Qt\6.10.3\mingw_64\plugins"
 & .\out\qt-debug\gui\NavierGui.exe
 ```
 
-The window is a minimal application shell. Database selection, Run/Cancel,
-progress, and result controls are the next UI step. Starting it does not open a
-database. `Application.GuiStartup` constructs the window, enters the event loop,
-and exits automatically using Qt's offscreen plugin. The GUI kit also runs all
-39 existing component/workflow tests. This smoke test is not visual inspection
-or a standalone deployment check.
+## Using the desktop window
+
+Choose an existing experiment database, then click **Run**. The window starts
+with no database selected and never opens the repository database automatically.
+The output directory can be selected or entered; export creates it if necessary.
+Inputs are locked while a calculation or save is active. The progress indicator
+shows activity, not a completion percentage; completed model evaluations are
+reported separately. The log keeps the most recent 500 lines.
+
+The result table lists parameter source, name, and value. The summary reports
+optimizer iterations and the termination code; "finished" does not imply a
+converged fit. The result database is displayed above the table. Choosing another
+database clears the old results to prevent saving them to the wrong destination.
+Starting a new run also replaces the previous result session.
+
+After a successful run:
+
+- **Export report** writes the existing text report into the output directory,
+  replacing a report with the same experiment-derived filename if present.
+- **Save profiles** writes result profiles into the run's database. This button
+  is disabled when the database's `save_model_profiles` setting is false.
+- **Save fitted inputs…** asks for confirmation before replacing fitted initial
+  inputs in that database. It is separate from saving result profiles.
+
+Export and saves run off the UI thread and are serialized with calculations.
+Errors appear in the status and log; a failed export/save keeps results available
+for retry. Nothing is exported or saved automatically after a calculation.
+Loading can still create identity records, as documented for the core workflow.
+Existing partial-write behavior is unchanged: a failing database save does not
+roll back statements already committed.
+
+**Cancel** requests cooperative cancellation. Closing during a calculation
+requests cancellation and defers closing until workers finish; closing during a
+save lets that save finish. The event loop continues in both cases. Cancellation
+latency depends on the existing core checkpoints. No parameter editor or plot is
+included in this first window.
+
+`Application.GuiStartup` tests window construction and the event loop with Qt's
+offscreen plugin. Four GUI integration tests use disposable synthetic databases
+and exercise controls, explicit persistence, cancel/close, invalid-input recovery,
+export retries, and the disabled-profile-save setting. These run alongside the
+39 existing component/workflow tests. The same numerical coverage limitations
+apply; these checks do not validate general parameter recovery or deployment.
 
 If installing outside `C:\Qt`, use local preset overrides for the C/C++ compiler,
 make tool, Qt prefix, PATH, and QT_PLUGIN_PATH together. Keep versions consistent
