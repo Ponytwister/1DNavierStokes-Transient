@@ -102,8 +102,18 @@ TEST(Gui, CancelAndCloseDuringCalculation)
     input.execute("UPDATE model_controls SET value='100000' WHERE criterion='length/time resolution (Z)'");
     MainWindow window; input.choose(window); window.show();
     auto* run = widget<QPushButton>(window, "runButton");
-    run->click(); widget<QPushButton>(window, "cancelButton")->click();
+    bool heartbeat = false;
+    run->click();
+    QTimer::singleShot(0, &window, [&] {
+        heartbeat = true;
+        EXPECT_FALSE(run->isEnabled());
+        widget<QPushButton>(window, "cancelButton")->click();
+        // Programmatic changes can refresh controls even while inputs are locked.
+        widget<QLineEdit>(window, "outputPath")->setText(input.directory.filePath("cancelled"));
+        EXPECT_FALSE(widget<QPushButton>(window, "cancelButton")->isEnabled());
+    });
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_TRUE(heartbeat);
     EXPECT_TRUE(widget<QLabel>(window, "runStatus")->text().contains("cancelled"));
     EXPECT_FALSE(widget<QPushButton>(window, "exportButton")->isEnabled());
     run->click();
@@ -147,6 +157,27 @@ TEST(Gui, DisabledProfileSaveAndCloseDuringExport)
     ASSERT_TRUE(until([&] { return !window.isVisible(); }));
     EXPECT_TRUE(QFile::exists(input.directory.filePath("reports/uniform,.txt")));
     EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+}
+
+TEST(Gui, FailedExportAbortsCloseAndAllowsRetry)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    auto* run = widget<QPushButton>(window, "runButton");
+    auto* exportButton = widget<QPushButton>(window, "exportButton");
+    run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    widget<QLineEdit>(window, "outputPath")->setText(input.database);
+    exportButton->click();
+    EXPECT_FALSE(window.close());
+    ASSERT_TRUE(until([&] { return run->isEnabled() || !window.isVisible(); }));
+    ASSERT_TRUE(window.isVisible());
+    EXPECT_TRUE(widget<QLabel>(window, "runStatus")->text().contains("export", Qt::CaseInsensitive));
+    ASSERT_TRUE(exportButton->isEnabled());
+    widget<QLineEdit>(window, "outputPath")->setText(input.directory.filePath("retry"));
+    exportButton->click();
+    EXPECT_FALSE(window.close());
+    ASSERT_TRUE(until([&] { return !window.isVisible(); }));
+    EXPECT_TRUE(QFile::exists(input.directory.filePath("retry/uniform,.txt")));
 }
 } // namespace
 

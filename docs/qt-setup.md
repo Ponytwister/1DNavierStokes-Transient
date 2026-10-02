@@ -130,7 +130,7 @@ After a successful run:
   replacing a report with the same experiment-derived filename if present.
 - **Save profiles** writes result profiles into the run's database. This button
   is disabled when the database's `save_model_profiles` setting is false.
-- **Save fitted inputs…** asks for confirmation before replacing fitted initial
+- **Save fitted inputs...** asks for confirmation before replacing fitted initial
   inputs in that database. It is separate from saving result profiles.
 
 Export and saves run off the UI thread and are serialized with calculations.
@@ -142,14 +142,17 @@ roll back statements already committed.
 
 **Cancel** requests cooperative cancellation. Closing during a calculation
 requests cancellation and defers closing until workers finish; closing during a
-save lets that save finish. The event loop continues in both cases. Cancellation
+save lets that save finish. If saving fails, the window stays open with the error
+and results available for retry; close again to exit without retrying.
+The event loop continues in both cases. Cancellation
 latency depends on the existing core checkpoints. No parameter editor or plot is
 included in this first window.
 
 `Application.GuiStartup` tests window construction and the event loop with Qt's
-offscreen plugin. Four GUI integration tests use disposable synthetic databases
+offscreen plugin. Five GUI integration tests use disposable synthetic databases
 and exercise controls, explicit persistence, cancel/close, invalid-input recovery,
-export retries, and the disabled-profile-save setting. These run alongside the
+export retries (including failure during closing), event-loop cancellation,
+and the disabled-profile-save setting. These run alongside the
 39 existing component/workflow tests. The same numerical coverage limitations
 apply; these checks do not validate general parameter recovery or deployment.
 

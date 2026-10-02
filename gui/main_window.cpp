@@ -78,7 +78,7 @@ MainWindow::MainWindow()
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(cancel_, &QPushButton::clicked, this, [this] {
-        runner_.request_cancel(); cancel_->setEnabled(false); setStatus("Cancellation requested. Waiting for the calculation to stop…");
+        runner_.request_cancel(); cancelling_ = true; updateControls(); setStatus("Cancellation requested. Waiting for the calculation to stop…");
     });
     connect(export_, &QPushButton::clicked, this, [this] { save(operation::export_results); });
     connect(profiles_, &QPushButton::clicked, this, [this] { save(operation::save_model_profiles); });
@@ -110,7 +110,7 @@ void MainWindow::updateControls()
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
-    cancel_->setEnabled(work_ == Work::solve && !closing_);
+    cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_ && session_->parameters().save_model_profiles);
     profiles_->setToolTip(idle && session_ && !session_->parameters().save_model_profiles
@@ -128,7 +128,7 @@ void MainWindow::startRun()
     clearResult(); log_->clear(); activeDatabase_ = input.absoluteFilePath();
     try {
         runner_.start(path(activeDatabase_));
-        work_ = Work::solve; setStatus("Running…"); updateControls();
+        cancelling_ = false; work_ = Work::solve; setStatus("Running…"); updateControls();
     } catch (...) { reportFailure(std::current_exception()); }
 }
 
@@ -167,13 +167,14 @@ void MainWindow::save(operation requested)
 void MainWindow::poll()
 {
     if (work_ == Work::solve) {
+        // Observe completion before draining so terminal progress is not lost.
+        const auto state = runner_.status();
         for (const auto& event : runner_.drain_events()) {
             if (event.kind == event_kind::evaluation)
                 summary_->setText("Completed model evaluations: " + QString::number(event.evaluations.value_or(0)));
             else if (event.kind != event_kind::message || event.detail_level >= 3)
                 log_->appendPlainText(text(event.message));
         }
-        const auto state = runner_.status();
         if (state != background_state::running) {
             auto outcome = runner_.take_result(); work_ = Work::idle;
             if (state == background_state::cancelled) { summary_->clear(); setStatus("Run cancelled. No results were saved."); }
@@ -199,7 +200,11 @@ void MainWindow::poll()
         }
     } else if (work_ == Work::save && action_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         auto result = action_.get(); work_ = Work::idle;
-        if (result.error) reportFailure(result.error); else setStatus(result.message);
+        if (result.error) {
+            // Keep errors and results visible for retry after a deferred close.
+            closing_ = false;
+            reportFailure(result.error);
+        } else setStatus(result.message);
         updateControls();
     }
     if (closing_ && work_ == Work::idle) close();

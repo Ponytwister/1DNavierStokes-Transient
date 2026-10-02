@@ -28,6 +28,7 @@ private:
     void setStatus(const QString& text);
     Work work_ = Work::idle;
     bool closing_ = false;
+    bool cancelling_ = false;
     QString activeDatabase_;
     tsensor_workflow::background_runner runner_;
     std::unique_ptr<tsensor_workflow::run_session> session_;
