@@ -78,6 +78,9 @@ performance benchmark or sanitizer run is implied.
 
 ## Running the application
 
+In a terminal, the model evaluation counter updates on one line. Redirected
+output records only the final count, keeping log files free of repeated updates.
+
 Pass `--database PATH` and `--output-dir DIRECTORY` to choose the existing experiment
 database and export location. For example, from the repository root:
 

@@ -1,19 +1,50 @@
 #include <workflow.h>
 #include <application_options.h>
+#include <cstdio>
+#include <functional>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
-void print_progress(const tsensor_workflow::progress_event& event)
-{
-    using tsensor_workflow::event_kind;
-    // Failure exceptions are printed once by main's error handler.
-    if (event.kind == event_kind::failed) { return; }
-    if (event.kind == event_kind::message && event.detail_level < 3) { return; }
-    if (event.kind == event_kind::evaluation) {
-        std::cout << "Model evaluations completed: " << event.evaluations.value() << '\n';
-    } else {
+bool terminal_output() {
+#ifdef _WIN32
+    return _isatty(_fileno(stdout)) != 0;
+#else
+    return isatty(fileno(stdout)) != 0;
+#endif
+}
+
+class ProgressPrinter {
+public:
+    ~ProgressPrinter() { finish_line(); }
+    void operator()(const tsensor_workflow::progress_event& event) {
+        using tsensor_workflow::event_kind;
+        if (event.kind == event_kind::message && event.detail_level < 3) return;
+        if (event.kind == event_kind::evaluation) {
+            if (interactive_) {
+                std::cout << '\r' << "Model evaluations completed: " << event.evaluations.value() << std::flush;
+                pending_line_ = true;
+            }
+            return;
+        }
+        finish_line();
+        // Failure exceptions are printed once by main's error handler.
+        if (event.kind == event_kind::failed) return;
         std::cout << event.message << '\n';
     }
-}
+    void final_count(std::size_t count) {
+        if (!interactive_) std::cout << "Model evaluations completed: " << count << '\n';
+    }
+private:
+    void finish_line() {
+        if (pending_line_) { std::cout << '\n'; pending_line_ = false; }
+    }
+    bool interactive_ = terminal_output();
+    bool pending_line_ = false;
+};
 } // namespace
 
 int
@@ -31,7 +62,8 @@ main(int argc, char* argv[])
         }
         options.database = std::filesystem::absolute(options.database).lexically_normal();
         options.output_directory = std::filesystem::absolute(options.output_directory).lexically_normal();
-        tsensor_workflow::run_session session(options.database, print_progress);
+        ProgressPrinter print_progress;
+        tsensor_workflow::run_session session(options.database, std::ref(print_progress));
         std::cout << "Database opened: " << options.database << '\n';
         // Detect invalid directory paths before loading or running the model.
         std::filesystem::create_directories(options.output_directory);
@@ -39,6 +71,7 @@ main(int argc, char* argv[])
 
         session.load_inputs();
         const auto result = session.run();
+        print_progress.final_count(result.residual_evaluations);
         if (result.optimizer_ran) {
             std::cout << "Optimizer iterations: " << result.optimizer_iterations.value()
                       << "; termination code: " << result.termination_type.value() << '\n';
