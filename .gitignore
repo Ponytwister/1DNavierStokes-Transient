@@ -1,2 +1,7 @@
 # Generated text reports, including exports into output subdirectories.
 /out/**/*.txt
+
+# Isolated Qt installer helper and Qt-kit build trees.
+/out/qt-setup/
+/out/qt-debug/
+/out/qt-release/

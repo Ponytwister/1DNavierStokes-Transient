@@ -24,10 +24,11 @@ and `out/codex-release` directories, leaving the existing `out/build` cache alon
 GNU C++20 extensions are enabled: the source currently uses GCC-specific headers,
 variable-length arrays, and numeric literals. MSVC compatibility is not claimed.
 
-The planned desktop UI is pinned to Qt 6.10.3 Widgets with Qt's MinGW 13.1.0
-64-bit kit. See [Qt kit setup](docs/qt-setup.md) for installation, version checks,
-licensing, and the separate build requirements. Qt is not required by the current
-terminal build; GUI integration is the next step.
+The optional desktop UI uses Qt 6.10.3 Widgets with Qt's MinGW 13.1.0 64-bit kit.
+See [Qt kit setup](docs/qt-setup.md) for installation, build/launch commands, and
+licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
+minimal `NavierGui` window alongside the terminal executable. The original presets
+remain terminal-only and require no Qt. Run controls are the next UI step.
 
 GoogleTest is pinned to the existing `release-1.11.0` tag. Configuration normally fetches
 it from GitHub. For offline configuration, supply an existing checkout of that version:
