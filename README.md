@@ -24,6 +24,11 @@ and `out/codex-release` directories, leaving the existing `out/build` cache alon
 GNU C++20 extensions are enabled: the source currently uses GCC-specific headers,
 variable-length arrays, and numeric literals. MSVC compatibility is not claimed.
 
+The planned desktop UI is pinned to Qt 6.10.3 Widgets with Qt's MinGW 13.1.0
+64-bit kit. See [Qt kit setup](docs/qt-setup.md) for installation, version checks,
+licensing, and the separate build requirements. Qt is not required by the current
+terminal build; GUI integration is the next step.
+
 GoogleTest is pinned to the existing `release-1.11.0` tag. Configuration normally fetches
 it from GitHub. For offline configuration, supply an existing checkout of that version:
 
