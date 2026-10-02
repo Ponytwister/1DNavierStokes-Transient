@@ -133,5 +133,10 @@ TEST_F(ModelInputs, LoadsControlsFromDisposableDatabase)
     EXPECT_FALSE(p.save_model_profiles);
     EXPECT_EQ(p.max_iterations, 3);
     expect_numeric(p.convergence_epsx, 1e-9);
+    ASSERT_EQ(sqlite3_exec(db.get(), "INSERT INTO model_controls VALUES('run_solver','false')",
+                          nullptr, nullptr, nullptr), SQLITE_OK);
+    parameters_t without_fitting;
+    read_model_parameters_from_db(without_fitting, db.get());
+    EXPECT_FALSE(without_fitting.run_solver);
 }
 } // namespace

@@ -29,13 +29,14 @@ private:
     Work work_ = Work::idle;
     bool closing_ = false;
     bool cancelling_ = false;
+    bool editingControls_ = false;
     QString activeDatabase_;
     tsensor_workflow::background_runner runner_;
     std::unique_ptr<tsensor_workflow::run_session> session_;
     // Destroy/join pending work before destroying the session it borrows.
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
-    QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_;
+    QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_, *controls_;
     QLabel *status_, *summary_, *resultDatabase_;
     QPlainTextEdit* log_;
     QTableWidget* values_;

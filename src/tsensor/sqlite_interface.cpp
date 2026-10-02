@@ -282,8 +282,8 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
             p.disable_reactions = true;
         } else {p.disable_reactions = false;}
     } else if (criterion == "run_solver") {
-        if (value == "true") {
-            p.run_solver = true;
+        if (value == "true" || value == "false") {
+            p.run_solver = value == "true";
         }
     } else if (criterion == "scatter_correction_type") {
         p.scatter_correction_type = value;

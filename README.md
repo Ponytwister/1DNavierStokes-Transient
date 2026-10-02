@@ -29,6 +29,8 @@ See [Qt kit setup](docs/qt-setup.md) for installation, build/launch commands, an
 licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 `NavierGui` application alongside the terminal executable. It provides database
 and output selection, Run/Cancel, progress, parameter results, and explicit saves.
+The **Model controls...** button edits the selected database's controls before a
+run, with validated values and explicit Save to database / Cancel actions.
 The original presets remain terminal-only and require no Qt.
 For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).
 

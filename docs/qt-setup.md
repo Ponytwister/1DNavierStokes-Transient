@@ -124,6 +124,35 @@ converged fit. The result database is displayed above the table. Choosing anothe
 database clears the old results to prevent saving them to the wrong destination.
 Starting a new run also replaces the previous result session.
 
+Before running, click **Model controls...** to edit the selected database's
+`model_controls` rows. Boolean controls use true/false choices; resolution,
+padding, iteration limits, report level and convergence tolerance are validated
+when saving. Experiment and global parameter lists retain their existing
+space-separated format. Hover over a control for a description. **NULL (skip)**
+preserves the loader's existing SQL NULL behavior; it does not provide required
+resolution or experiment values. Validation checks field syntax and basic ranges,
+not whether a particular combination is physically appropriate or will converge.
+
+**Save to database** commits the edited settings for subsequent runs; **Cancel**
+discards edits. Saving controls clears previous results in the window to prevent
+mixing results with newly edited inputs. The editor is unavailable while running
+or saving results. Reads and writes run in a worker while the dialog stays
+responsive. Close/Cancel waits until a pending database operation finishes.
+
+Both the original `Parameter`/`Setting` layout and the test `criterion`/`value`
+layout are supported, following the loader's first-two-column convention.
+No schema migration is needed. The editor updates existing recognized rows only;
+unknown rows (including `save_normalized_profiles`, which the loader does not
+read), unchanged values, extra columns, and experiment/result tables are preserved.
+Updates use one transaction and roll back on failure. If another application
+changes the controls after loading, saving refuses to overwrite them; close and
+reopen the editor to reload. No writes occur when merely opening or cancelling.
+
+The loader now honors `run_solver=false`: it evaluates the model without fitting,
+using the existing non-optimizer workflow. Previously false left the default true
+value unchanged. Equations, numerical units and parameter-link semantics are
+unchanged.
+
 After a successful run:
 
 - **Export report** writes the existing text report into the output directory,
@@ -145,16 +174,19 @@ requests cancellation and defers closing until workers finish; closing during a
 save lets that save finish. If saving fails, the window stays open with the error
 and results available for retry; close again to exit without retrying.
 The event loop continues in both cases. Cancellation
-latency depends on the existing core checkpoints. No parameter editor or plot is
-included in this first window.
+latency depends on the existing core checkpoints. Fitted-parameter input editing
+and plotting are not yet included.
 
 `Application.GuiStartup` tests window construction and the event loop with Qt's
-offscreen plugin. Five GUI integration tests use disposable synthetic databases
+offscreen plugin. GUI integration tests use disposable synthetic databases
 and exercise controls, explicit persistence, cancel/close, invalid-input recovery,
 export retries (including failure during closing), event-loop cancellation,
 and the disabled-profile-save setting. These run alongside the
 39 existing component/workflow tests. The same numerical coverage limitations
 apply; these checks do not validate general parameter recovery or deployment.
+Controls-editor tests additionally cover explicit save/cancel, invalid values,
+the real column-name layout, NULL preservation, transaction rollback, conflicting
+external edits, and running without fitting after editing the switch.
 
 If installing outside `C:\Qt`, use local preset overrides for the C/C++ compiler,
 make tool, Qt prefix, PATH, and QT_PLUGIN_PATH together. Keep versions consistent

@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "controls_dialog.h"
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -45,7 +46,8 @@ MainWindow::MainWindow()
     auto* controls = new QHBoxLayout;
     run_ = new QPushButton("Run"); run_->setObjectName("runButton");
     cancel_ = new QPushButton("Cancel"); cancel_->setObjectName("cancelButton");
-    controls->addWidget(run_); controls->addWidget(cancel_); controls->addStretch();
+    controls_ = new QPushButton("Model controls..."); controls_->setObjectName("modelControlsButton");
+    controls->addWidget(run_); controls->addWidget(cancel_); controls->addWidget(controls_); controls->addStretch();
     layout->addLayout(controls);
     status_ = new QLabel("Choose a database to begin."); status_->setObjectName("runStatus");
     status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true); layout->addWidget(status_);
@@ -77,6 +79,20 @@ MainWindow::MainWindow()
     connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) clearResult(); });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
+    connect(controls_, &QPushButton::clicked, this, [this] {
+        if (work_ != Work::idle || closing_ || editingControls_) return;
+        const QFileInfo input(database_->text().trimmed());
+        if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
+        editingControls_ = true; updateControls();
+        ControlsDialog dialog(input.absoluteFilePath(), this);
+        const bool saved = dialog.exec() == QDialog::Accepted;
+        editingControls_ = false;
+        if (saved) {
+            clearResult();
+            setStatus("Model controls saved. Run again to calculate results with the new settings.");
+        }
+        updateControls();
+    });
     connect(cancel_, &QPushButton::clicked, this, [this] {
         runner_.request_cancel(); cancelling_ = true; updateControls(); setStatus("Cancellation requested. Waiting for the calculation to stop…");
     });
@@ -106,10 +122,11 @@ void MainWindow::clearResult()
 
 void MainWindow::updateControls()
 {
-    const bool idle = work_ == Work::idle && !closing_;
+    const bool idle = work_ == Work::idle && !closing_ && !editingControls_;
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
+    controls_->setEnabled(idle && !database_->text().trimmed().isEmpty());
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_ && session_->parameters().save_model_profiles);
@@ -122,7 +139,7 @@ void MainWindow::updateControls()
 
 void MainWindow::startRun()
 {
-    if (work_ != Work::idle || closing_) return;
+    if (work_ != Work::idle || closing_ || editingControls_) return;
     const QFileInfo input(database_->text().trimmed());
     if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
     clearResult(); log_->clear(); activeDatabase_ = input.absoluteFilePath();
@@ -212,6 +229,7 @@ void MainWindow::poll()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    if (editingControls_) { event->ignore(); return; }
     if (work_ == Work::idle) { timer_->stop(); event->accept(); return; }
     closing_ = true;
     if (work_ == Work::solve) runner_.request_cancel();
