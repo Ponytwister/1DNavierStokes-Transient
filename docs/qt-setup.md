@@ -169,6 +169,44 @@ licenses/notices and satisfy the chosen license's source and replacement/relinki
 requirements. Record the actual distributed Qt components and their third-party
 notices when packaging. Static linking is not part of this kit decision.
 
-Qt runtime DLLs and the Windows platform plugin must accompany a distributed UI;
-deployment validation is a later step. Qt source or binary packages will not be
-vendored into the repository.
+## Portable Windows package
+
+From the repository root, build the Release ZIP with the pinned kit:
+
+```powershell
+cmake --preset qt-mingw-release
+cmake --build --preset qt-mingw-release --parallel 2
+ctest --preset qt-mingw-release
+cmake --build --preset qt-mingw-release --target package
+./tools/test-portable-package.ps1 -Archive ./out/qt-release/packages/NavierGui-0.1.0-windows-x64-Release.zip
+```
+
+The package target uses CMake's CPack directly, avoiding PowerShell's possible
+Chocolatey `cpack` alias. Version `0.1.0` identifies this initial development
+package format, not a stable application release. All packaging output stays in
+the ignored Qt build directory. Reconfigure first after changing install rules.
+
+Extract the entire ZIP and launch `bin/NavierGui.exe`. The package contains the
+GUI, shared Qt runtime, Windows platform/style/image plugins, `qt.conf`, the
+matching compiler runtimes, dependency records and a usage README. No database
+or experiment output is included. The CLI remains available in the build tree.
+Qt's deployment helper determines runtime files; compiler DLLs are copied from
+the selected compiler directory rather than whichever compiler is on PATH.
+Unused network/touch plugin groups and translations are excluded for this UI.
+
+The smoke script extracts into a unique folder beside the ZIP, clears Qt/QML
+environment overrides and limits PATH to Windows system folders. It launches
+the actual Windows platform plugin from a different working directory, checks
+successful exit within 15 seconds, and restores the environment. It retains
+the extraction for inspection. It never selects or opens a database.
+This is startup/relocation validation on the development machine, not a clean-VM
+test, full packaged solver validation, or a signed installer.
+
+Read [the packaged README](portable-package.md) before redistribution. In
+particular, the existing ALGLIB sources declare GPL v2 or later, and this
+repository has no application license selected. The package includes available
+compiler/Eigen/ALGLIB notices and Qt's supplied SBOM; completing corresponding
+source and Qt/third-party license materials remains a public-release task.
+
+Deployment API reference:
+[Qt 6.10 deployment script](https://doc.qt.io/qt-6.10/qt-generate-deploy-app-script.html).

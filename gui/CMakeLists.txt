@@ -24,6 +24,8 @@ set_target_properties(navier_gui PROPERTIES AUTOMOC ON)
 add_executable(NavierGui WIN32 main.cpp)
 target_link_libraries(NavierGui PRIVATE navier_gui)
 
+include(${PROJECT_SOURCE_DIR}/cmake/PackageGui.cmake)
+
 if(BUILD_TESTING)
     add_test(NAME Application.GuiStartup COMMAND NavierGui --smoke-test)
     set_tests_properties(Application.GuiStartup PROPERTIES

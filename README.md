@@ -30,6 +30,7 @@ licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 `NavierGui` application alongside the terminal executable. It provides database
 and output selection, Run/Cancel, progress, parameter results, and explicit saves.
 The original presets remain terminal-only and require no Qt.
+For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).
 
 GoogleTest is pinned to the existing `release-1.11.0` tag. Configuration normally fetches
 it from GitHub. For offline configuration, supply an existing checkout of that version:

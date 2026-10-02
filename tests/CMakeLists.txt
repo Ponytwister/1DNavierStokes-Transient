@@ -1,5 +1,8 @@
 include(FetchContent)
 
+# GoogleTest is a build/test dependency, not part of the desktop distribution.
+set(INSTALL_GTEST OFF CACHE BOOL "Do not install bundled test libraries" FORCE)
+
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
