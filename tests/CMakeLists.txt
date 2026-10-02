@@ -7,7 +7,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-add_executable(tsensor_test tsensor_test.cpp application_paths_test.cpp session_test.cpp feedback_test.cpp background_runner_test.cpp)
+add_executable(tsensor_test tsensor_test.cpp application_paths_test.cpp session_test.cpp feedback_test.cpp background_runner_test.cpp workflow_test.cpp)
 
 target_link_libraries(tsensor_test
  PRIVATE
@@ -26,3 +26,13 @@ add_test(NAME Application.CommandLinePaths
             -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-path-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_paths.cmake)
 set_tests_properties(Application.CommandLinePaths PROPERTIES TIMEOUT 30)
+
+add_executable(workflow_cli_fixture workflow_cli_fixture.cpp)
+target_link_libraries(workflow_cli_fixture PRIVATE sqlite3)
+add_test(NAME Application.CommandLineWorkflow
+    COMMAND ${CMAKE_COMMAND} -DNAVIER=$<TARGET_FILE:Navier>
+            -DFIXTURE_TOOL=$<TARGET_FILE:workflow_cli_fixture>
+            -DFIXTURE_SQL=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/workflow.sql
+            -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-workflow-test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_workflow.cmake)
+set_tests_properties(Application.CommandLineWorkflow PROPERTIES TIMEOUT 60)

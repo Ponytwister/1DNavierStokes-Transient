@@ -1,0 +1,35 @@
+file(MAKE_DIRECTORY "${TEST_ROOT}")
+# Unique disposable paths; never open the repository's experiment database.
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef run_id)
+set(run_root "${TEST_ROOT}/${run_id}")
+file(MAKE_DIRECTORY "${run_root}/launch" "${run_root}/reports")
+set(database "${run_root}/synthetic.db")
+execute_process(COMMAND "${FIXTURE_TOOL}" create "${database}" "${FIXTURE_SQL}"
+    RESULT_VARIABLE result ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Fixture creation failed: ${error}")
+endif()
+foreach(answer IN ITEMS n y)
+    file(WRITE "${run_root}/answer.txt" "${answer}\n")
+    execute_process(COMMAND "${NAVIER}" --database "${database}" --output-dir "${run_root}/reports"
+        WORKING_DIRECTORY "${run_root}/launch" INPUT_FILE "${run_root}/answer.txt"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20)
+    if(NOT result EQUAL 0 OR NOT output MATCHES "Database closed")
+        message(FATAL_ERROR "CLI workflow failed (${answer}): ${result}\n${output}\n${error}")
+    endif()
+    if(NOT EXISTS "${run_root}/reports/uniform,.txt")
+        message(FATAL_ERROR "Missing explicit-directory export")
+    endif()
+    if(answer STREQUAL "n")
+        set(expected 0.75)
+    else()
+        set(expected 1)
+    endif()
+    execute_process(COMMAND "${FIXTURE_TOOL}" check "${database}" "${expected}"
+        RESULT_VARIABLE result ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "CLI verification failed (${answer}): ${error}")
+    endif()
+endforeach()
+# Retain the disposable files on failure for diagnosis; clean known files on success.
+file(REMOVE "${database}" "${run_root}/answer.txt" "${run_root}/reports/uniform,.txt")

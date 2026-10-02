@@ -37,21 +37,36 @@ preset. To build only the application without fetching GoogleTest, configure wit
 `-DBUILD_TESTING=OFF`; reconfigure with `-DBUILD_TESTING=ON` before running tests.
 
 CTest discovers the individual GoogleTest cases. A failing assertion or no discovered
-tests causes a failing test command. CLI checks launch only help and invalid-input
-paths; they do not run the interactive solver.
+tests causes a failing test command. CLI checks cover help and invalid-input paths,
+plus a full synthetic solve with both save-prompt answers in a disposable database.
 
 ## Test coverage and numerical fixtures
 
 The initial suite checks linked parameter writes/unlinking, cycle rejection, interpolation
 and its domain, molecular unit conversion, inlet initialization, and SQLite control loading.
 See `tests/fixtures/README.md` for input formats, expected-value derivations, and tolerances.
-These are component regressions, not validation of a full transient solve or parameter fit.
+The original cases are component regressions. The workflow fixture below adds a
+complete transient solve in a deliberately limited uniform-equilibrium case.
 Path tests cover option parsing, exports to disposable directories, file-open errors,
 and CLI rejection of missing database files without creating an empty database.
 Session tests cover independent state and links, owned concentration buffers,
 partial-load failures, SQLite statement/connection cleanup, and worker exceptions.
 Feedback tests cover silent core execution, lifecycle/error events, serialized
 callbacks, evaluation counts, returned parameter snapshots, and explicit saves.
+
+`workflow.sql` adds synchronous and background load/solve/export/save/reload checks,
+cancellation after a real residual evaluation, and recovery from invalid inputs.
+It checks the independent uniform-concentration solution, export contents, persisted
+profiles, explicit fitted-input saving, replacement rather than duplication on
+repeated saves, and preservation of unrelated experiment records. The CLI runs from
+a different directory with explicit paths and answers both `n` and `y` to saving.
+All test databases are synthetic and disposable; tests never run against `navier.db`.
+
+This is not general solver validation: the case has no concentration gradient or
+net reaction, and its fitted parameter is intentionally unidentifiable. It does not
+establish accuracy for diffusion fronts, reacting systems, scattering corrections,
+zero-profile comparisons, or recovery of parameters from experimental data. No
+performance benchmark or sanitizer run is implied.
 
 ## Running the application
 
@@ -250,5 +265,6 @@ pass a `std::stop_token` as the third `run_session` constructor argument.
 
 Tests cover cancellation, active-run exclusion, outcome retrieval/reuse, failure
 propagation, destruction, and ALGLIB callback unwinding with an independent scalar
-least-squares case. These are component/concurrency checks, not a full transient
-solve or complete background load/solve/export validation; that remains step 6.
+least-squares case. Step 6 also validates a full synthetic background workflow and
+checks that a completed session can outlive its runner and still export/save.
+See the numerical limitations under Test coverage above.

@@ -1,0 +1,215 @@
+#include <background_runner.h>
+#include <gtest/gtest.h>
+#include <atomic>
+#include <sstream>
+
+namespace {
+using namespace tsensor_workflow;
+
+void sql(sqlite3* db, const std::string& text)
+{
+    if (sqlite3_exec(db, text.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db));
+}
+
+double scalar(sqlite3* db, const char* query)
+{
+    sqlite3_stmt* raw = nullptr;
+    const int rc = sqlite3_prepare_v2(db, query, -1, &raw, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(raw, sqlite3_finalize);
+    if (rc != SQLITE_OK || sqlite3_step(raw) != SQLITE_ROW)
+        throw std::runtime_error(sqlite3_errmsg(db));
+    return sqlite3_column_double(raw, 0);
+}
+
+struct fixture {
+    std::filesystem::path root, database;
+    fixture() {
+        // Atomic directory creation avoids collisions across parallel test processes.
+        for (int i = 0; ; ++i) {
+            root = std::filesystem::temp_directory_path() / ("navier-workflow-" + std::to_string(i));
+            if (std::filesystem::create_directory(root)) break;
+        }
+        database = root / "inputs.db";
+        sqlite3* raw = nullptr;
+        const auto name = database.u8string();
+        const int rc = sqlite3_open(reinterpret_cast<const char*>(name.c_str()), &raw);
+        std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+        if (rc != SQLITE_OK) throw std::runtime_error("Cannot create test database");
+        std::ifstream input(std::filesystem::path(TSENSOR_FIXTURE_DIR) / "workflow.sql");
+        if (!input) throw std::runtime_error("Missing workflow fixture");
+        sql(db.get(), std::string(std::istreambuf_iterator<char>(input), {}));
+    }
+    ~fixture() { std::error_code error; std::filesystem::remove_all(root, error); }
+};
+
+void near(double actual, double expected)
+{
+    ASSERT_TRUE(std::isfinite(actual));
+    EXPECT_NEAR(actual, expected, 1e-12 + 1e-10 * std::abs(expected));
+}
+
+void verify_solution(run_session& session, const run_result& result)
+{
+    EXPECT_EQ(session.state(), session_state::completed);
+    EXPECT_TRUE(result.optimizer_ran);
+    ASSERT_TRUE(result.termination_type);
+    EXPECT_GT(*result.termination_type, 0);
+    EXPECT_GT(result.residual_evaluations, 0);
+    ASSERT_EQ(result.parameters.size(), 1u);
+    EXPECT_EQ(result.parameters[0].name, "keq1");
+    // keq1 is intentionally unidentifiable when kon=0; only workflow is tested.
+    near(result.parameters[0].value, 1);
+    auto& p = session.parameters();
+    ASSERT_EQ(p.experiments.size(), 4u);
+    for (const auto& exp : p.experiments) {
+        ASSERT_EQ(exp.species_out.size(), 3u);
+        for (std::size_t species = 0; species < 3; ++species) {
+            ASSERT_EQ(exp.species_out[species].size(), 8u);
+            for (double value : exp.species_out[species]) near(value, species == 0 ? 20 : 0);
+        }
+        for (double value : exp.model_profile) near(value, 20);
+        for (double value : exp.experimental_profile) near(value, 1);
+        for (double value : exp.error) near(value, 0);
+    }
+}
+
+void verify_persistence(run_session& session, const std::filesystem::path& directory)
+{
+    auto* db = session.database();
+    near(scalar(db, "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
+    auto path = session.export_results(directory);
+    EXPECT_EQ(path.parent_path(), directory);
+    std::ifstream report(path);
+    std::string line;
+    int dye_rows = 0;
+    while (std::getline(report, line)) {
+        std::istringstream row(line);
+        std::string field;
+        for (int i = 0; i < 9 && row >> field; ++i) {
+            if (i == 8 && field == "Free_Dye") {
+                double value;
+                int count = 0;
+                while (row >> value) { near(value, .002); ++count; }
+                EXPECT_EQ(count, 8);
+                ++dye_rows;
+            }
+        }
+    }
+    EXPECT_EQ(dye_rows, 4);
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        session.save_model_profiles();
+        near(scalar(db, "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 36);
+        near(scalar(db, "SELECT count(*) FROM parameter_solutions WHERE SOLVE_SETTING_ID<>99"), 1);
+        near(scalar(db, "SELECT max(abs(Free_Dye-0.002)) FROM model_profile WHERE SOLUTION_ID<>99 AND Free_Dye<>''"), 0);
+        near(scalar(db, "SELECT max(abs(Numeric-0.002)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(db, "SELECT max(abs(Error)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    }
+    near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
+    session.save_fitted_parameters();
+    near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), session.parameters().initial_values_alglib[0]);
+    near(scalar(db, "SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+    near(scalar(db, "SELECT VALUE FROM parameter_solutions WHERE SOLUTION_ID=99"), 42);
+    near(scalar(db, "SELECT MODEL_DA FROM solutions WHERE SOLUTION_ID=99"), 4);
+}
+
+TEST(Workflow, SynchronousLoadSolveExportSaveAndReload)
+{
+    fixture files;
+    {
+        run_session session(files.database);
+        session.load_inputs();
+        const auto result = session.run();
+        verify_solution(session, result);
+        verify_persistence(session, files.root / "reports");
+    }
+    run_session again(files.database);
+    again.load_inputs();
+    verify_solution(again, again.run());
+    near(scalar(again.database(), "SELECT count(*) FROM solve_settings"), 2);
+    near(scalar(again.database(), "SELECT count(*) FROM solutions"), 5);
+}
+
+TEST(Workflow, BackgroundSuccessOutlivesRunner)
+{
+    fixture files;
+    background_result outcome;
+    {
+        background_runner runner;
+        runner.start(files.database);
+        runner.wait();
+        ASSERT_EQ(runner.status(), background_state::completed);
+        outcome = runner.take_result();
+    }
+    ASSERT_FALSE(outcome.failure);
+    ASSERT_TRUE(outcome.session);
+    ASSERT_TRUE(outcome.result);
+    verify_solution(*outcome.session, *outcome.result);
+    verify_persistence(*outcome.session, files.root / "background reports");
+}
+
+TEST(Workflow, CancelDuringRealSolveThenRunAgain)
+{
+    fixture files;
+    background_runner runner;
+    std::atomic<bool> accepted = false;
+    runner.start(files.database, [&](const progress_event& event) {
+        if (event.kind == event_kind::evaluation && event.evaluations == 1)
+            accepted = runner.request_cancel();
+    });
+    runner.wait();
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(runner.status(), background_state::cancelled);
+    auto cancelled = runner.take_result();
+    EXPECT_FALSE(cancelled.session);
+    EXPECT_FALSE(cancelled.result);
+    ASSERT_TRUE(cancelled.failure);
+    try { std::rethrow_exception(cancelled.failure); }
+    catch (const workflow_error& error) { EXPECT_EQ(error.code, error_code::cancelled); }
+    {
+        run_session inspect(files.database);
+        near(scalar(inspect.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(inspect.database(), "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
+    }
+    runner.start(files.database);
+    runner.wait();
+    ASSERT_EQ(runner.status(), background_state::completed);
+    auto completed = runner.take_result();
+    ASSERT_TRUE(completed.session);
+    verify_solution(*completed.session, *completed.result);
+}
+
+TEST(Workflow, InvalidInputsFailWithoutResultsAndAllowFreshRun)
+{
+    fixture files;
+    {
+        run_session edit(files.database);
+        sql(edit.database(), "UPDATE alglib_input SET SCALE=0");
+    }
+    background_runner runner;
+    runner.start(files.database);
+    runner.wait();
+    EXPECT_EQ(runner.status(), background_state::failed);
+    auto failed = runner.take_result();
+    EXPECT_FALSE(failed.session);
+    ASSERT_TRUE(failed.failure);
+    try { std::rethrow_exception(failed.failure); }
+    catch (const workflow_error& error) {
+        EXPECT_EQ(error.action, operation::load_inputs);
+        EXPECT_EQ(error.code, error_code::invalid_input);
+    }
+    {
+        run_session edit(files.database);
+        near(scalar(edit.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(edit.database(), "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
+        sql(edit.database(), "UPDATE alglib_input SET SCALE=1");
+    }
+    runner.start(files.database);
+    runner.wait();
+    ASSERT_EQ(runner.status(), background_state::completed);
+    auto completed = runner.take_result();
+    ASSERT_TRUE(completed.session);
+    verify_solution(*completed.session, *completed.result);
+}
+} // namespace
