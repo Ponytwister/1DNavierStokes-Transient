@@ -242,6 +242,78 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
 }
 
+TEST(ModelControls, WorkerUsesSnapshotBeforeLoadingExperimentInputs)
+{
+    Inputs input;
+    input.execute("UPDATE model_controls SET value='false' WHERE criterion='save_model_profiles'");
+    const auto defaults = model_controls::load(input.database);
+    auto rows = defaults.rows;
+    control(rows, "max_iterations").value = "19";
+    control(rows, "width resolution (X)").value = "7";
+    control(rows, "save_model_profiles").value.reset();
+    tsensor_workflow::control_values values;
+    for (const auto& row : rows)
+        values.emplace_back(row.name.toStdString(), row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt);
+    values.emplace_back("run_solver", "false");
+    tsensor_workflow::background_runner runner;
+    runner.start(std::filesystem::path(input.database.toStdWString()), {}, values);
+    runner.wait();
+    auto result = runner.take_result();
+    if (result.failure) std::rethrow_exception(result.failure);
+    ASSERT_NE(result.session, nullptr);
+    EXPECT_EQ(result.session->parameters().max_iterations, 19);
+    EXPECT_EQ(result.session->parameters().X, 7);
+    EXPECT_TRUE(result.session->parameters().save_model_profiles);
+    EXPECT_FALSE(result.result->optimizer_ran);
+    EXPECT_EQ(model_controls::load(input.database), defaults);
+}
+
+TEST(Gui, MemoryControlsSurviveReopenAndRunWithoutChangingDefaults)
+{
+    Inputs input;
+    input.execute("INSERT INTO model_controls VALUES('run_solver','true')");
+    const auto defaults = model_controls::load(input.database);
+    MainWindow window; input.choose(window); window.show();
+    auto editControls = [&](bool cancel) {
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = dynamic_cast<ControlsDialog*>(QApplication::activeModalWidget());
+            ASSERT_NE(dialog, nullptr);
+            auto* use = widget<QPushButton>(*dialog, "useControlsButton");
+            ASSERT_TRUE(until([&] { return use->isEnabled(); }));
+            auto* table = widget<QTableWidget>(*dialog, "controlsTable");
+            auto* solver = qobject_cast<QComboBox*>(table->cellWidget(controlRow(table, "run_solver"), 1));
+            if (cancel) {
+                EXPECT_EQ(solver->currentText(), "false");
+                solver->setCurrentText("true"); dialog->reject();
+            } else {
+                auto* iterations = qobject_cast<QLineEdit*>(table->cellWidget(controlRow(table, "max_iterations"), 1));
+                iterations->setText("bad"); use->click();
+                EXPECT_TRUE(dialog->isVisible());
+                iterations->setText("9"); solver->setCurrentText("false"); use->click();
+            }
+        });
+        widget<QPushButton>(window, "modelControlsButton")->click();
+    };
+    editControls(false);
+    editControls(true);
+    auto* run = widget<QPushButton>(window, "runButton");
+    for (int i = 0; i < 2; ++i) {
+        run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+        EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
+        EXPECT_EQ(model_controls::load(input.database), defaults);
+    }
+    // Updating defaults after a memory-only edit must compare with database values.
+    QTimer::singleShot(0, &window, [&] {
+        auto* dialog = dynamic_cast<ControlsDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(dialog, nullptr);
+        auto* save = widget<QPushButton>(*dialog, "saveControlsButton");
+        ASSERT_TRUE(until([&] { return save->isEnabled(); }));
+        save->click();
+    });
+    widget<QPushButton>(window, "modelControlsButton")->click();
+    EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 9);
+}
+
 TEST(Gui, RunExportAndExplicitSaves)
 {
     Inputs input;

@@ -24,7 +24,9 @@ struct run_result {
 
 // Load in the established order, including solve-settings/solution-ID creation
 // (which can write to the database), then normalize the profiles.
-void load_inputs(parameters_t& p, sqlite3* db);
+using control_values = std::vector<std::pair<std::string, std::optional<std::string>>>;
+// A supplied snapshot replaces database controls, including NULL/skip values.
+void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_values>& controls = std::nullopt);
 
 // Requires successfully loaded inputs. Retains the existing run_solver behavior
 // and optimizer settings; ALGLIB exceptions propagate to the caller.
@@ -57,7 +59,7 @@ public:
     run_session(run_session&&) = delete;
     run_session& operator=(run_session&&) = delete;
 
-    void load_inputs();
+    void load_inputs(const std::optional<control_values>& controls = std::nullopt);
     run_result run();
     std::filesystem::path export_results(const std::filesystem::path& directory);
     void save_model_profiles();

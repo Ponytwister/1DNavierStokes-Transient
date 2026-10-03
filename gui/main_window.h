@@ -2,6 +2,7 @@
 #include <QMainWindow>
 #include <background_runner.h>
 #include <future>
+#include "model_controls.h"
 
 class QLineEdit;
 class QPushButton;
@@ -33,6 +34,8 @@ private:
     bool cancelling_ = false;
     bool editingControls_ = false;
     QString activeDatabase_;
+    std::optional<model_controls::Snapshot> modelControls_;
+    void loadControls();
     tsensor_workflow::background_runner runner_;
     std::unique_ptr<tsensor_workflow::run_session> session_;
     // Destroy/join pending work before destroying the session it borrows.

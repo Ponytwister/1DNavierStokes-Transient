@@ -21,7 +21,8 @@ public:
     ~background_runner();
     // Rejects an active run or an outcome not yet taken. The optional observer
     // has the same non-reentrant, short-running contract as run_session.
-    void start(const std::filesystem::path& database, progress_callback observer = {});
+    void start(const std::filesystem::path& database, progress_callback observer = {},
+               std::optional<control_values> controls = std::nullopt);
     bool request_cancel();
     background_state status() const;
     std::vector<progress_event> drain_events();

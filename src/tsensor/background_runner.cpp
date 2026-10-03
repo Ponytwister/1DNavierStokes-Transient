@@ -8,7 +8,7 @@ background_runner::~background_runner()
     wait();
 }
 
-void background_runner::start(const std::filesystem::path& database, progress_callback observer)
+void background_runner::start(const std::filesystem::path& database, progress_callback observer, std::optional<control_values> controls)
 {
     // Resolve before dispatch so a later process working-directory change cannot
     // change which database the worker opens.
@@ -26,7 +26,7 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
     events_.clear();
     state_ = background_state::running;
     try {
-        worker_ = std::jthread([this, path, observer = std::move(observer),
+        worker_ = std::jthread([this, path, observer = std::move(observer), controls = std::move(controls),
                                token = cancellation_.get_token()] {
             background_result outcome;
             auto state = background_state::completed;
@@ -41,7 +41,7 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
                     if (observer) observer(event);
                 };
                 auto session = std::make_unique<run_session>(path, std::move(progress), token);
-                session->load_inputs();
+                session->load_inputs(controls);
                 outcome.result = session->run();
                 // The session can outlive this runner; remove its capturing callback.
                 session->parameters().progress = {};

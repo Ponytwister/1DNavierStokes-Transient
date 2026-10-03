@@ -79,12 +79,12 @@ void run_session::require_state(session_state expected, operation action) const
     }
 }
 
-void run_session::load_inputs()
+void run_session::load_inputs(const std::optional<control_values>& controls)
 {
     perform(parameters_, operation::load_inputs, [&] {
         require_state(session_state::empty, operation::load_inputs);
         state_ = session_state::failed;
-        tsensor_workflow::load_inputs(parameters_, database_.get());
+        tsensor_workflow::load_inputs(parameters_, database_.get(), controls);
         state_ = session_state::loaded;
     });
 }
@@ -124,9 +124,16 @@ void run_session::save_fitted_parameters()
     });
 }
 
-void load_inputs(parameters_t& p, sqlite3* db)
+void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_values>& controls)
 {
-    read_model_parameters_from_db(p, db);
+    if (controls) {
+        for (const auto& [name, value] : *controls) {
+            auto key = name;
+            auto setting = value;
+            char* row[] = {key.data(), setting ? setting->data() : nullptr};
+            read_model_parameters_db_callback(&p, 2, row, nullptr);
+        }
+    } else read_model_parameters_from_db(p, db);
     lines_from_profile_text(p, db);
     read_exp_parameters_from_db(p, db);
     get_solve_settings_ID_from_db(p, db);

@@ -10,12 +10,12 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-ControlsDialog::ControlsDialog(const QString& database, QWidget* parent)
+ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::optional<model_controls::Snapshot> current)
     : QDialog(parent), database_(database)
 {
     setWindowTitle("Model controls"); setObjectName("modelControlsDialog"); resize(780, 600);
     auto* layout = new QVBoxLayout(this);
-    auto* description = new QLabel("Edit controls for the next run. Save to database applies changes; Cancel discards them.\nDatabase: " + database);
+    auto* description = new QLabel("Edit controls for the next run. Update default saves to the database. Use values applies only in memory; Cancel discards edits.\nDatabase: " + database);
     description->setTextFormat(Qt::PlainText); description->setWordWrap(true); layout->addWidget(description);
     table_ = new QTableWidget(0, 3); table_->setObjectName("controlsTable");
     table_->setHorizontalHeaderLabels({"Control", "Value", "NULL (skip)"});
@@ -26,28 +26,32 @@ ControlsDialog::ControlsDialog(const QString& database, QWidget* parent)
     status_ = new QLabel("Loading controls..."); status_->setObjectName("controlsStatus");
     status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true); layout->addWidget(status_);
     auto* buttons = new QDialogButtonBox;
-    save_ = buttons->addButton("Save to database", QDialogButtonBox::AcceptRole); save_->setObjectName("saveControlsButton");
+    save_ = buttons->addButton("Update default", QDialogButtonBox::AcceptRole); save_->setObjectName("saveControlsButton");
+    use_ = buttons->addButton("Use values", QDialogButtonBox::AcceptRole); use_->setObjectName("useControlsButton");
+    use_->setDefault(true);
     cancel_ = buttons->addButton(QDialogButtonBox::Cancel); cancel_->setObjectName("cancelControlsButton");
     layout->addWidget(buttons);
-    connect(save_, &QPushButton::clicked, this, [this] { save(); });
+    connect(save_, &QPushButton::clicked, this, [this] { save(true); });
+    connect(use_, &QPushButton::clicked, this, [this] { save(false); });
     connect(cancel_, &QPushButton::clicked, this, &ControlsDialog::reject);
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this] { poll(); }); timer->start(50);
+    if (current) current_ = *current;
     busy(true);
     try { pending_ = std::async(std::launch::async, [database] { return model_controls::load(database); }); }
-    catch (const std::exception& error) { busy(false); save_->setEnabled(false); status_->setText(QString::fromUtf8(error.what())); }
+    catch (const std::exception& error) { busy(false); save_->setEnabled(false); use_->setEnabled(false); status_->setText(QString::fromUtf8(error.what())); }
 }
 void ControlsDialog::busy(bool value) {
-    table_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
+    use_->setEnabled(!value); table_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
 }
 void ControlsDialog::reject() {
     // A pending transaction must finish before its dialog and result are discarded.
     if (!pending_.valid()) QDialog::reject();
 }
 void ControlsDialog::populate() {
-    table_->setRowCount(static_cast<int>(original_.rows.size()));
+    table_->setRowCount(static_cast<int>(current_.rows.size()));
     for (int i = 0; i < table_->rowCount(); ++i) {
-        const auto& row = original_.rows[i];
+        const auto& row = current_.rows[i];
         const auto type = model_controls::kind(row.name);
         const bool supported = type != model_controls::Kind::unknown;
         auto* name = new QTableWidgetItem(row.name);
@@ -70,22 +74,22 @@ void ControlsDialog::populate() {
         table_->setCellWidget(i, 2, null);
     }
 }
-void ControlsDialog::save() {
+void ControlsDialog::save(bool persist) {
     if (pending_.valid()) return;
-    auto edited = original_.rows;
+    auto edited = current_.rows;
     for (int i = 0; i < table_->rowCount(); ++i) {
         if (model_controls::kind(edited[i].name) == model_controls::Kind::unknown) continue;
         if (qobject_cast<QCheckBox*>(table_->cellWidget(i, 2))->isChecked()) edited[i].value.reset();
         else if (auto* combo = qobject_cast<QComboBox*>(table_->cellWidget(i, 1))) edited[i].value = combo->currentText();
         else edited[i].value = qobject_cast<QLineEdit*>(table_->cellWidget(i, 1))->text();
     }
-    if (edited == original_.rows) { QDialog::reject(); return; }
     try {
         for (std::size_t i = 0; i < edited.size(); ++i)
-            if (edited[i] != original_.rows[i]) model_controls::validate(edited[i]);
+            if (edited[i] != current_.rows[i]) model_controls::validate(edited[i]);
+        if (!persist) { current_.rows = std::move(edited); accept(); return; }
         pending_ = std::async(std::launch::async, [database = database_, original = original_, edited] {
             model_controls::save(database, original, edited);
-            return model_controls::Snapshot{};
+            auto result = original; result.rows = edited; return result;
         });
         saving_ = true; busy(true); status_->setText("Saving model controls...");
     } catch (const std::exception& error) { status_->setText(QString::fromUtf8(error.what())); }
@@ -95,12 +99,12 @@ void ControlsDialog::poll() {
     try {
         auto result = pending_.get();
         busy(false);
-        if (saving_) { accept(); return; }
-        original_ = std::move(result); populate();
-        save_->setEnabled(!original_.rows.empty());
+        if (saving_) { current_ = std::move(result); accept(); return; }
+        original_ = result; if (current_.nameColumn.isEmpty()) current_ = std::move(result); populate();
+        save_->setEnabled(!original_.rows.empty()); use_->setEnabled(!original_.rows.empty());
         status_->setText("Hover over a control for help. Unrecognized controls are read-only.");
     } catch (const std::exception& error) {
-        busy(false); save_->setEnabled(saving_);
+        busy(false); save_->setEnabled(saving_); use_->setEnabled(saving_); saving_ = false;
         status_->setText(QString::fromUtf8(error.what()));
     }
 }

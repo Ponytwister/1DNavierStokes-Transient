@@ -84,7 +84,7 @@ MainWindow::MainWindow()
         auto selected = QFileDialog::getExistingDirectory(this, "Choose output directory", output_->text());
         if (!selected.isEmpty()) output_->setText(selected);
     });
-    connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) clearResult(); });
+    connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) { modelControls_.reset(); clearResult(); } });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(controls_, &QPushButton::clicked, this, [this] {
@@ -92,12 +92,13 @@ MainWindow::MainWindow()
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
         editingControls_ = true; updateControls();
-        ControlsDialog dialog(input.absoluteFilePath(), this);
+        ControlsDialog dialog(input.absoluteFilePath(), this, modelControls_);
         const bool saved = dialog.exec() == QDialog::Accepted;
         editingControls_ = false;
         if (saved) {
+            modelControls_ = dialog.values();
             clearResult();
-            setStatus("Model controls saved. Run again to calculate results with the new settings.");
+            setStatus(dialog.updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
         }
         updateControls();
     });
@@ -127,7 +128,8 @@ void MainWindow::saveSetup() {
     if (filename.isEmpty()) return;
     try {
         const auto database = database_->text().trimmed();
-        setup_file::save(filename, {database, output_->text().trimmed(), model_controls::load(database).rows});
+        loadControls();
+        setup_file::save(filename, {database, output_->text().trimmed(), modelControls_->rows});
         setStatus("Setup saved: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }
@@ -139,14 +141,15 @@ void MainWindow::openSetup() {
     try {
         const auto setup = setup_file::load(filename);
         const auto original = model_controls::load(setup.database);
-        if (original.rows != setup.controls) {
-            if (QMessageBox::question(this, "Restore model controls",
-                "Opening this setup will replace model controls in\n" + setup.database +
-                "\nwith the saved values. Continue?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
-            setup_file::restore(setup, original);
+        if (original.rows.size() != setup.controls.size()) throw std::runtime_error("Setup controls do not match this database.");
+        for (std::size_t i = 0; i < original.rows.size(); ++i) {
+            if (original.rows[i].name != setup.controls[i].name ||
+                (model_controls::kind(original.rows[i].name) == model_controls::Kind::unknown && original.rows[i] != setup.controls[i]))
+                throw std::runtime_error("Setup controls do not match this database.");
         }
         clearResult();
         database_->setText(setup.database); output_->setText(setup.outputDirectory);
+        modelControls_ = original; modelControls_->rows = setup.controls;
         setStatus("Setup opened: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }
@@ -171,10 +174,14 @@ void MainWindow::updateControls()
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_ && session_->parameters().save_model_profiles);
     profiles_->setToolTip(idle && session_ && !session_->parameters().save_model_profiles
-        ? "Profile saving is disabled in this database's settings." : "Save result profiles to the run's database.");
+        ? "Profile saving is disabled in the active model controls." : "Save result profiles to the run's database.");
     inputs_->setEnabled(idle && session_);
     activity_->setRange(0, idle ? 1 : 0); activity_->setValue(0);
     activity_->setVisible(work_ != Work::idle);
+}
+
+void MainWindow::loadControls() {
+    if (!modelControls_) modelControls_ = model_controls::load(database_->text().trimmed());
 }
 
 void MainWindow::startRun()
@@ -184,7 +191,11 @@ void MainWindow::startRun()
     if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
     clearResult(); log_->clear(); activeDatabase_ = input.absoluteFilePath();
     try {
-        runner_.start(path(activeDatabase_));
+        loadControls();
+        control_values controls;
+        for (const auto& row : modelControls_->rows)
+            controls.emplace_back(row.name.toStdString(), row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt);
+        runner_.start(path(activeDatabase_), {}, std::move(controls));
         cancelling_ = false; work_ = Work::solve; setStatus("Running…"); updateControls();
     } catch (...) { reportFailure(std::current_exception()); }
 }

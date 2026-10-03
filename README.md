@@ -29,8 +29,10 @@ See [Qt kit setup](docs/qt-setup.md) for installation, build/launch commands, an
 licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 `NavierGui` application alongside the terminal executable. It provides database
 and output selection, Run/Cancel, progress, parameter results, and explicit saves.
-The **Model controls...** button edits the selected database's controls before a
-run, with validated values and explicit Save to database / Cancel actions.
+The **Model controls...** button edits controls held in memory, initially loaded
+from the selected database. **Use values** applies edits for subsequent runs without
+writing defaults; **Update default** also saves them to the database; **Cancel**
+discards dialog edits. Changing the database resets the active controls.
 The original presets remain terminal-only and require no Qt.
 
 For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).
@@ -114,15 +116,11 @@ full solve or fit.
 
 In the desktop UI, choose a database and output directory, then select **Save
 setup…** to write a `.navier.json` file containing both locations and a snapshot
-of all model controls currently saved in that database. Save changes in the
-Model controls dialog before saving a setup. Saving a setup does not run the
+of the active in-memory model controls. Saving a setup does not run the
 model or change the database. Existing setup files are replaced atomically.
 
-Use **Open setup…** to restore the paths and controls. If the database controls
-differ, the application asks before applying the saved values to that database.
-Restoration uses one transaction and rejects changed control names, incompatible
-controls, or concurrent database edits without partial updates. Unknown controls
-are preserved in the file but cannot overwrite different unknown database values.
+Use **Open setup…** to restore the paths and controls in memory without changing
+database defaults. Incompatible control names and changed unknown controls are rejected.
 Opening a setup clears previous run results; run again to calculate new results.
 Setup actions are disabled while a run, results save, or controls editor is active.
 

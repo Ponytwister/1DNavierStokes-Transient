@@ -133,8 +133,9 @@ preserves the loader's existing SQL NULL behavior; it does not provide required
 resolution or experiment values. Validation checks field syntax and basic ranges,
 not whether a particular combination is physically appropriate or will converge.
 
-**Save to database** commits the edited settings for subsequent runs; **Cancel**
-discards edits. Saving controls clears previous results in the window to prevent
+Controls start from database defaults and remain in memory for subsequent runs.
+**Use values** applies edits in memory; **Update default** also writes them to the
+database; **Cancel** discards dialog edits. Applying controls clears previous results to prevent
 mixing results with newly edited inputs. The editor is unavailable while running
 or saving results. Reads and writes run in a worker while the dialog stays
 responsive. Close/Cancel waits until a pending database operation finishes.
