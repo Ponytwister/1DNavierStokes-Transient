@@ -4,6 +4,7 @@
 #include <future>
 #include "model_controls.h"
 
+class ExperimentsTab;
 class QAction;
 class QLineEdit;
 class QPushButton;
@@ -52,4 +53,5 @@ private:
     QTimer* timer_;
     QTabWidget* tabs_;
     QWidget* controlsPage_;
+    ExperimentsTab* experimentsPage_;
 };

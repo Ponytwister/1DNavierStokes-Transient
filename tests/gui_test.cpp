@@ -91,6 +91,28 @@ TEST(Gui, FileMenuContainsSetupAndPathControls)
     EXPECT_TRUE(widget<QAction>(window, "saveSetupAction")->isEnabled());
 }
 
+TEST(Gui, ExperimentsTabReadsAllRowsWithoutModelWritesAndClearsStaleData)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME) VALUES('second')");
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    EXPECT_EQ(tabs->tabText(2), "Experiments");
+    tabs->setCurrentIndex(2);
+    auto* table = widget<QTableWidget>(window, "experimentsTable");
+    ASSERT_EQ(table->rowCount(), 2);
+    EXPECT_EQ(table->item(0, 0)->text(), "second");
+    EXPECT_EQ(table->item(0, 1)->text(), "NULL");
+    EXPECT_EQ(table->item(1, 0)->text(), "uniform");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    widget<QLineEdit>(window, "databasePath")->setText(input.directory.filePath("missing.db"));
+    EXPECT_EQ(table->rowCount(), 0);
+    EXPECT_FALSE(QFile::exists(input.directory.filePath("missing.db")));
+    EXPECT_TRUE(widget<QLabel>(window, "experimentsStatus")->text().contains("Cannot load"));
+    input.choose(window);
+    EXPECT_EQ(table->rowCount(), 2);
+}
+
 TEST(SetupFile, RoundTripAndTransactionalRestore)
 {
     Inputs input;

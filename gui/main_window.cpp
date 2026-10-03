@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "experiments_tab.h"
 #include "controls_dialog.h"
 #include "setup_file.h"
 #include <QCloseEvent>
@@ -38,6 +39,8 @@ MainWindow::MainWindow()
     controlsPage_ = new QWidget;
     new QVBoxLayout(controlsPage_);
     tabs_->addTab(controlsPage_, "Model controls");
+    experimentsPage_ = new ExperimentsTab;
+    tabs_->addTab(experimentsPage_, "Experiments");
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -95,10 +98,12 @@ MainWindow::MainWindow()
         auto selected = QFileDialog::getExistingDirectory(this, "Choose output directory", output_->text());
         if (!selected.isEmpty()) output_->setText(selected);
     });
-    connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) { modelControls_.reset(); clearResult(); } });
+    connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) { modelControls_.reset(); experimentsPage_->clear(); clearResult();
+        if (tabs_->currentIndex() == 2) experimentsPage_->load(database_->text().trimmed()); } });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index == 2 && work_ == Work::idle && !closing_) experimentsPage_->load(database_->text().trimmed());
         if (index != 1 || work_ != Work::idle || closing_ || editingControls_) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
@@ -194,6 +199,7 @@ void MainWindow::updateControls()
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
     tabs_->setTabEnabled(1, (idle || editingControls_) && !database_->text().trimmed().isEmpty());
+    tabs_->setTabEnabled(2, work_ == Work::idle && !closing_);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);

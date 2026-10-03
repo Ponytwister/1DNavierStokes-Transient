@@ -265,3 +265,10 @@ source and Qt/third-party license materials remains a public-release task.
 
 Deployment API reference:
 [Qt 6.10 deployment script](https://doc.qt.io/qt-6.10/qt-generate-deploy-app-script.html).
+
+### Experiments tab
+
+The **Experiments** tab displays all rows and columns of the selected database's
+`experiments` table, ordered by `NAME`. SQL NULL is shown explicitly. The table
+refreshes when opened or when the database changes; a read error clears stale
+rows. Browsing experiments does not load a model or create solution records.
