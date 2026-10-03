@@ -74,7 +74,7 @@ Kind kind(const QString& name) {
 QString help(const QString& name) {
     if (name == "max_iterations") return "Nonnegative integer; 0 leaves the optimizer iteration limit unset.";
     if (name == "experiment_name") return "Select one or more experiments from the database.";
-    if (name == "universal_solve_for") return "Global parameter names separated by spaces; parameter links are unchanged.";
+    if (name == "universal_solve_for") return "Select global parameters to solve for. No selections means NULL; parameter links are unchanged.";
     if (name == "convergence_epsx") return "Numeric tolerance strictly greater than 0 and less than 1e-3. Scientific notation is accepted.";
     if (name == "debug_level") return "Integer from 0 to 6; larger values suppress more messages.";
     if (name == "run_solver") return "true enables parameter fitting; false evaluates the model without fitting.";
@@ -123,6 +123,21 @@ QStringList experimentNames(const QString& database) {
     while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
         const auto name = column(statement.get(), 0);
         if (!name.isEmpty()) names.push_back(name);
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    return names;
+}
+QStringList solvableParameters(const QString& database) {
+    QStringList names{"p1", "kon1", "keq1", "left_edge", "width", "QE1"};
+    auto db = open(database, false);
+    auto statement = prepare(db.get(), "SELECT REACTIONS FROM experiments WHERE REACTIONS IS NOT NULL");
+    int rc;
+    while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        // Experiment reactions use the model's space-separated name format.
+        if (column(statement.get(), 0).split(' ', Qt::SkipEmptyParts).size() > 1) {
+            names.append({"p2", "kon2", "keq2", "QE2"});
+            return names;
+        }
     }
     if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
     return names;

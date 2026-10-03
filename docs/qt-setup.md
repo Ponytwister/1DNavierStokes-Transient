@@ -131,8 +131,11 @@ when saving. The experiment dropdown lists names from the database experiments
 table with checkboxes for multiple selections. At least one experiment is required;
 saved names missing from the table must be deselected. Names containing whitespace
 cannot be selected because the model uses a space-separated list. Existing selection
-order is preserved, with new selections appended. Global parameters retain their
-space-separated text format. Each control has a dedicated form row, with checkboxes for
+order is preserved, with new selections appended. The optional global-parameter dropdown offers `p1`,
+`kon1`, `keq1`, `left_edge`, `width`, and `QE1`. If any experiment in the database
+has more than one space-separated reaction in `REACTIONS`, it also offers `p2`,
+`kon2`, `keq2`, and `QE2`, regardless of which experiments are selected. Clearing
+all parameter selections stores NULL. Parameter-link semantics are unchanged. Each control has a dedicated form row, with checkboxes for
 true/false values. Hover over a control for a description. Only
 `universal_solve_for` may be blank (stored as SQL NULL); all other values are
 required. Both apply actions validate every displayed field, including unchanged

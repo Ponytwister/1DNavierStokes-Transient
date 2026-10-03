@@ -219,7 +219,8 @@ TEST(Gui, InvalidUnchangedFieldsBlockBothActions)
         EXPECT_EQ(model_controls::load(input.database), original);
     }
     widget<QListWidget>(dialog, "experimentChoices")->item(0)->setCheckState(Qt::Checked);
-    widget<QLineEdit>(dialog, "universal_solve_for")->clear();
+    auto* parameters = widget<QListWidget>(dialog, "parameterChoices");
+    for (int i = 0; i < parameters->count(); ++i) parameters->item(i)->setCheckState(Qt::Unchecked);
     use->click();
     EXPECT_EQ(dialog.result(), QDialog::Accepted);
     auto values = dialog.values().rows;
@@ -290,6 +291,54 @@ TEST(Gui, MissingSavedExperimentMustBeDeselected)
     EXPECT_TRUE(widget<QLabel>(dialog, "controlsStatus")->text().contains("missing"));
     widget<QListWidget>(dialog, "experimentChoices")->findItems("missing", Qt::MatchExactly).front()->setCheckState(Qt::Unchecked);
     use->click(); EXPECT_EQ(dialog.result(), QDialog::Accepted);
+}
+
+TEST(ModelControls, ParameterChoicesDependOnAnyExperimentsReactionCount)
+{
+    Inputs input;
+    const QStringList base{"p1", "kon1", "keq1", "left_edge", "width", "QE1"};
+    EXPECT_EQ(model_controls::solvableParameters(input.database), base);
+    input.execute("INSERT INTO experiments(NAME,REACTIONS) VALUES('other',NULL)");
+    EXPECT_EQ(model_controls::solvableParameters(input.database), base);
+    input.execute("UPDATE experiments SET REACTIONS='  first  ' WHERE NAME='other'");
+    EXPECT_EQ(model_controls::solvableParameters(input.database), base);
+    input.execute("UPDATE experiments SET REACTIONS='first second' WHERE NAME='other'");
+    auto expanded = base; expanded.append({"p2", "kon2", "keq2", "QE2"});
+    EXPECT_EQ(model_controls::solvableParameters(input.database), expanded);
+}
+
+TEST(Gui, ParameterChecklistSupportsMemoryDefaultsAndEmptySelection)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME,REACTIONS) VALUES('other','first second')");
+    const auto original = model_controls::load(input.database);
+    ControlsDialog dialog(input.database); dialog.show();
+    auto* use = widget<QPushButton>(dialog, "useControlsButton");
+    ASSERT_TRUE(until([&] { return use->isEnabled(); }));
+    EXPECT_EQ(dialog.findChild<QLineEdit*>("universal_solve_for"), nullptr);
+    auto* choices = widget<QListWidget>(dialog, "parameterChoices");
+    ASSERT_EQ(choices->count(), 10);
+    choices->findItems("kon2", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
+    use->click(); ASSERT_EQ(dialog.result(), QDialog::Accepted);
+    auto memory = dialog.values();
+    EXPECT_EQ(control(memory.rows, "universal_solve_for").value, "keq1 kon2");
+    EXPECT_EQ(model_controls::load(input.database), original);
+    ControlsDialog reopened(input.database, nullptr, memory); reopened.show();
+    auto* save = widget<QPushButton>(reopened, "saveControlsButton");
+    ASSERT_TRUE(until([&] { return save->isEnabled(); }));
+    auto* storedChoices = widget<QListWidget>(reopened, "parameterChoices");
+    EXPECT_EQ(storedChoices->findItems("kon2", Qt::MatchExactly).front()->checkState(), Qt::Checked);
+    save->click(); ASSERT_TRUE(until([&] { return reopened.result() == QDialog::Accepted; }));
+    auto stored = model_controls::load(input.database);
+    EXPECT_EQ(control(stored.rows, "universal_solve_for").value, "keq1 kon2");
+    ControlsDialog empty(input.database); empty.show();
+    auto* emptySave = widget<QPushButton>(empty, "saveControlsButton");
+    ASSERT_TRUE(until([&] { return emptySave->isEnabled(); }));
+    auto* emptyChoices = widget<QListWidget>(empty, "parameterChoices");
+    for (int i = 0; i < emptyChoices->count(); ++i) emptyChoices->item(i)->setCheckState(Qt::Unchecked);
+    emptySave->click(); ASSERT_TRUE(until([&] { return empty.result() == QDialog::Accepted; }));
+    stored = model_controls::load(input.database);
+    EXPECT_FALSE(control(stored.rows, "universal_solve_for").value);
 }
 
 TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
