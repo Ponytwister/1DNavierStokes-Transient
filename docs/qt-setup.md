@@ -128,10 +128,14 @@ Before running, click **Model controls...** to edit the selected database's
 `model_controls` rows. Boolean controls use true/false choices; resolution,
 padding, iteration limits, report level and convergence tolerance are validated
 when saving. Experiment and global parameter lists retain their existing
-space-separated format. Hover over a control for a description. **NULL (skip)**
-preserves the loader's existing SQL NULL behavior; it does not provide required
-resolution or experiment values. Validation checks field syntax and basic ranges,
-not whether a particular combination is physically appropriate or will converge.
+space-separated format. Each control has a dedicated form row, with checkboxes for
+true/false values. Hover over a control for a description. Only
+`universal_solve_for` may be blank (stored as SQL NULL); all other values are
+required. Both apply actions validate every displayed field, including unchanged
+values. `debug_level` accepts integers 0 through 6, and `convergence_epsx` must be
+finite and strictly between 0 and 1e-3. These are editor constraints; model equations
+and CLI loading behavior are unchanged. Validation does not establish whether a
+combination is physically appropriate or will converge.
 
 Controls start from database defaults and remain in memory for subsequent runs.
 **Use values** applies edits in memory; **Update default** also writes them to the
@@ -143,8 +147,9 @@ responsive. Close/Cancel waits until a pending database operation finishes.
 Both the original `Parameter`/`Setting` layout and the test `criterion`/`value`
 layout are supported, following the loader's first-two-column convention.
 No schema migration is needed. The editor updates existing recognized rows only;
-unknown rows (including `save_normalized_profiles`, which the loader does not
-read), unchanged values, extra columns, and experiment/result tables are preserved.
+unknown rows, unchanged values, extra columns, and experiment/result tables are preserved.
+Unknown rows are not displayed as controls. `save_normalized_profiles` has a checkbox,
+but the current solver does not read that setting.
 Updates use one transaction and roll back on failure. If another application
 changes the controls after loading, saving refuses to overwrite them; close and
 reopen the editor to reload. No writes occur when merely opening or cancelling.

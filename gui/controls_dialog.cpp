@@ -2,27 +2,29 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QHeaderView>
+#include <QFormLayout>
+#include <QScrollArea>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QTableWidget>
+
 #include <QTimer>
 #include <QVBoxLayout>
 
 ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::optional<model_controls::Snapshot> current)
     : QDialog(parent), database_(database)
 {
-    setWindowTitle("Model controls"); setObjectName("modelControlsDialog"); resize(780, 600);
+    setWindowTitle("Model controls"); setObjectName("modelControlsDialog"); resize(780, 780);
     auto* layout = new QVBoxLayout(this);
     auto* description = new QLabel("Edit controls for the next run. Update default saves to the database. Use values applies only in memory; Cancel discards edits.\nDatabase: " + database);
     description->setTextFormat(Qt::PlainText); description->setWordWrap(true); layout->addWidget(description);
-    table_ = new QTableWidget(0, 3); table_->setObjectName("controlsTable");
-    table_->setHorizontalHeaderLabels({"Control", "Value", "NULL (skip)"});
-    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    layout->addWidget(table_);
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    fields_ = new QWidget;
+    form_ = new QFormLayout(fields_);
+    form_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form_->setVerticalSpacing(12);
+    scroll->setWidget(fields_); layout->addWidget(scroll);
     status_ = new QLabel("Loading controls..."); status_->setObjectName("controlsStatus");
     status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true); layout->addWidget(status_);
     auto* buttons = new QDialogButtonBox;
@@ -42,50 +44,58 @@ ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::op
     catch (const std::exception& error) { busy(false); save_->setEnabled(false); use_->setEnabled(false); status_->setText(QString::fromUtf8(error.what())); }
 }
 void ControlsDialog::busy(bool value) {
-    use_->setEnabled(!value); table_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
+    use_->setEnabled(!value); fields_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
 }
 void ControlsDialog::reject() {
     // A pending transaction must finish before its dialog and result are discarded.
     if (!pending_.valid()) QDialog::reject();
 }
 void ControlsDialog::populate() {
-    table_->setRowCount(static_cast<int>(current_.rows.size()));
-    for (int i = 0; i < table_->rowCount(); ++i) {
-        const auto& row = current_.rows[i];
+    for (const auto& row : current_.rows) {
         const auto type = model_controls::kind(row.name);
-        const bool supported = type != model_controls::Kind::unknown;
-        auto* name = new QTableWidgetItem(row.name);
-        name->setFlags(name->flags() & ~Qt::ItemIsEditable);
-        name->setToolTip(model_controls::help(row.name)); table_->setItem(i, 0, name);
+        if (type == model_controls::Kind::unknown) { editors_.push_back(nullptr); continue; }
         QWidget* editor;
-        if (type == model_controls::Kind::boolean || type == model_controls::Kind::scatter) {
+        if (type == model_controls::Kind::boolean) {
+            auto* check = new QCheckBox;
+            check->setChecked(row.value == std::optional<QString>("true"));
+            check->setProperty("invalidValue", !row.value || (*row.value != "true" && *row.value != "false"));
+            connect(check, &QCheckBox::toggled, check, [check] { check->setProperty("invalidValue", false); });
+            editor = check;
+        } else if (type == model_controls::Kind::scatter) {
             auto* combo = new QComboBox;
-            combo->addItems(type == model_controls::Kind::boolean ? QStringList{"true", "false"} : QStringList{"none", "NS_ND"});
-            if (row.value && combo->findText(*row.value) < 0) combo->addItem(*row.value);
-            combo->setCurrentText(row.value.value_or(combo->itemText(0))); editor = combo;
+            combo->addItems({"none", "NS_ND"});
+            combo->setCurrentIndex(row.value ? combo->findText(*row.value) : -1);
+            editor = combo;
         } else {
-            auto* edit = new QLineEdit(row.value.value_or(QString{})); editor = edit;
+            auto* edit = new QLineEdit(row.value.value_or(QString{}));
+            if (row.name == "universal_solve_for") edit->setPlaceholderText("Optional (blank means NULL)");
+            editor = edit;
         }
+        editor->setObjectName(row.name);
         editor->setToolTip(model_controls::help(row.name));
-        editor->setEnabled(supported && row.value.has_value()); table_->setCellWidget(i, 1, editor);
-        auto* null = new QCheckBox; null->setChecked(!row.value); null->setEnabled(supported);
-        null->setToolTip("SQL NULL: the existing model loader skips this row. It does not supply a required value.");
-        connect(null, &QCheckBox::toggled, editor, [editor, supported](bool checked) { editor->setEnabled(supported && !checked); });
-        table_->setCellWidget(i, 2, null);
+        form_->addRow(row.name, editor);
+        editors_.push_back(editor);
     }
 }
 void ControlsDialog::save(bool persist) {
     if (pending_.valid()) return;
     auto edited = current_.rows;
-    for (int i = 0; i < table_->rowCount(); ++i) {
-        if (model_controls::kind(edited[i].name) == model_controls::Kind::unknown) continue;
-        if (qobject_cast<QCheckBox*>(table_->cellWidget(i, 2))->isChecked()) edited[i].value.reset();
-        else if (auto* combo = qobject_cast<QComboBox*>(table_->cellWidget(i, 1))) edited[i].value = combo->currentText();
-        else edited[i].value = qobject_cast<QLineEdit*>(table_->cellWidget(i, 1))->text();
+    for (std::size_t i = 0; i < editors_.size(); ++i) {
+        auto* editor = editors_[i];
+        if (!editor) continue;
+        if (auto* check = qobject_cast<QCheckBox*>(editor)) {
+            if (check->property("invalidValue").toBool()) edited[i].value.reset();
+            else edited[i].value = check->isChecked() ? "true" : "false";
+        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) edited[i].value = combo->currentText();
+        else {
+            const auto text = qobject_cast<QLineEdit*>(editor)->text();
+            edited[i].value = edited[i].name == "universal_solve_for" && text.trimmed().isEmpty()
+                ? std::nullopt : std::optional<QString>(text);
+        }
     }
     try {
         for (std::size_t i = 0; i < edited.size(); ++i)
-            if (edited[i] != current_.rows[i]) model_controls::validate(edited[i]);
+            if (editors_[i]) model_controls::validate(edited[i]);
         if (!persist) { current_.rows = std::move(edited); accept(); return; }
         pending_ = std::async(std::launch::async, [database = database_, original = original_, edited] {
             model_controls::save(database, original, edited);
@@ -102,7 +112,7 @@ void ControlsDialog::poll() {
         if (saving_) { current_ = std::move(result); accept(); return; }
         original_ = result; if (current_.nameColumn.isEmpty()) current_ = std::move(result); populate();
         save_->setEnabled(!original_.rows.empty()); use_->setEnabled(!original_.rows.empty());
-        status_->setText("Hover over a control for help. Unrecognized controls are read-only.");
+        status_->setText("All values are required except universal_solve_for. Hover over a control for help.");
     } catch (const std::exception& error) {
         busy(false); save_->setEnabled(saving_); use_->setEnabled(saving_); saving_ = false;
         status_->setText(QString::fromUtf8(error.what()));

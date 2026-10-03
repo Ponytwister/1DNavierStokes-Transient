@@ -40,6 +40,7 @@ struct Inputs {
         QFile fixture(QString::fromUtf8(TSENSOR_FIXTURE_DIR) + "/workflow.sql");
         if (!fixture.open(QIODevice::ReadOnly)) throw std::runtime_error("Fixture missing");
         execute(fixture.readAll());
+        execute("UPDATE model_controls SET value='3' WHERE criterion='debug_level'");
     }
     double execute(const QByteArray& query) {
         sqlite3* raw = nullptr;
@@ -60,11 +61,6 @@ struct Inputs {
     }
 };
 
-int controlRow(QTableWidget* table, const QString& name) {
-    for (int i = 0; i < table->rowCount(); ++i)
-        if (table->item(i, 0)->text() == name) return i;
-    throw std::runtime_error("Control row missing");
-}
 model_controls::Row& control(std::vector<model_controls::Row>& rows, const QString& name) {
     for (auto& row : rows) if (row.name == name) return row;
     throw std::runtime_error("Control missing");
@@ -141,10 +137,10 @@ TEST(ModelControls, SupportsRealColumnNamesNullsAndPreservesOtherData)
     EXPECT_EQ(loaded.rows, edited);
     EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
     EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
-    control(edited, "run_solver").value.reset();
+    control(edited, "universal_solve_for").value.reset();
     model_controls::save(input.database, loaded, edited);
     loaded = model_controls::load(input.database);
-    EXPECT_FALSE(control(loaded.rows, "run_solver").value.has_value());
+    EXPECT_FALSE(control(loaded.rows, "universal_solve_for").value.has_value());
 }
 
 TEST(ModelControls, ValidationConflictAndTransactionRollback)
@@ -189,17 +185,59 @@ TEST(ModelControls, UnknownRowsAndAmbiguousNamesCannotBeEdited)
     EXPECT_THROW(model_controls::load(input.database), std::runtime_error);
 }
 
+TEST(ModelControls, RequiredValuesAndStrictNumericBounds)
+{
+    for (const auto* value : {"", "-1", "7", "1.5", "nan"})
+        EXPECT_THROW(model_controls::validate({"debug_level", value}), std::runtime_error);
+    for (const auto* value : {"0", "6"})
+        EXPECT_NO_THROW(model_controls::validate({"debug_level", value}));
+    for (const auto* value : {"", "0", "-1e-9", "1e-3", "1", "nan", "inf"})
+        EXPECT_THROW(model_controls::validate({"convergence_epsx", value}), std::runtime_error);
+    EXPECT_NO_THROW(model_controls::validate({"convergence_epsx", "9.99e-4"}));
+    for (const auto* name : {"debug_level", "experiment_name", "run_solver", "convergence_epsx"})
+        EXPECT_THROW(model_controls::validate({name, std::nullopt}), std::runtime_error);
+    EXPECT_NO_THROW(model_controls::validate({"universal_solve_for", std::nullopt}));
+    EXPECT_NO_THROW(model_controls::validate({"universal_solve_for", ""}));
+}
+
+TEST(Gui, InvalidUnchangedFieldsBlockBothActions)
+{
+    Inputs input;
+    input.execute("UPDATE model_controls SET value=NULL WHERE criterion='experiment_name'");
+    ControlsDialog dialog(input.database); dialog.show();
+    auto* use = widget<QPushButton>(dialog, "useControlsButton");
+    auto* save = widget<QPushButton>(dialog, "saveControlsButton");
+    ASSERT_TRUE(until([&] { return use->isEnabled(); }));
+    const auto original = model_controls::load(input.database);
+    for (auto* button : {use, save}) {
+        button->click();
+        EXPECT_TRUE(dialog.isVisible());
+        EXPECT_TRUE(widget<QLabel>(dialog, "controlsStatus")->text().contains("experiment_name"));
+        EXPECT_EQ(model_controls::load(input.database), original);
+    }
+    widget<QLineEdit>(dialog, "experiment_name")->setText("uniform");
+    widget<QLineEdit>(dialog, "universal_solve_for")->clear();
+    use->click();
+    EXPECT_EQ(dialog.result(), QDialog::Accepted);
+    auto values = dialog.values().rows;
+    EXPECT_FALSE(control(values, "universal_solve_for").value);
+}
+
 TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
 {
     Inputs input;
-    input.execute("INSERT INTO model_controls VALUES('run_solver','true'),('save_normalized_profiles','false')");
+    input.execute("INSERT INTO model_controls VALUES('run_solver','true'),('save_normalized_profiles','false'),"
+                  "('exp_left_padding','0'),('exp_right_padding','0'),('disable_reactions','false'),"
+                  "('disable_reverse_reactions','false'),('use_alglib_init_values','true'),('convergence_epsx','1e-12')");
     {
         ControlsDialog dialog(input.database); dialog.show();
         auto* save = widget<QPushButton>(dialog, "saveControlsButton");
         ASSERT_TRUE(until([&] { return save->isEnabled(); }));
-        auto* table = widget<QTableWidget>(dialog, "controlsTable");
-        qobject_cast<QLineEdit*>(table->cellWidget(controlRow(table, "max_iterations"), 1))->setText("15");
-        EXPECT_FALSE(table->cellWidget(controlRow(table, "save_normalized_profiles"), 1)->isEnabled());
+
+        widget<QLineEdit>(dialog, "max_iterations")->setText("15");
+        EXPECT_NE(dialog.findChild<QCheckBox*>("save_normalized_profiles"), nullptr);
+        EXPECT_EQ(dialog.findChild<QTableWidget*>(), nullptr);
+        EXPECT_EQ(dialog.findChildren<QCheckBox*>().size(), 6);
         if (const auto capture = qEnvironmentVariable("NAVIER_CONTROLS_CAPTURE"); !capture.isEmpty()) {
             QApplication::processEvents(); EXPECT_TRUE(dialog.grab().save(capture));
         }
@@ -218,13 +256,13 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
         EXPECT_FALSE(run->isEnabled());
         EXPECT_FALSE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
         EXPECT_FALSE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
-        auto* table = widget<QTableWidget>(*dialog, "controlsTable");
-        auto* iterations = qobject_cast<QLineEdit*>(table->cellWidget(controlRow(table, "max_iterations"), 1));
+
+        auto* iterations = widget<QLineEdit>(*dialog, "max_iterations");
         iterations->setText("bad"); save->click();
         EXPECT_TRUE(widget<QLabel>(*dialog, "controlsStatus")->text().contains("max_iterations"));
         EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 3);
         iterations->setText("15");
-        qobject_cast<QComboBox*>(table->cellWidget(controlRow(table, "run_solver"), 1))->setCurrentText("false");
+        widget<QCheckBox>(*dialog, "run_solver")->setChecked(false);
         save->click();
         EXPECT_FALSE(save->isEnabled());
     });
@@ -280,16 +318,16 @@ TEST(Gui, MemoryControlsSurviveReopenAndRunWithoutChangingDefaults)
             ASSERT_NE(dialog, nullptr);
             auto* use = widget<QPushButton>(*dialog, "useControlsButton");
             ASSERT_TRUE(until([&] { return use->isEnabled(); }));
-            auto* table = widget<QTableWidget>(*dialog, "controlsTable");
-            auto* solver = qobject_cast<QComboBox*>(table->cellWidget(controlRow(table, "run_solver"), 1));
+
+            auto* solver = widget<QCheckBox>(*dialog, "run_solver");
             if (cancel) {
-                EXPECT_EQ(solver->currentText(), "false");
-                solver->setCurrentText("true"); dialog->reject();
+                EXPECT_FALSE(solver->isChecked());
+                solver->setChecked(true); dialog->reject();
             } else {
-                auto* iterations = qobject_cast<QLineEdit*>(table->cellWidget(controlRow(table, "max_iterations"), 1));
+                auto* iterations = widget<QLineEdit>(*dialog, "max_iterations");
                 iterations->setText("bad"); use->click();
                 EXPECT_TRUE(dialog->isVisible());
-                iterations->setText("9"); solver->setCurrentText("false"); use->click();
+                iterations->setText("9"); solver->setChecked(false); use->click();
             }
         });
         widget<QPushButton>(window, "modelControlsButton")->click();

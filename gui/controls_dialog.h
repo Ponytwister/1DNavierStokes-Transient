@@ -5,7 +5,7 @@
 
 class QLabel;
 class QPushButton;
-class QTableWidget;
+class QFormLayout;
 class ControlsDialog : public QDialog {
 public:
     explicit ControlsDialog(const QString& database, QWidget* parent = nullptr,
@@ -23,6 +23,8 @@ private:
     bool saving_ = false;
     std::future<model_controls::Snapshot> pending_;
     QLabel* status_;
-    QTableWidget* table_;
+    QWidget* fields_;
+    QFormLayout* form_;
+    std::vector<QWidget*> editors_;
     QPushButton *save_, *cancel_, *use_;
 };
