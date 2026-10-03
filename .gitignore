@@ -5,3 +5,8 @@
 /out/qt-setup/
 /out/qt-debug/
 /out/qt-release/
+
+# Local desktop deployment, shortcut, and preserved root build artifacts.
+/out/desktop/
+/out/root-backup-*/
+/Navier.lnk
