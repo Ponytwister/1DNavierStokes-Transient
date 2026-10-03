@@ -184,6 +184,45 @@ TEST(RunSession, RepeatedSuccessAndPartialFailureReleaseDatabaseMemory)
     }
 }
 
+TEST(RunSession, ProfileSamplingReportsTheExperimentBeforeReadingPastItsEnd)
+{
+    run_session session(":memory:");
+    auto& p = session.parameters();
+    p.debug_level = 7;
+    p.row_count = 0; // Isolate profile preparation; no transient workers.
+    p.experiment_runs.resize(1);
+    p.experiment_runs.front().name = "sample-run";
+    p.experiments.resize(1);
+    auto& exp = p.experiments.front();
+    exp.run = &p.experiment_runs.front();
+    exp.second_name = "sample-profile";
+    exp.window_size = 5;
+    exp.raw_experimental_profile = {10, 20, 30, 40, 50};
+    exp.experimental_profile.resize(5);
+    exp.channel_position.resize(5);
+    exp.scale_factor = 1;
+    exp.left_edge.value() = 1.2;
+    exp.width.value() = 3.2;
+    alglib::real_1d_array controls, residuals;
+    // ceil(3 + 1.2) == 5, despite left_edge + width < sample count.
+    try {
+        alglib_solver(controls, residuals, &p);
+        FAIL() << "Expected profile-domain error";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_NE(std::string(error.what()).find("sample-run:sample-profile"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("available samples=5"), std::string::npos);
+    }
+    EXPECT_EQ(p.iterations, 0);
+    // Last valid sample is 4; the existing tail repeats that sample.
+    exp.width.value() = 3;
+    EXPECT_NO_THROW(alglib_solver(controls, residuals, &p));
+    EXPECT_EQ(exp.experimental_profile, (std::vector<double>{30, 40, 50, 50, 50}));
+    exp.left_edge.value() = 1;
+    exp.width.value() = 4;
+    EXPECT_NO_THROW(alglib_solver(controls, residuals, &p));
+    EXPECT_EQ(exp.experimental_profile, (std::vector<double>{20, 30, 40, 50, 50}));
+}
+
 TEST(RunSession, SolverWorkersReturnExceptionsToTheirCaller)
 {
     run_session session(":memory:");

@@ -83,6 +83,19 @@ performance benchmark or sanitizer run is implied.
 
 ## Running the application
 
+Profile alignment samples index `ceil(x + left_edge)` for integer `x < width`
+within the output window, then repeats the last sampled value. For a raw profile
+of `N` samples and output window `M`, the last requested index is
+`ceil(left_edge + min(M, ceil(width)) - 1)` and must be less than `N`.
+Checking only `left_edge + width <= N` is insufficient for fractional values.
+Invalid alignment now stops before sampling with the experiment name, alignment
+values, requested index, and sample count. Restrict the `left_edge`/`width` fit
+bounds so their combinations satisfy this condition, or supply a larger raw
+profile window. The check also rejects negative/nonfinite left edges and
+nonpositive/nonfinite widths; it does not clamp parameters or extrapolate data.
+The regression covers fractional and integral endpoints and the existing repeated
+tail, independently of the transient model. It is not validation of an experimental fit.
+
 In a terminal, the model evaluation counter updates on one line. Redirected
 output records only the final count, keeping log files free of repeated updates.
 

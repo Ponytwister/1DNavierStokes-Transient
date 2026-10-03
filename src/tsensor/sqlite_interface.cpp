@@ -2396,6 +2396,22 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
 
         for (int i = 0; i < p.experiments.size(); i++) {
             experiment_struct* exp_ptr = &p.experiments.at(i);
+            const double left = exp_ptr->left_edge.value();
+            const double width = exp_ptr->width.value();
+            // x is integral and x < width: the last sampled x is ceil(width)-1.
+            // Check before converting to int or touching any profile buffers.
+            const double last_sample = std::ceil(left + std::min(
+                static_cast<double>(exp_ptr->window_size), std::ceil(width)) - 1.0);
+            if (!std::isfinite(left) || left < 0 || !std::isfinite(width) || width <= 0 ||
+                exp_ptr->window_size <= 0 || exp_ptr->raw_experimental_profile.empty() ||
+                last_sample >= static_cast<double>(exp_ptr->raw_experimental_profile.size())) {
+                throw std::invalid_argument("Profile sampling exceeds available data for " +
+                    exp_ptr->run->name + ":" + exp_ptr->second_name +
+                    " (left_edge=" + double_to_string(left) + ", width=" + double_to_string(width) +
+                    ", last requested index=" + double_to_string(last_sample) +
+                    ", available samples=" + std::to_string(exp_ptr->raw_experimental_profile.size()) +
+                    "). Adjust left_edge/width fit bounds or provide a larger raw profile window.");
+            }
             int last_x = static_cast<int>(ceil(exp_ptr->left_edge.value()));
             for (int x = 0; x < exp_ptr->window_size; x++) {
                 int x_unshift = static_cast<int>(ceil(x + exp_ptr->left_edge.value()));
