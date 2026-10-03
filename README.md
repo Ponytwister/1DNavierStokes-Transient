@@ -134,8 +134,10 @@ setup…** to write a `.navier.json` file containing both locations and a snapsh
 of the active in-memory model controls. Saving a setup does not run the
 model or change the database. Existing setup files are replaced atomically.
 
-Use **Open setup…** to restore the paths and controls in memory without changing
-database defaults. Incompatible control names and changed unknown controls are rejected.
+Use **Open setup...** to restore the database and output paths and apply the saved
+model controls in memory for subsequent runs, without writing database defaults.
+Control names must match those in the referenced database, and values for unknown
+controls must remain unchanged from that database. Incompatible setups are rejected.
 Opening a setup clears previous run results; run again to calculate new results.
 Setup actions are disabled while a run, results save, or controls editor is active.
 
