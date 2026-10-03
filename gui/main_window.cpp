@@ -172,9 +172,8 @@ void MainWindow::updateControls()
     controls_->setEnabled(idle && !database_->text().trimmed().isEmpty());
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
-    profiles_->setEnabled(idle && session_ && session_->parameters().save_model_profiles);
-    profiles_->setToolTip(idle && session_ && !session_->parameters().save_model_profiles
-        ? "Profile saving is disabled in the active model controls." : "Save result profiles to the run's database.");
+    profiles_->setEnabled(idle && session_);
+    profiles_->setToolTip("Save result profiles to the run's database.");
     inputs_->setEnabled(idle && session_);
     activity_->setRange(0, idle ? 1 : 0); activity_->setValue(0);
     activity_->setVisible(work_ != Work::idle);
@@ -194,7 +193,9 @@ void MainWindow::startRun()
         loadControls();
         control_values controls;
         for (const auto& row : modelControls_->rows)
-            controls.emplace_back(row.name.toStdString(), row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt);
+            // Desktop profile saving is an explicit button action, never a model control.
+            if (row.name != "save_model_profiles" && row.name != "save_normalized_profiles")
+                controls.emplace_back(row.name.toStdString(), row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt);
         runner_.start(path(activeDatabase_), {}, std::move(controls));
         cancelling_ = false; work_ = Work::solve; setStatus("Running…"); updateControls();
     } catch (...) { reportFailure(std::current_exception()); }

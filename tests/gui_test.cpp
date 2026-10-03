@@ -235,9 +235,10 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
         ASSERT_TRUE(until([&] { return save->isEnabled(); }));
 
         widget<QLineEdit>(dialog, "max_iterations")->setText("15");
-        EXPECT_NE(dialog.findChild<QCheckBox*>("save_normalized_profiles"), nullptr);
+        EXPECT_EQ(dialog.findChild<QCheckBox*>("save_normalized_profiles"), nullptr);
+        EXPECT_EQ(dialog.findChild<QCheckBox*>("save_model_profiles"), nullptr);
         EXPECT_EQ(dialog.findChild<QTableWidget*>(), nullptr);
-        EXPECT_EQ(dialog.findChildren<QCheckBox*>().size(), 6);
+        EXPECT_EQ(dialog.findChildren<QCheckBox*>().size(), 4);
         if (const auto capture = qEnvironmentVariable("NAVIER_CONTROLS_CAPTURE"); !capture.isEmpty()) {
             QApplication::processEvents(); EXPECT_TRUE(dialog.grab().save(capture));
         }
@@ -440,20 +441,25 @@ TEST(Gui, FailureCanBeCorrectedAndRetried)
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
     EXPECT_TRUE(QFile::exists(input.directory.filePath("retry/uniform,.txt")));
 }
-TEST(Gui, DisabledProfileSaveAndCloseDuringExport)
+TEST(Gui, ExplicitProfileSaveIgnoresLegacyFlagAndCloseDuringExport)
 {
     Inputs input;
     input.execute("UPDATE model_controls SET value='false' WHERE criterion='save_model_profiles'");
     MainWindow window; input.choose(window); window.show();
     auto* run = widget<QPushButton>(window, "runButton");
     run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
-    EXPECT_FALSE(widget<QPushButton>(window, "profilesButton")->isEnabled());
+    ASSERT_TRUE(widget<QPushButton>(window, "profilesButton")->isEnabled());
+    EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    widget<QPushButton>(window, "profilesButton")->click();
+    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_GT(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    EXPECT_EQ(input.execute("SELECT value='false' FROM model_controls WHERE criterion='save_model_profiles'"), 1);
     ASSERT_TRUE(widget<QPushButton>(window, "exportButton")->isEnabled());
     widget<QPushButton>(window, "exportButton")->click();
     EXPECT_FALSE(window.close());
     ASSERT_TRUE(until([&] { return !window.isVisible(); }));
     EXPECT_TRUE(QFile::exists(input.directory.filePath("reports/uniform,.txt")));
-    EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    EXPECT_GT(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
 }
 
 TEST(Gui, FailedExportAbortsCloseAndAllowsRetry)

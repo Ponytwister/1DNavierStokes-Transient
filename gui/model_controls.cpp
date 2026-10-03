@@ -65,14 +65,13 @@ Kind kind(const QString& name) {
     if (name == "width resolution (X)" || name == "length/time resolution (Z)") return Kind::positive_integer;
     if (name == "exp_left_padding" || name == "exp_right_padding" || name == "max_iterations" || name == "debug_level") return Kind::nonnegative_integer;
     if (name == "run_solver" || name == "disable_reactions" || name == "disable_reverse_reactions" ||
-        name == "save_normalized_profiles" || name == "save_model_profiles" || name == "use_alglib_init_values") return Kind::boolean;
+        name == "use_alglib_init_values") return Kind::boolean;
     if (name == "convergence_epsx") return Kind::tolerance;
     if (name == "experiment_name" || name == "universal_solve_for") return Kind::text;
     if (name == "scatter_correction_type") return Kind::scatter;
     return Kind::unknown;
 }
 QString help(const QString& name) {
-    if (name == "save_normalized_profiles") return "Stored setting; the current solver does not read this option.";
     if (name == "max_iterations") return "Nonnegative integer; 0 leaves the optimizer iteration limit unset.";
     if (name == "experiment_name") return "Experiment names separated by spaces, as in the database.";
     if (name == "universal_solve_for") return "Global parameter names separated by spaces; parameter links are unchanged.";

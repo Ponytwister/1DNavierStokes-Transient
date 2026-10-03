@@ -148,8 +148,11 @@ Both the original `Parameter`/`Setting` layout and the test `criterion`/`value`
 layout are supported, following the loader's first-two-column convention.
 No schema migration is needed. The editor updates existing recognized rows only;
 unknown rows, unchanged values, extra columns, and experiment/result tables are preserved.
-Unknown rows are not displayed as controls. `save_normalized_profiles` has a checkbox,
-but the current solver does not read that setting.
+Unknown rows are not displayed as controls. The legacy `save_normalized_profiles`
+and `save_model_profiles` rows are preserved in existing databases but are not
+editable controls or applied by desktop runs. **Save profiles** remains available
+after a successful run and saves only when explicitly clicked, regardless of the
+legacy flag. CLI behavior is unchanged.
 Updates use one transaction and roll back on failure. If another application
 changes the controls after loading, saving refuses to overwrite them; close and
 reopen the editor to reload. No writes occur when merely opening or cancelling.
