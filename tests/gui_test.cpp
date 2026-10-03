@@ -7,6 +7,8 @@
 #include <QListWidget>
 #include <QToolButton>
 #include <QMenu>
+#include <QAction>
+#include <QMenuBar>
 #include <gtest/gtest.h>
 #include <QApplication>
 #include <QElapsedTimer>
@@ -67,6 +69,21 @@ struct Inputs {
 model_controls::Row& control(std::vector<model_controls::Row>& rows, const QString& name) {
     for (auto& row : rows) if (row.name == name) return row;
     throw std::runtime_error("Control missing");
+}
+
+TEST(Gui, FileMenuContainsSetupAndPathControls)
+{
+    MainWindow window;
+    auto* file = window.menuBar()->actions().front()->menu();
+    ASSERT_NE(file, nullptr);
+    EXPECT_TRUE(file->actions().contains(widget<QAction>(window, "openSetupAction")));
+    EXPECT_TRUE(file->actions().contains(widget<QAction>(window, "saveSetupAction")));
+    EXPECT_TRUE(widget<QAction>(window, "openSetupAction")->isEnabled());
+    EXPECT_FALSE(widget<QAction>(window, "saveSetupAction")->isEnabled());
+    EXPECT_EQ(window.centralWidget()->findChild<QLineEdit*>("databasePath"), nullptr);
+    EXPECT_EQ(window.centralWidget()->findChild<QLineEdit*>("outputPath"), nullptr);
+    Inputs input; input.choose(window);
+    EXPECT_TRUE(widget<QAction>(window, "saveSetupAction")->isEnabled());
 }
 
 TEST(SetupFile, RoundTripAndTransactionalRestore)
@@ -373,8 +390,8 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
         auto* save = widget<QPushButton>(*dialog, "saveControlsButton");
         if (!until([&] { return save->isEnabled(); })) { ADD_FAILURE() << "Loading timed out"; dialog->reject(); return; }
         EXPECT_FALSE(run->isEnabled());
-        EXPECT_FALSE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
-        EXPECT_FALSE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
+        EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
+        EXPECT_FALSE(widget<QAction>(window, "saveSetupAction")->isEnabled());
 
         auto* iterations = widget<QLineEdit>(*dialog, "max_iterations");
         iterations->setText("bad"); save->click();
@@ -391,11 +408,11 @@ TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 0);
     run->click();
     EXPECT_FALSE(widget<QPushButton>(window, "modelControlsButton")->isEnabled());
-    EXPECT_FALSE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
-    EXPECT_FALSE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
+    EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
+    EXPECT_FALSE(widget<QAction>(window, "saveSetupAction")->isEnabled());
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
-    EXPECT_TRUE(widget<QPushButton>(window, "openSetupButton")->isEnabled());
-    EXPECT_TRUE(widget<QPushButton>(window, "saveSetupButton")->isEnabled());
+    EXPECT_TRUE(widget<QAction>(window, "openSetupAction")->isEnabled());
+    EXPECT_TRUE(widget<QAction>(window, "saveSetupAction")->isEnabled());
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
 }
 

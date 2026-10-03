@@ -9,6 +9,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMenuBar>
+#include <QWidgetAction>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
@@ -32,23 +34,25 @@ MainWindow::MainWindow()
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
     layout->addWidget(title);
-    auto* form = new QFormLayout;
+    auto* file = menuBar()->addMenu("&File");
+    openSetup_ = file->addAction("&Open setup..."); openSetup_->setObjectName("openSetupAction");
+    saveSetup_ = file->addAction("&Save setup..."); saveSetup_->setObjectName("saveSetupAction");
+    file->addSeparator();
     auto makePath = [&](const QString& label, const char* name, QLineEdit*& edit, QPushButton*& browse) {
-        auto* row = new QHBoxLayout;
+        auto* menu = file->addMenu(label);
+        auto* panel = new QWidget;
+        auto* row = new QHBoxLayout(panel);
         edit = new QLineEdit; edit->setObjectName(name);
-        browse = new QPushButton("Browse…");
-        row->addWidget(edit); row->addWidget(browse); form->addRow(label, row);
+        edit->setMinimumWidth(360);
+        browse = new QPushButton("Browse...");
+        row->addWidget(edit); row->addWidget(browse);
+        auto* action = new QWidgetAction(menu);
+        action->setDefaultWidget(panel); menu->addAction(action);
     };
-    makePath("Database", "databasePath", database_, browseDatabase_);
-    makePath("Output directory", "outputPath", output_, browseOutput_);
-    layout->addLayout(form);
-    auto* setupButtons = new QHBoxLayout;
-    openSetup_ = new QPushButton("Open setup…"); openSetup_->setObjectName("openSetupButton");
-    saveSetup_ = new QPushButton("Save setup…"); saveSetup_->setObjectName("saveSetupButton");
-    setupButtons->addWidget(openSetup_); setupButtons->addWidget(saveSetup_); setupButtons->addStretch();
-    layout->addLayout(setupButtons);
-    connect(openSetup_, &QPushButton::clicked, this, [this] { openSetup(); });
-    connect(saveSetup_, &QPushButton::clicked, this, [this] { saveSetup(); });
+    makePath("&Database", "databasePath", database_, browseDatabase_);
+    makePath("&Output directory", "outputPath", output_, browseOutput_);
+    connect(openSetup_, &QAction::triggered, this, [this] { openSetup(); });
+    connect(saveSetup_, &QAction::triggered, this, [this] { saveSetup(); });
     auto* note = new QLabel("Running may create solution records in the selected database. Results and fitted inputs are saved only when you choose to save.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* controls = new QHBoxLayout;

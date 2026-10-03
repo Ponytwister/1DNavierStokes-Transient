@@ -124,6 +124,10 @@ converged fit. The result database is displayed above the table. Choosing anothe
 database clears the old results to prevent saving them to the wrong destination.
 Starting a new run also replaces the previous result session.
 
+Use **File > Open setup...** and **File > Save setup...** for setup files.
+**File > Database** and **File > Output directory** provide editable paths and
+Browse buttons. These actions are locked while work or control editing is active.
+
 Before running, click **Model controls...** to edit the selected database's
 `model_controls` rows. Boolean controls use true/false choices; resolution,
 padding, iteration limits, report level and convergence tolerance are validated

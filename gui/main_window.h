@@ -4,6 +4,7 @@
 #include <future>
 #include "model_controls.h"
 
+class QAction;
 class QLineEdit;
 class QPushButton;
 class QLabel;
@@ -41,7 +42,7 @@ private:
     // Destroy/join pending work before destroying the session it borrows.
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
-    QPushButton *openSetup_, *saveSetup_;
+    QAction *openSetup_, *saveSetup_;
     QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_, *controls_;
     QLabel *status_, *summary_, *resultDatabase_;
     QPlainTextEdit* log_;
