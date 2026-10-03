@@ -2372,7 +2372,6 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
     if (!ptr) { throw std::invalid_argument("Missing solver state"); }
     auto& p = *static_cast<parameters_t*>(ptr);
     check_cancellation(p);
-    add_report(p, 3, std::to_string(p.iterations));
     if (!p.run_solver) {
         return;
     } else {
@@ -2458,7 +2457,6 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             }
         }
     }
-    pop_report(p, 3);
     p.iterations = p.iterations + 1;
     publish_event(p, {tsensor_workflow::event_kind::evaluation, p.active_operation,
                       "Residual evaluation completed", 3, p.iterations});

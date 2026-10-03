@@ -111,8 +111,9 @@ TEST(Feedback, EvaluationCountsBelongToTheirOwnState)
 {
     parameters_t first{}, second{};
     std::vector<progress_event> events;
-    first.debug_level = second.debug_level = 7;
+    first.debug_level = second.debug_level = 3;
     first.active_operation = operation::solve;
+    add_report(first, 3, "Solving");
     first.progress = [&](const progress_event& event) { events.push_back(event); };
     alglib::real_1d_array controls, residuals;
     // Empty experiment lists isolate callback bookkeeping from numerical solving.
@@ -125,6 +126,8 @@ TEST(Feedback, EvaluationCountsBelongToTheirOwnState)
     EXPECT_EQ(events[0].evaluations, 1);
     EXPECT_EQ(events[1].evaluations, 2);
     EXPECT_EQ(second.iterations, 1);
+    ASSERT_EQ(first.state.size(), 1u);
+    EXPECT_EQ(first.state.back().debug_level, 3);
 }
 
 TEST(Feedback, ThrowingObserverIsDisconnectedWithoutChangingModelErrors)
