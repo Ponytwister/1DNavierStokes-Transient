@@ -10,3 +10,7 @@
 /out/desktop/
 /out/root-backup-*/
 /Navier.lnk
+
+# Local database migration backups and Python bytecode.
+/out/database-backups/
+__pycache__/

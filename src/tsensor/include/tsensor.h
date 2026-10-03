@@ -1,4 +1,5 @@
 #pragma once
+#include <channel_dimensions.h>
 #include <cmath>
 #include <string>
 #include <fstream>
@@ -162,25 +163,27 @@ struct entrance_struct {
     double ENTRANCE_FLOWRATE;
 };
 
-struct experiment_run_struct {
+struct experiment_run_struct : channel_dimensions {
+    explicit experiment_run_struct(channel_dimensions dimensions = channel_dimensions{})
+        : channel_dimensions(dimensions) {}
     double total_flowrate = 0.0d;
-    double dye_conc_mgml;                  //= 0.00336d; // mg/ml FITC
-    double dye_conc;                       //= dye_conc_mgml * 1000.0d / 332.326d * 6.022e+23;     // molecules FITC / m3
+    double dye_conc_mgml = 0;                  //= 0.00336d; // mg/ml FITC
+    double dye_conc = 0;                       //= dye_conc_mgml * 1000.0d / 332.326d * 6.022e+23;     // molecules FITC / m3
     solvable left_edge;
     solvable width;
-    double dt; // seconds
+    double dt = 0; // seconds
     double visc = 0.0010016d; // Dynamic viscosity of water at 20C in Pa.s
     double temperature = 20.0d + 273.15d;
     double solution_density = 1.0d;
-    int number_of_reactions;
-    int number_of_species;
-    int low_ref_start, low_ref_end, high_ref_start, high_ref_end;
-    ptrdiff_t FITC;
-    ptrdiff_t PS_beads;
-    ptrdiff_t Bound_Dye_1;
-    ptrdiff_t Bound_Dye_2;
-    ptrdiff_t FITC_Bead_1;
-    ptrdiff_t FITC_Bead_2;
+    int number_of_reactions = 0;
+    int number_of_species = 0;
+    int low_ref_start = 0, low_ref_end = 0, high_ref_start = 0, high_ref_end = 0;
+    ptrdiff_t FITC = 0;
+    ptrdiff_t PS_beads = 0;
+    ptrdiff_t Bound_Dye_1 = 0;
+    ptrdiff_t Bound_Dye_2 = 0;
+    ptrdiff_t FITC_Bead_1 = 0;
+    ptrdiff_t FITC_Bead_2 = 0;
     std::string normalization_method;
     std::string name;
     std::vector<double> ENTRANCE_FLOWRATE;
@@ -225,16 +228,16 @@ struct experiment_struct {
 struct parameters_struct;
 void set_inlet_conc(parameters_struct& p, experiment_struct* exp_ptr, double* solution);
 
-typedef struct parameters_struct {
-    parameters_struct() = default;
+typedef struct parameters_struct : channel_dimensions {
+    explicit parameters_struct(channel_dimensions defaults = channel_dimensions{})
+        : channel_dimensions(defaults) {}
     // Links point into this state's containers. Copying or moving would leave
     // pointers referring to the old owner; create a fresh state for each run.
     parameters_struct(const parameters_struct&) = delete;
     parameters_struct& operator=(const parameters_struct&) = delete;
     parameters_struct(parameters_struct&&) = delete;
     parameters_struct& operator=(parameters_struct&&) = delete;
-    // Device Dimenssions
-    const double W = 5e-4, H = 4e-5, L = 0.025;  //meters: 500 um, 40 um, 2.5 cm
+    // Inherited const W/H/L are legacy defaults. Each experiment owns its geometry.
     int debug_level = 0;
     std::vector<report> state; // text output
     std::recursive_mutex report_mutex; // Shared by the existing model workers.
@@ -327,3 +330,6 @@ void read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db);
 
 // Cooperative checkpoint; only the stop source may be used concurrently.
 void check_cancellation(const parameters_t& p);
+
+// Initialize per-experiment const dimensions before creating any model links.
+void initialize_channel_dimensions(parameters_t& p, sqlite3* db);

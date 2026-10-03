@@ -61,25 +61,30 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
     std::ofstream fout;
     fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
     fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
-    fout << "res_time"                  << "  "; //1
-    fout << "bind_ratio(p1)"            << "  "; //2
-    fout << "forward_reaction_rate_1"   << "  "; //3
-    fout << "equalibrium_constant_1"    << "  "; //4
-    fout << "dye_conc."                 << "  "; //5
-    fout << "bead_conc."                << "  "; //6
-    fout << "bead_surface_area"         << "  "; //7
-    fout << "D-A"                       << "  "; //8
-    fout << "profile_type"              << "  "; //9
-    double model_size_ratio = p.W * 1.0e6 / p.X;
-    for (int x = 0; x < p.X; x++) {
-        double channel_position = (double)x * model_size_ratio;
-        if (std::abs(channel_position) < 1e-307) {
-            channel_position = 0;
+    auto write_header = [&](double width) {
+        fout << "res_time"                  << "  "; //1
+        fout << "bind_ratio(p1)"            << "  "; //2
+        fout << "forward_reaction_rate_1"   << "  "; //3
+        fout << "equalibrium_constant_1"    << "  "; //4
+        fout << "dye_conc."                 << "  "; //5
+        fout << "bead_conc."                << "  "; //6
+        fout << "bead_surface_area"         << "  "; //7
+        fout << "D-A"                       << "  "; //8
+        fout << "profile_type"              << "  "; //9
+        const double model_size_ratio = width * 1.0e6 / p.X;
+        for (int x = 0; x < p.X; x++) {
+            double channel_position = (double)x * model_size_ratio;
+            if (std::abs(channel_position) < 1e-307) {
+                channel_position = 0;
+            }
+            fout << channel_position << "  ";
         }
-        fout << channel_position << "  ";
-    }
-    fout << std::endl;
+        fout << std::endl;
 
+
+    };
+    std::optional<double> header_width;
+    if (p.row_count == 0) write_header(p.experiment_runs.empty() ? p.W : p.experiment_runs.front().W);
 
     double dye_bead_ratio = 2000.0d;
     double total_dye = 0.0d;
@@ -95,6 +100,10 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
     for (int row = 0; row < p.row_count; row++) {
         exp_ptr = &p.experiments.at(row);
         run_ptr = exp_ptr->run;
+        if (!header_width || *header_width != run_ptr->W) {
+            write_header(run_ptr->W);
+            header_width = run_ptr->W;
+        }
         ptrdiff_t FITC = run_ptr->FITC;
         FITC_ptr = &run_ptr->species.at(FITC);
         ptrdiff_t PS_beads = run_ptr->PS_beads;
@@ -418,10 +427,7 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
     experiment_run_struct* run_ptr;
     for(int i = 0; i < count; i++) {
         criterion = columnNames[i];
-        if (argv[i] == NULL && criterion == "PARAMETERS_TO_SOLVE_FOR") {
-            i++;
-            criterion = columnNames[i];
-        }
+        if (argv[i] == nullptr) continue;
         
         std::string col_val = argv[i];
         assert (!col_val.empty());
@@ -516,7 +522,7 @@ read_exp_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using c
         execute_sql(p, db, sql, exp_parameters_db_callback, errMsg.out());
         if (run_ptr->number_of_species == 0) {throw std::runtime_error(run_ptr->name + " number_of_species is zero");}
 
-        double restime      = p.W * p.H * p.L / (run_ptr->total_flowrate); // seconds
+        double restime      = run_ptr->W * run_ptr->H * run_ptr->L / (run_ptr->total_flowrate); // seconds
         run_ptr->dt         = restime / p.Z; // seconds
     }
 
@@ -815,7 +821,7 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
             } else {
                 throw std::runtime_error("SPECIE:" + std::to_string(specie) + " diffusion_rate undefined (check Type, Diameter, or Density)");
             }
-            specie_ptr->r = specie_ptr->diffusion_rate * run_ptr->dt / (p.W * p.W) * p.X * p.X;
+            specie_ptr->r = specie_ptr->diffusion_rate * run_ptr->dt / (run_ptr->W * run_ptr->W) * p.X * p.X;
             pop_report(p, 0);
         }
     }
@@ -1569,7 +1575,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         std::vector<double> experiment = exp_ptr->experimental_profile;
         const auto& out = exp_ptr->species_out;
 
-        const double model_scale = p.W * 1e6 / p.X;
+        const double model_scale = run_ptr->W * 1e6 / p.X;
         const double data_scale  = exp_ptr->scale_factor;
 
         int model_x = 0;
@@ -1582,7 +1588,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         bool model_match = false;
         bool data_match = false;
         pop_and_add(p, 0, "while loop");
-        while (X_model < p.W * 1e6 || X_data < p.W * 1e6) {
+        while (X_model < run_ptr->W * 1e6 || X_data < run_ptr->W * 1e6) {
             X_data = exp_ptr->channel_position.at(data_x);
             X_model = model_scale * model_x;
             model_match = X_data >= X_model;
@@ -2026,7 +2032,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     if ((double)exp_ptr->window_size < left_edge + width) {
         std::runtime_error("exp_ptr->window_size < left_edge + width (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
     }
-    exp_ptr->scale_factor = p.W * 1.0e6 / (width);
+    exp_ptr->scale_factor = run_ptr->W * 1.0e6 / (width);
     if (exp_ptr->scale_factor > 0) {
         std::runtime_error("scale factor <= 0 (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
     }
@@ -2299,7 +2305,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
         int model_window_count = 0;
        
         for (int x = 0; x < exp_ptr->window_size; x++) {
-            if (exp_ptr->channel_position.at(x) > (double)p.W * 1e6 * 0.2d && exp_ptr->channel_position.at(x) < (double)p.W * 1e6 * 0.8d ) { // TODO: make 0.2 & 0.8 parameters. Make p.W a parameter
+            if (exp_ptr->channel_position.at(x) > (double)run_ptr->W * 1e6 * 0.2d && exp_ptr->channel_position.at(x) < (double)run_ptr->W * 1e6 * 0.8d ) { // TODO: make 0.2 & 0.8 parameters. channel width comes from experiment geometry
                 exp_d                   = std::max(exp_d, exp_ptr->experimental_derivative.at(x));
                 model_d                 = std::max(model_d, exp_ptr->numeric_derivative.at(x));
                 exp_a                   = std::min(exp_a, exp_ptr->experimental_derivative.at(x));

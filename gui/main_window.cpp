@@ -104,7 +104,7 @@ MainWindow::MainWindow()
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         if (index == 2 && work_ == Work::idle && !closing_) experimentsPage_->load(database_->text().trimmed());
-        if (index != 1 || work_ != Work::idle || closing_ || editingControls_) return;
+        if (index != 1 || work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
             tabs_->setCurrentIndex(0);
@@ -140,6 +140,8 @@ MainWindow::MainWindow()
         if (QMessageBox::question(this, "Save fitted inputs", "Replace fitted initial inputs in\n" + activeDatabase_ + "?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
             save(operation::save_fitted_parameters);
     });
+    experimentsPage_->changed = [this] { updateControls(); };
+    experimentsPage_->saved = [this] { clearResult(); setStatus("Experiment channel dimensions saved. Run again to calculate results."); };
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
@@ -152,7 +154,7 @@ void MainWindow::setStatus(const QString& value) {
 }
 
 void MainWindow::saveSetup() {
-    if (work_ != Work::idle || closing_ || editingControls_) return;
+    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
     const auto filename = QFileDialog::getSaveFileName(this, "Save setup", {}, "Navier setup (*.navier.json)");
     if (filename.isEmpty()) return;
     try {
@@ -164,7 +166,7 @@ void MainWindow::saveSetup() {
 }
 
 void MainWindow::openSetup() {
-    if (work_ != Work::idle || closing_ || editingControls_) return;
+    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
     const auto filename = QFileDialog::getOpenFileName(this, "Open setup", {}, "Navier setup (*.navier.json);;JSON files (*.json)");
     if (filename.isEmpty()) return;
     try {
@@ -192,14 +194,15 @@ void MainWindow::clearResult()
 
 void MainWindow::updateControls()
 {
-    const bool idle = work_ == Work::idle && !closing_ && !editingControls_;
+    const bool idle = work_ == Work::idle && !closing_ && !editingControls_ && !experimentsPage_->dirty();
     openSetup_->setEnabled(idle);
     saveSetup_->setEnabled(idle && !database_->text().trimmed().isEmpty() && !output_->text().trimmed().isEmpty());
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
     tabs_->setTabEnabled(1, (idle || editingControls_) && !database_->text().trimmed().isEmpty());
-    tabs_->setTabEnabled(2, work_ == Work::idle && !closing_);
+    tabs_->setTabEnabled(2, work_ == Work::idle && !closing_ && !editingControls_);
+    experimentsPage_->setEnabled(work_ == Work::idle && !closing_ && !editingControls_);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);
@@ -215,7 +218,7 @@ void MainWindow::loadControls() {
 
 void MainWindow::startRun()
 {
-    if (work_ != Work::idle || closing_ || editingControls_) return;
+    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
     const QFileInfo input(database_->text().trimmed());
     if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
     clearResult(); log_->clear(); activeDatabase_ = input.absoluteFilePath();
@@ -311,7 +314,9 @@ void MainWindow::poll()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (editingControls_) { event->ignore(); return; }
+    if (editingControls_ || experimentsPage_->dirty()) {
+        setStatus("Finish editing or discard edits before closing."); event->ignore(); return;
+    }
     if (work_ == Work::idle) { timer_->stop(); event->accept(); return; }
     closing_ = true;
     if (work_ == Work::solve) runner_.request_cancel();

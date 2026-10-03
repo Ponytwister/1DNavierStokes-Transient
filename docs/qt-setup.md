@@ -272,3 +272,7 @@ The **Experiments** tab displays all rows and columns of the selected database's
 `experiments` table, ordered by `NAME`. SQL NULL is shown explicitly. The table
 refreshes when opened or when the database changes; a read error clears stale
 rows. Browsing experiments does not load a model or create solution records.
+
+Channel dimensions can be edited and saved per experiment after applying the
+[channel dimensions migration](channel-dimensions.md). Dimensions are in meters
+and may differ between experiments in a combined run.

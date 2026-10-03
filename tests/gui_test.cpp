@@ -113,6 +113,61 @@ TEST(Gui, ExperimentsTabReadsAllRowsWithoutModelWritesAndClearsStaleData)
     EXPECT_EQ(table->rowCount(), 2);
 }
 
+TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME) VALUES('second')");
+    QFile migration(QString::fromUtf8(TSENSOR_FIXTURE_DIR) + "/../../migrations/001_channel_dimensions.sql");
+    ASSERT_TRUE(migration.open(QIODevice::ReadOnly)); input.execute(migration.readAll());
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(2);
+    auto* table = widget<QTableWidget>(window, "experimentsTable");
+    auto* save = widget<QPushButton>(window, "saveDimensionsButton");
+    auto* reload = widget<QPushButton>(window, "reloadExperimentsButton");
+    int width = -1, height = -1, length = -1;
+    for (int i = 0; i < table->columnCount(); ++i) {
+        const auto label = table->horizontalHeaderItem(i)->text();
+        if (label == "Channel Width (m)") width = i;
+        if (label == "Channel Height (m)") height = i;
+        if (label == "Channel Length (m)") length = i;
+    }
+    ASSERT_GE(width, 0); ASSERT_GE(height, 0); ASSERT_GE(length, 0);
+    EXPECT_FALSE(table->item(0, 0)->flags() & Qt::ItemIsEditable);
+    table->item(0, width)->setText("nan"); save->click();
+    EXPECT_TRUE(save->isEnabled());
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='second'"), 5e-4);
+    EXPECT_FALSE(widget<QPushButton>(window, "runButton")->isEnabled());
+    EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
+    tabs->setCurrentIndex(0); tabs->setCurrentIndex(2);
+    EXPECT_EQ(table->item(0, width)->text(), "nan");
+    table->item(0, width)->setText("0.001");
+    table->item(1, width)->setText("0.003");
+    input.execute("UPDATE experiments SET CHANNEL_WIDTH=.002 WHERE NAME='uniform'");
+    save->click();
+    EXPECT_TRUE(widget<QLabel>(window, "experimentsStatus")->text().contains("changed in the database"));
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='second'"), 5e-4);
+    reload->click();
+    EXPECT_FALSE(save->isEnabled());
+    table->item(1, width)->setText("0.001");
+    table->item(1, height)->setText("0.00008");
+    table->item(1, length)->setText("0.05");
+    save->click();
+    EXPECT_FALSE(save->isEnabled());
+    EXPECT_TRUE(widget<QPushButton>(window, "runButton")->isEnabled());
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='uniform'"), .001);
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_HEIGHT FROM experiments WHERE NAME='uniform'"), .00008);
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_LENGTH FROM experiments WHERE NAME='uniform'"), .05);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+    tsensor_workflow::run_session session(std::filesystem::path(input.database.toStdWString()));
+    session.load_inputs();
+    EXPECT_DOUBLE_EQ(session.parameters().experiment_runs.front().W, .001);
+    EXPECT_DOUBLE_EQ(session.parameters().experiment_runs.front().H, .00008);
+    EXPECT_DOUBLE_EQ(session.parameters().experiment_runs.front().L, .05);
+    if (const auto capture = qEnvironmentVariable("NAVIER_EXPERIMENTS_TAB_CAPTURE"); !capture.isEmpty()) {
+        QApplication::processEvents(); EXPECT_TRUE(window.grab().save(capture));
+    }
+}
+
 TEST(SetupFile, RoundTripAndTransactionalRestore)
 {
     Inputs input;

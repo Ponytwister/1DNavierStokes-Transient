@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <sstream>
+#include <type_traits>
 
 namespace {
 using namespace tsensor_workflow;
@@ -47,6 +48,88 @@ void near(double actual, double expected)
 {
     ASSERT_TRUE(std::isfinite(actual));
     EXPECT_NEAR(actual, expected, 1e-12 + 1e-10 * std::abs(expected));
+}
+
+void migrate_channels(sqlite3* db) {
+    std::ifstream file(std::filesystem::path(TSENSOR_FIXTURE_DIR) / "../../migrations/001_channel_dimensions.sql");
+    if (!file) throw std::runtime_error("Missing channel migration");
+    sql(db, std::string(std::istreambuf_iterator<char>(file), {}));
+}
+
+static_assert(std::is_const_v<decltype(parameters_t::W)>);
+static_assert(std::is_const_v<decltype(experiment_run_struct::W)>);
+static_assert(std::is_const_v<decltype(experiment_run_struct::H)>);
+static_assert(std::is_const_v<decltype(experiment_run_struct::L)>);
+
+TEST(ChannelDimensions, DefaultsAndInvalidConstructorValues) {
+    experiment_run_struct initialized(channel_dimensions(.001, .00008, .05));
+    near(initialized.dye_conc, 0); near(initialized.dt, 0);
+    EXPECT_EQ(initialized.number_of_species, 0);
+    parameters_t p;
+    near(p.W, 5e-4); near(p.H, 4e-5); near(p.L, .025);
+    parameters_t custom(channel_dimensions(.001, .00008, .05));
+    near(custom.W, .001); near(custom.H, .00008); near(custom.L, .05);
+    EXPECT_THROW(channel_dimensions(0, 1, 1), std::invalid_argument);
+    EXPECT_THROW(channel_dimensions(1, -1, 1), std::invalid_argument);
+    EXPECT_THROW(channel_dimensions(1, 1, std::numeric_limits<double>::infinity()), std::invalid_argument);
+}
+
+TEST(ChannelDimensions, MixedExperimentsUseIndependentGeometryAndUniformAnalyticalSolution) {
+    fixture files;
+    run_session session(files.database);
+    auto* db = session.database();
+    sql(db, "CREATE TEMP TABLE second AS SELECT * FROM experiments; UPDATE second SET NAME='wide'; "
+            "INSERT INTO experiments SELECT * FROM second; "
+            "CREATE TEMP TABLE profiles AS SELECT * FROM raw_profile; UPDATE profiles SET NAME='wide'; "
+            "INSERT INTO raw_profile SELECT * FROM profiles; "
+            "UPDATE model_controls SET value='uniform wide' WHERE criterion='experiment_name'");
+    migrate_channels(db);
+    sql(db, "UPDATE experiments SET CHANNEL_WIDTH=.001, CHANNEL_HEIGHT=.00008, CHANNEL_LENGTH=.05 WHERE NAME='wide'");
+    session.load_inputs();
+    const auto& runs = session.parameters().experiment_runs;
+    ASSERT_EQ(runs.size(), 2u);
+    // Volume/flow = 1 s and 8 s; four axial steps imply dt = .25 s and 2 s.
+    near(runs[0].dt, .25); near(runs[1].dt, 2);
+    near(runs[0].species.at(0).r, 4.9e-10 * .25 / (5e-4 * 5e-4) * 64);
+    near(runs[1].species.at(0).r, 4.9e-10 * 2 / (.001 * .001) * 64);
+    session.run();
+    for (const auto& exp : session.parameters().experiments) {
+        near(exp.scale_factor, exp.run->name == "wide" ? 125 : 62.5);
+        // Constant inlet + no reaction + no-flux walls stays uniform for either geometry.
+        for (double value : exp.model_profile) near(value, 20);
+        for (double value : exp.error) near(value, 0);
+    }
+    const auto report = session.export_results(files.root);
+    std::ifstream input(report); std::string line;
+    std::vector<double> last_positions;
+    while (std::getline(input, line)) {
+        if (line.rfind("res_time", 0) != 0) continue;
+        std::istringstream row(line); std::string label;
+        for (int i = 0; i < 9; ++i) row >> label;
+        double position = 0, last = 0;
+        while (row >> position) last = position;
+        last_positions.push_back(last);
+    }
+    ASSERT_EQ(last_positions.size(), 2u);
+    near(last_positions[0], 437.5); near(last_positions[1], 875);
+    session.save_model_profiles();
+    near(scalar(db, "SELECT MAX(X) FROM model_profile JOIN solutions USING(SOLUTION_ID) WHERE EXPERIMENT_NAME='wide'"), 1000);
+}
+
+TEST(ChannelDimensions, RejectsPartialAndInvalidSchemasBeforeCreatingSolutionRecords) {
+    fixture files;
+    {
+        run_session session(files.database);
+        sql(session.database(), "ALTER TABLE experiments ADD COLUMN CHANNEL_WIDTH REAL");
+        EXPECT_THROW(session.load_inputs(), workflow_error);
+        near(scalar(session.database(), "SELECT count(*) FROM solutions"), 1);
+    }
+    {
+        run_session session(files.database);
+        sql(session.database(), "ALTER TABLE experiments ADD COLUMN CHANNEL_HEIGHT REAL; ALTER TABLE experiments ADD COLUMN CHANNEL_LENGTH REAL");
+        EXPECT_THROW(session.load_inputs(), workflow_error);
+        near(scalar(session.database(), "SELECT count(*) FROM solutions"), 1);
+    }
 }
 
 void verify_solution(run_session& session, const run_result& result)

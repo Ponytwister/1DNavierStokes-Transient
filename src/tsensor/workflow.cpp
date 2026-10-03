@@ -134,6 +134,7 @@ void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_value
             read_model_parameters_db_callback(&p, 2, row, nullptr);
         }
     } else read_model_parameters_from_db(p, db);
+    initialize_channel_dimensions(p, db);
     lines_from_profile_text(p, db);
     read_exp_parameters_from_db(p, db);
     get_solve_settings_ID_from_db(p, db);
