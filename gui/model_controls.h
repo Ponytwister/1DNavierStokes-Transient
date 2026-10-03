@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <QStringList>
 #include <optional>
 #include <vector>
 
@@ -20,6 +21,7 @@ QString help(const QString& name);
 void validate(const Row& row);
 // Opens existing databases only. Reading never loads a model or creates records.
 Snapshot load(const QString& database);
+QStringList experimentNames(const QString& database);
 // Compare against the original snapshot under a write transaction. Only changed
 // values are written; any conflict or failure rolls the entire transaction back.
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited);

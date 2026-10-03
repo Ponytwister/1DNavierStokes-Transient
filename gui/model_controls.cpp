@@ -73,7 +73,7 @@ Kind kind(const QString& name) {
 }
 QString help(const QString& name) {
     if (name == "max_iterations") return "Nonnegative integer; 0 leaves the optimizer iteration limit unset.";
-    if (name == "experiment_name") return "Experiment names separated by spaces, as in the database.";
+    if (name == "experiment_name") return "Select one or more experiments from the database.";
     if (name == "universal_solve_for") return "Global parameter names separated by spaces; parameter links are unchanged.";
     if (name == "convergence_epsx") return "Numeric tolerance strictly greater than 0 and less than 1e-3. Scientific notation is accepted.";
     if (name == "debug_level") return "Integer from 0 to 6; larger values suppress more messages.";
@@ -114,6 +114,18 @@ void validate(const Row& row) {
     default: break;
     }
     if (!ok) fail(row.name + ": " + help(row.name));
+}
+QStringList experimentNames(const QString& database) {
+    auto db = open(database, false);
+    auto statement = prepare(db.get(), "SELECT DISTINCT NAME FROM experiments WHERE NAME IS NOT NULL ORDER BY NAME");
+    QStringList names;
+    int rc;
+    while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        const auto name = column(statement.get(), 0);
+        if (!name.isEmpty()) names.push_back(name);
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    return names;
 }
 Snapshot load(const QString& database) { auto db = open(database, false); return read(db.get()); }
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited) {

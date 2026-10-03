@@ -21,7 +21,9 @@ private:
     QString database_;
     model_controls::Snapshot original_, current_;
     bool saving_ = false;
-    std::future<model_controls::Snapshot> pending_;
+    struct Loaded { model_controls::Snapshot controls; QStringList experiments; };
+    std::future<Loaded> pending_;
+    QStringList experiments_;
     QLabel* status_;
     QWidget* fields_;
     QFormLayout* form_;

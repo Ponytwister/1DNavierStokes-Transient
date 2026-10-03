@@ -4,6 +4,9 @@
 #include <setup_file.h>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QListWidget>
+#include <QToolButton>
+#include <QMenu>
 #include <gtest/gtest.h>
 #include <QApplication>
 #include <QElapsedTimer>
@@ -215,12 +218,78 @@ TEST(Gui, InvalidUnchangedFieldsBlockBothActions)
         EXPECT_TRUE(widget<QLabel>(dialog, "controlsStatus")->text().contains("experiment_name"));
         EXPECT_EQ(model_controls::load(input.database), original);
     }
-    widget<QLineEdit>(dialog, "experiment_name")->setText("uniform");
+    widget<QListWidget>(dialog, "experimentChoices")->item(0)->setCheckState(Qt::Checked);
     widget<QLineEdit>(dialog, "universal_solve_for")->clear();
     use->click();
     EXPECT_EQ(dialog.result(), QDialog::Accepted);
     auto values = dialog.values().rows;
     EXPECT_FALSE(control(values, "universal_solve_for").value);
+}
+
+TEST(Gui, ExperimentChecklistSupportsMultipleSelectionsAndExplicitPersistence)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME) VALUES('second'),('third')");
+    const auto original = model_controls::load(input.database);
+    auto choose = [](ControlsDialog& dialog, const QString& name, Qt::CheckState state) {
+        auto* list = widget<QListWidget>(dialog, "experimentChoices");
+        const auto items = list->findItems(name, Qt::MatchExactly);
+        ASSERT_EQ(items.size(), 1);
+        items.front()->setCheckState(state);
+    };
+    {
+        ControlsDialog dialog(input.database); dialog.show();
+        ASSERT_TRUE(until([&] { return widget<QPushButton>(dialog, "useControlsButton")->isEnabled(); }));
+        EXPECT_EQ(widget<QListWidget>(dialog, "experimentChoices")->count(), 3);
+        EXPECT_EQ(dialog.findChild<QLineEdit*>("experiment_name"), nullptr);
+        choose(dialog, "second", Qt::Checked);
+        dialog.reject();
+        EXPECT_EQ(model_controls::load(input.database), original);
+    }
+    ControlsDialog dialog(input.database); dialog.show();
+    ASSERT_TRUE(until([&] { return widget<QPushButton>(dialog, "useControlsButton")->isEnabled(); }));
+    choose(dialog, "second", Qt::Checked);
+    EXPECT_TRUE(widget<QToolButton>(dialog, "experiment_name")->text().contains("second"));
+    if (const auto capture = qEnvironmentVariable("NAVIER_EXPERIMENTS_CAPTURE"); !capture.isEmpty()) {
+        auto* picker = widget<QToolButton>(dialog, "experiment_name");
+        picker->menu()->popup(picker->mapToGlobal(QPoint(0, picker->height())));
+        QApplication::processEvents();
+        EXPECT_TRUE(picker->menu()->grab().save(capture));
+        picker->menu()->hide();
+    }
+    widget<QPushButton>(dialog, "useControlsButton")->click();
+    ASSERT_EQ(dialog.result(), QDialog::Accepted);
+    auto memory = dialog.values();
+    EXPECT_EQ(control(memory.rows, "experiment_name").value, "uniform second");
+    EXPECT_EQ(model_controls::load(input.database), original);
+    ControlsDialog reopened(input.database, nullptr, memory); reopened.show();
+    auto* save = widget<QPushButton>(reopened, "saveControlsButton");
+    ASSERT_TRUE(until([&] { return save->isEnabled(); }));
+    choose(reopened, "uniform", Qt::Unchecked);
+    choose(reopened, "second", Qt::Unchecked);
+    for (auto* button : {save, widget<QPushButton>(reopened, "useControlsButton")}) {
+        button->click(); EXPECT_TRUE(reopened.isVisible());
+        EXPECT_TRUE(widget<QLabel>(reopened, "controlsStatus")->text().contains("experiment_name"));
+    }
+    choose(reopened, "second", Qt::Checked);
+    choose(reopened, "third", Qt::Checked);
+    save->click();
+    ASSERT_TRUE(until([&] { return reopened.result() == QDialog::Accepted; }));
+    auto stored = model_controls::load(input.database);
+    EXPECT_EQ(control(stored.rows, "experiment_name").value, "second third");
+}
+
+TEST(Gui, MissingSavedExperimentMustBeDeselected)
+{
+    Inputs input;
+    input.execute("UPDATE model_controls SET value='missing uniform' WHERE criterion='experiment_name'");
+    ControlsDialog dialog(input.database); dialog.show();
+    auto* use = widget<QPushButton>(dialog, "useControlsButton");
+    ASSERT_TRUE(until([&] { return use->isEnabled(); }));
+    use->click(); EXPECT_TRUE(dialog.isVisible());
+    EXPECT_TRUE(widget<QLabel>(dialog, "controlsStatus")->text().contains("missing"));
+    widget<QListWidget>(dialog, "experimentChoices")->findItems("missing", Qt::MatchExactly).front()->setCheckState(Qt::Unchecked);
+    use->click(); EXPECT_EQ(dialog.result(), QDialog::Accepted);
 }
 
 TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
