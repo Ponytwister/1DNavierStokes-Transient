@@ -128,7 +128,7 @@ Use **File > Open setup...** and **File > Save setup...** for setup files.
 **File > Database** and **File > Output directory** provide editable paths and
 Browse buttons. These actions are locked while work or control editing is active.
 
-Before running, click **Model controls...** to edit the selected database's
+Before running, open the **Model controls** tab to edit the selected database's
 `model_controls` rows. Boolean controls use true/false choices; resolution,
 padding, iteration limits, report level and convergence tolerance are validated
 when saving. The experiment dropdown lists names from the database experiments
@@ -148,11 +148,14 @@ finite and strictly between 0 and 1e-3. These are editor constraints; model equa
 and CLI loading behavior are unchanged. Validation does not establish whether a
 combination is physically appropriate or will converge.
 
+Use **Use values**, **Update default**, or **Cancel** to finish editing and return
+to **Run and results**. Run and file actions remain disabled until editing finishes.
+
 Controls start from database defaults and remain in memory for subsequent runs.
 **Use values** applies edits in memory; **Update default** also writes them to the
-database; **Cancel** discards dialog edits. Applying controls clears previous results to prevent
+database; **Cancel** discards tab edits. Applying controls clears previous results to prevent
 mixing results with newly edited inputs. The editor is unavailable while running
-or saving results. Reads and writes run in a worker while the dialog stays
+or saving results. Reads and writes run in a worker while the tab stays
 responsive. Close/Cancel waits until a pending database operation finishes.
 
 Both the original `Parameter`/`Setting` layout and the test `criterion`/`value`

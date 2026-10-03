@@ -12,6 +12,7 @@ class QPlainTextEdit;
 class QTableWidget;
 class QProgressBar;
 class QTimer;
+class QTabWidget;
 
 class MainWindow : public QMainWindow {
 public:
@@ -43,10 +44,12 @@ private:
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
     QAction *openSetup_, *saveSetup_;
-    QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_, *controls_;
+    QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_;
     QLabel *status_, *summary_, *resultDatabase_;
     QPlainTextEdit* log_;
     QTableWidget* values_;
     QProgressBar* activity_;
     QTimer* timer_;
+    QTabWidget* tabs_;
+    QWidget* controlsPage_;
 };

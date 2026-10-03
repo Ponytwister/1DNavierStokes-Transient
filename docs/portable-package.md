@@ -5,10 +5,11 @@ Keep its DLLs, `qt.conf`, and the plugins folder together. Qt and a compiler do
 not need to be installed on the destination machine. This build targets x64
 Windows 10 (1809+) / Windows 11 with Qt 6.10.3 and MinGW GCC 13.1.0.
 
-Choose an existing experiment database and an output directory, then Run.
-Use **Model controls...** before running to edit settings; **Save to database**
-persists changes, while **Cancel** discards them. Saving controls clears old
-results from the window so the next run uses the new settings.
+Choose an existing experiment database and an output directory from the **File**
+menu, then Run.
+Open the **Model controls** tab before running to edit settings; **Use values**
+applies them in memory, **Update default** persists them, and **Cancel** discards edits.
+Applying controls clears old results so the next run uses the new settings.
 No experiment database is shipped or selected automatically. Test with a copy
 of your database: loading can create solution records. Report export, profile
 saving, and fitted-input saving are explicit actions. Cancellation is cooperative;

@@ -4,7 +4,6 @@
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFormLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,6 +14,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -30,7 +30,15 @@ MainWindow::MainWindow()
     resize(900, 720);
     auto* central = new QWidget(this);
     setCentralWidget(central);
-    auto* layout = new QVBoxLayout(central);
+    auto* outer = new QVBoxLayout(central);
+    tabs_ = new QTabWidget; tabs_->setObjectName("mainTabs");
+    outer->addWidget(tabs_);
+    auto* results = new QWidget;
+    tabs_->addTab(results, "Run and results");
+    controlsPage_ = new QWidget;
+    new QVBoxLayout(controlsPage_);
+    tabs_->addTab(controlsPage_, "Model controls");
+    auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
     layout->addWidget(title);
@@ -58,8 +66,7 @@ MainWindow::MainWindow()
     auto* controls = new QHBoxLayout;
     run_ = new QPushButton("Run"); run_->setObjectName("runButton");
     cancel_ = new QPushButton("Cancel"); cancel_->setObjectName("cancelButton");
-    controls_ = new QPushButton("Model controls..."); controls_->setObjectName("modelControlsButton");
-    controls->addWidget(run_); controls->addWidget(cancel_); controls->addWidget(controls_); controls->addStretch();
+    controls->addWidget(run_); controls->addWidget(cancel_); controls->addStretch();
     layout->addLayout(controls);
     status_ = new QLabel("Choose a database to begin."); status_->setObjectName("runStatus");
     status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true); layout->addWidget(status_);
@@ -91,20 +98,33 @@ MainWindow::MainWindow()
     connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) { modelControls_.reset(); clearResult(); } });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
-    connect(controls_, &QPushButton::clicked, this, [this] {
-        if (work_ != Work::idle || closing_ || editingControls_) return;
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index != 1 || work_ != Work::idle || closing_ || editingControls_) return;
         const QFileInfo input(database_->text().trimmed());
-        if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
-        editingControls_ = true; updateControls();
-        ControlsDialog dialog(input.absoluteFilePath(), this, modelControls_);
-        const bool saved = dialog.exec() == QDialog::Accepted;
-        editingControls_ = false;
-        if (saved) {
-            modelControls_ = dialog.values();
-            clearResult();
-            setStatus(dialog.updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
+        if (!input.isFile()) {
+            tabs_->setCurrentIndex(0);
+            setStatus("Choose an existing database file.");
+            return;
         }
-        updateControls();
+        editingControls_ = true; updateControls();
+        auto* editor = new ControlsDialog(input.absoluteFilePath(), controlsPage_, modelControls_);
+        editor->setWindowFlags(Qt::Widget);
+        editor->setObjectName("modelControlsEditor");
+        controlsPage_->layout()->addWidget(editor);
+        connect(editor, &QDialog::finished, this, [this, editor](int result) {
+            editingControls_ = false;
+            if (result == QDialog::Accepted) {
+                modelControls_ = editor->values();
+                clearResult();
+                setStatus(editor->updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
+            }
+            tabs_->setCurrentIndex(0);
+            controlsPage_->layout()->removeWidget(editor);
+            editor->setParent(nullptr);
+            editor->deleteLater();
+            updateControls();
+        });
+        editor->show();
     });
     connect(cancel_, &QPushButton::clicked, this, [this] {
         runner_.request_cancel(); cancelling_ = true; updateControls(); setStatus("Cancellation requested. Waiting for the calculation to stop…");
@@ -173,7 +193,7 @@ void MainWindow::updateControls()
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
-    controls_->setEnabled(idle && !database_->text().trimmed().isEmpty());
+    tabs_->setTabEnabled(1, (idle || editingControls_) && !database_->text().trimmed().isEmpty());
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);
