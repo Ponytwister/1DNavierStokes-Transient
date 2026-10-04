@@ -48,6 +48,8 @@ MainWindow::MainWindow()
     tabs_->addTab(speciesPage_, "Species");
     alglibPage_ = new DatabaseTableTab(DatabaseTableTab::Table::alglib);
     tabs_->addTab(alglibPage_, "ALGLIB");
+    rawProfilesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::raw_profile);
+    tabs_->addTab(rawProfilesPage_, "Raw profiles");
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -108,12 +110,13 @@ MainWindow::MainWindow()
     connect(database_, &QLineEdit::textChanged, this, [this] {
         if (work_ != Work::idle) return;
         modelControls_.reset(); experimentsPage_->clear();
-        reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); clearResult();
+        reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); rawProfilesPage_->clear(); clearResult();
         const auto database = database_->text().trimmed();
         if (tabs_->currentIndex() == 2) experimentsPage_->load(database);
         if (tabs_->currentIndex() == 3) reactionsPage_->load(database);
         if (tabs_->currentIndex() == 4) speciesPage_->load(database);
         if (tabs_->currentIndex() == 5) alglibPage_->load(database);
+        if (tabs_->currentIndex() == 6) rawProfilesPage_->load(database);
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
@@ -124,6 +127,7 @@ MainWindow::MainWindow()
             if (index == 3) reactionsPage_->load(database);
             if (index == 4) speciesPage_->load(database);
             if (index == 5) alglibPage_->load(database);
+            if (index == 6) rawProfilesPage_->load(database);
         }
         if (index != 1 || work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
         const QFileInfo input(database_->text().trimmed());
@@ -231,6 +235,8 @@ void MainWindow::updateControls()
     tabs_->setTabEnabled(3, work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(4, work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(5, work_ == Work::idle && !closing_);
+    tabs_->setTabEnabled(6, work_ == Work::idle && !closing_);
+    rawProfilesPage_->setEnabled(work_ == Work::idle && !closing_);
     reactionsPage_->setEnabled(work_ == Work::idle && !closing_);
     speciesPage_->setEnabled(work_ == Work::idle && !closing_);
     alglibPage_->setEnabled(work_ == Work::idle && !closing_);

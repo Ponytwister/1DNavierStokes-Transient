@@ -323,3 +323,11 @@ Browsing does not write to the database. Save uses the same transactional writes
 and concurrent-change detection as the Reactions and Species editors, then clears
 previous results. Cancel leaves the database unchanged. The tab is disabled during
 application work, and editing is disabled while other input edits are pending.
+
+### Raw profiles tab
+
+The **Raw profiles** tab displays all columns from `raw_profile`, ordered by
+`NAME`. It is read-only and has a Refresh button. Opening or refreshing it uses
+a short-lived read-only connection without initializing a model or writing data.
+Changing databases clears the previous rows, including when the new database
+cannot be loaded. The tab is disabled during runs and result saves.

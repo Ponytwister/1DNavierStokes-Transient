@@ -113,6 +113,32 @@ TEST(Gui, ExperimentsTabReadsAllRowsWithoutModelWritesAndClearsStaleData)
     EXPECT_EQ(table->rowCount(), 2);
 }
 
+TEST(Gui, RawProfilesBrowseRefreshAndClearWithoutWrites)
+{
+    Inputs input;
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    EXPECT_EQ(tabs->tabText(6), "Raw profiles");
+    tabs->setCurrentIndex(6);
+    auto* table = widget<QTableWidget>(window, "raw_profileTable");
+    ASSERT_EQ(table->rowCount(), 4);
+    EXPECT_EQ(table->horizontalHeaderItem(0)->text(), "NAME");
+    EXPECT_EQ(table->item(0, 0)->text(), "uniform");
+    EXPECT_EQ(table->editTriggers(), QAbstractItemView::NoEditTriggers);
+    EXPECT_TRUE(widget<QPushButton>(window, "raw_profileAddButton")->isHidden());
+    input.execute("INSERT INTO raw_profile(NAME) VALUES('second')");
+    widget<QPushButton>(window, "raw_profileRefreshButton")->click();
+    ASSERT_EQ(table->rowCount(), 5);
+    EXPECT_EQ(table->item(0, 1)->toolTip(), "SQL NULL (no value)");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+    widget<QLineEdit>(window, "databasePath")->setText(input.directory.filePath("missing.db"));
+    EXPECT_EQ(table->rowCount(), 0);
+    EXPECT_FALSE(QFile::exists(input.directory.filePath("missing.db")));
+    EXPECT_TRUE(widget<QLabel>(window, "raw_profileStatus")->text().contains("Cannot load"));
+    input.choose(window);
+    EXPECT_EQ(table->rowCount(), 5);
+}
+
 TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
 {
     Inputs input;

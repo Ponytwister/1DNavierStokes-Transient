@@ -20,7 +20,7 @@
 #include <stdexcept>
 
 DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
-    : QWidget(parent), tableKind_(table), tableName_(table == Table::reactions ? "reactions" : table == Table::species ? "species" : "alglib_input") {
+    : QWidget(parent), tableKind_(table), tableName_(table == Table::reactions ? "reactions" : table == Table::species ? "species" : table == Table::alglib ? "alglib_input" : "raw_profile") {
     auto* layout = new QVBoxLayout(this);
     status_ = new QLabel;
     status_->setObjectName(tableName_ + "Status");
@@ -44,6 +44,7 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     connect(add_, &QPushButton::clicked, this, [this] { editRow(true); });
     connect(modify_, &QPushButton::clicked, this, [this] { editRow(false); });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { updateButtons(); });
+    if (tableKind_ == Table::raw_profile) { add_->hide(); modify_->hide(); }
     clear();
 }
 
@@ -73,7 +74,8 @@ void DatabaseTableTab::load(QString database) {
         const char* sql = tableKind_ == Table::reactions
             ? "SELECT * FROM reactions ORDER BY REACTION_NAME"
             : tableKind_ == Table::species ? "SELECT * FROM species ORDER BY SPECIES_NAME"
-            : "SELECT * FROM alglib_input ORDER BY VARIABLE";
+            : tableKind_ == Table::alglib ? "SELECT * FROM alglib_input ORDER BY VARIABLE"
+            : "SELECT * FROM raw_profile ORDER BY NAME";
         sqlite3_stmt* query = nullptr;
         const int prepared = sqlite3_prepare_v2(db.get(), sql, -1, &query, nullptr);
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(query, sqlite3_finalize);
@@ -110,6 +112,8 @@ void DatabaseTableTab::load(QString database) {
         loaded_ = true; updateButtons();
         status_->setText(QString("%1 %2 rows in %3. Use Add or select a row and choose Modify.")
             .arg(table_->rowCount()).arg(tableName_).arg(database));
+        if (tableKind_ == Table::raw_profile)
+            status_->setText(QString("%1 raw profile rows in %2. Read-only.").arg(table_->rowCount()).arg(database));
     } catch (const std::exception& error) {
         loaded_ = false; columns_.clear(); updateButtons();
         table_->clear(); table_->setRowCount(0); table_->setColumnCount(0);
@@ -147,14 +151,14 @@ void DatabaseTableTab::setEditingEnabled(bool enabled) {
 
 void DatabaseTableTab::updateButtons() {
     const auto expected = editableColumns(tableKind_);
-    bool supported = loaded_ && editingEnabled_;
+    bool supported = loaded_ && editingEnabled_ && tableKind_ != Table::raw_profile;
     for (const auto& column : expected) supported = supported && columns_.contains(column);
     add_->setEnabled(supported);
     modify_->setEnabled(supported && !table_->selectedItems().isEmpty());
 }
 
 void DatabaseTableTab::editRow(bool adding) {
-    if (!loaded_ || !editingEnabled_ || (!adding && table_->selectedItems().isEmpty())) return;
+    if (tableKind_ == Table::raw_profile || !loaded_ || !editingEnabled_ || (!adding && table_->selectedItems().isEmpty())) return;
     const bool reactions = tableKind_ == Table::reactions;
     const bool alglib = tableKind_ == Table::alglib;
     const auto fields = editableColumns(tableKind_);

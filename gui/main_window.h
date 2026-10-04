@@ -55,5 +55,5 @@ private:
     QTabWidget* tabs_;
     QWidget* controlsPage_;
     ExperimentsTab* experimentsPage_;
-    DatabaseTableTab *reactionsPage_, *speciesPage_, *alglibPage_;
+    DatabaseTableTab *reactionsPage_, *speciesPage_, *alglibPage_, *rawProfilesPage_;
 };
