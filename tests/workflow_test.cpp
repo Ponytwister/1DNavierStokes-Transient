@@ -56,6 +56,56 @@ void migrate_channels(sqlite3* db) {
     sql(db, std::string(std::istreambuf_iterator<char>(file), {}));
 }
 
+TEST(ScatterControl, DatabaseAndInMemoryChoicesReachResiduals) {
+    // Uniform dye and beads, zero reaction rate, and no-flux walls give a
+    // constant analytical solution. At the Gaussian center the correction
+    // reduces to 1 - amplitude + center * slope, independently of the solver.
+    for (bool in_memory : {false, true}) {
+        for (double diameter : {20.0, 40.0}) {
+            const double center = diameter < 30 ? 0.0258645848310996 : 0.0711222856018783;
+            const double amplitude = diameter < 30 ? 0.238826108843563 : 0.448191328804794;
+            const double slope = diameter < 30 ? 1.40044738887211 : 2.14776259822044;
+            fixture files;
+            // Repeated fresh sessions also check that on does not leak into off.
+            for (const std::string choice : {"none", "NS_ND", "none"}) {
+                SCOPED_TRACE(choice + " diameter=" + std::to_string(diameter) +
+                             " in_memory=" + std::to_string(in_memory));
+                run_session session(files.database);
+                auto* db = session.database();
+                sql(db, "UPDATE species SET PARTICLE_DIAMETER=" + std::to_string(diameter) +
+                        " WHERE SPECIES_NAME='PS_40nm'; DELETE FROM inlet_conditions WHERE SPECIES_NAME='PS_40nm'");
+                std::ostringstream beads;
+                beads.precision(17);
+                beads << "INSERT INTO inlet_conditions SELECT INLET_COND_ID," << center
+                      << ",1,'PS_40nm' FROM inlet_conditions WHERE SPECIES_NAME='FITC'";
+                sql(db, beads.str());
+                sql(db, "UPDATE model_controls SET value='" +
+                        (in_memory ? (choice == "none" ? std::string("NS_ND") : std::string("none")) : choice) +
+                        "' WHERE criterion='scatter_correction_type'");
+                if (in_memory) {
+                    control_values controls{{"experiment_name", "uniform"},
+                        {"debug_level", "7"}, {"width resolution (X)", "8"},
+                        {"length/time resolution (Z)", "4"}, {"run_solver", "true"},
+                        {"universal_solve_for", "keq1"}, {"max_iterations", "3"},
+                        {"scatter_correction_type", choice}};
+                    session.load_inputs(controls);
+                } else {
+                    sql(db, "INSERT OR REPLACE INTO model_controls VALUES('run_solver','true')");
+                    session.load_inputs();
+                }
+                EXPECT_EQ(session.parameters().scatter_correction_type, choice);
+                const auto result = session.run();
+                EXPECT_GT(result.residual_evaluations, 0);
+                const double factor = choice == "none" ? 1 : 1 - amplitude + center * slope;
+                for (const auto& exp : session.parameters().experiments) {
+                    for (double value : exp.model_profile) near(value, 20);
+                    for (double value : exp.error) near(value, (factor - 1) * (factor - 1));
+                }
+            }
+        }
+    }
+}
+
 static_assert(std::is_const_v<decltype(parameters_t::W)>);
 static_assert(std::is_const_v<decltype(experiment_run_struct::W)>);
 static_assert(std::is_const_v<decltype(experiment_run_struct::H)>);

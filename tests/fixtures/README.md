@@ -66,3 +66,16 @@ optimizer scale tests partial-load failure and recovery with corrected inputs.
 The CLI fixture helper creates its own database and checks both save choices.
 No production schema, numerical equation, tolerance, or dependency changes are
 part of these workflow tests.
+
+`ScatterControl.DatabaseAndInMemoryChoicesReachResiduals` adds uniform beads to
+this fixture at the Gaussian center of each existing scatter calibration, with
+particle diameters of 20 and 40 nm. Zero reaction rate and a uniform inlet keep
+the dye profile at 20 and the bead concentration constant. The independently
+simplified correction is `1 - amplitude + center * slope`; the expected squared
+residual is `(correction - 1)^2`, or zero with `none`. The test covers database
+controls and in-memory controls that deliberately contradict the database,
+including an off/on/off sequence of fresh sessions. It uses the existing finite
+value tolerance. The model profile itself remains uncorrected under both choices;
+the correction currently affects only residuals. This checks control propagation
+and the existing formula, not the empirical calibration or general transient
+solver accuracy.
