@@ -331,6 +331,11 @@ The **Raw profiles** tab displays all columns from `raw_profile`, ordered by
 a short-lived read-only connection without initializing a model or writing data.
 Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
+Columns appear in this order: `NAME`, `WT_PERCENT`,
+`INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`, `ENTRANCE_CONC`,
+`INLET_COND_ID`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
+Absent optional columns are skipped; additional database columns follow at the end.
+This is a display order only and does not alter the database schema.
 
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is

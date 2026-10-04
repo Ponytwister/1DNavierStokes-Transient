@@ -94,6 +94,18 @@ void DatabaseTableTab::load(QString database) {
             headers << QString::fromUtf8(sqlite3_column_name(query, col));
         columns_ = headers;
         table_->setHorizontalHeaderLabels(headers);
+        if (tableKind_ == Table::raw_profile) {
+            const QStringList displayOrder = {"NAME", "WT_PERCENT", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR",
+                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "INLET_COND_ID",
+                "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY"};
+            int position = 0;
+            // Move visual sections only; preserve logical columns for editing and filtering.
+            for (const auto& name : displayOrder) {
+                const int column = headers.indexOf(name);
+                if (column >= 0)
+                    table_->horizontalHeader()->moveSection(table_->horizontalHeader()->visualIndex(column), position++);
+            }
+        }
         int rc;
         while ((rc = sqlite3_step(query)) == SQLITE_ROW) {
             const int row = table_->rowCount(); table_->insertRow(row);
