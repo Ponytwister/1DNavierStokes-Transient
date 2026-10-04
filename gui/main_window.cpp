@@ -58,6 +58,14 @@ MainWindow::MainWindow()
     };
     experimentsPage_->experimentFilter()->selectedNames = selectedExperiments;
     rawProfilesPage_->experimentFilter()->selectedNames = selectedExperiments;
+    reactionsPage_->experimentFilter()->selectedNames = [this, selectedExperiments] {
+        return model_controls::experimentReferences(database_->text().trimmed(), selectedExperiments(),
+            model_controls::ExperimentReferences::reactions);
+    };
+    speciesPage_->experimentFilter()->selectedNames = [this, selectedExperiments] {
+        return model_controls::experimentReferences(database_->text().trimmed(), selectedExperiments(),
+            model_controls::ExperimentReferences::species);
+    };
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -155,6 +163,8 @@ MainWindow::MainWindow()
                 modelControls_ = editor->values();
                 experimentsPage_->experimentFilter()->apply();
                 rawProfilesPage_->experimentFilter()->apply();
+                reactionsPage_->experimentFilter()->apply();
+                speciesPage_->experimentFilter()->apply();
                 clearResult();
                 setStatus(editor->updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
             }
@@ -222,6 +232,8 @@ void MainWindow::openSetup() {
         modelControls_ = original; modelControls_->rows = setup.controls;
         experimentsPage_->experimentFilter()->apply();
         rawProfilesPage_->experimentFilter()->apply();
+        reactionsPage_->experimentFilter()->apply();
+        speciesPage_->experimentFilter()->apply();
         setStatus("Setup opened: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }

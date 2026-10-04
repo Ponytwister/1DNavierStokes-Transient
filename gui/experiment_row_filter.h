@@ -11,12 +11,14 @@
 // Hides rows without removing them, preserving unsaved experiment edits.
 class ExperimentRowFilter : public QWidget {
 public:
-    ExperimentRowFilter(QTableWidget* table, const QString& name) : table_(table) {
+    ExperimentRowFilter(QTableWidget* table, const QString& name, const QString& nameColumn = "NAME",
+                        const QString& label = "Only selected experiments")
+        : nameColumn_(nameColumn), table_(table) {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
-        enabled_ = new QCheckBox("Only selected experiments");
+        enabled_ = new QCheckBox(label);
         enabled_->setObjectName(name + "SelectedOnly");
-        enabled_->setToolTip("Show rows whose NAME is selected in Model controls.");
+        enabled_->setToolTip("Show rows used by the experiments selected in Model controls.");
         enabled_->setChecked(true);
         error_ = new QLabel;
         error_->setObjectName(name + "FilterStatus");
@@ -36,20 +38,26 @@ public:
                 names = QSet<QString>(selected.begin(), selected.end());
             } catch (const std::exception& error) {
                 error_->setText("Cannot load experiment selection: " + QString::fromUtf8(error.what())
-                    + " Uncheck Only selected experiments to view all rows.");
+                    + " Uncheck " + enabled_->text() + " to view all rows.");
                 error_->show();
             }
         }
         int nameColumn = -1;
         for (int col = 0; col < table_->columnCount(); ++col)
-            if (table_->horizontalHeaderItem(col)->text() == "NAME") nameColumn = col;
+            if (table_->horizontalHeaderItem(col)->text() == nameColumn_) nameColumn = col;
         for (int row = 0; row < table_->rowCount(); ++row) {
             const auto* item = nameColumn < 0 ? nullptr : table_->item(row, nameColumn);
             const bool selected = item && !item->data(Qt::UserRole + 1).toBool() && names.contains(item->text());
-            table_->setRowHidden(row, enabled_->isChecked() && !selected);
+            const bool hidden = enabled_->isChecked() && !selected;
+            if (hidden) {
+                for (int col = 0; col < table_->columnCount(); ++col)
+                    if (auto* cell = table_->item(row, col)) cell->setSelected(false);
+            }
+            table_->setRowHidden(row, hidden);
         }
     }
 private:
+    QString nameColumn_;
     QTableWidget* table_;
     QCheckBox* enabled_;
     QLabel* error_;

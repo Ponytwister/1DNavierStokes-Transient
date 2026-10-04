@@ -339,3 +339,12 @@ controls (including opened setups) take precedence over database defaults.
 Uncheck it to show all rows. Filtering does not change data or discard pending
 channel-dimension edits. If the selection cannot be read, an error is shown and
 rows remain hidden until the filter is turned off or the selection is available.
+
+The **Reactions** and **Species** tabs each have a default-on **Only used by
+selected experiments** checkbox. These filters show the union of names in the
+selected experiments' `REACTIONS` and `SPECIES` columns, respectively, matching
+complete space-separated names. NULL or empty lists contribute no names. Applied
+Model controls and opened setups update the filters; opening a tab or refreshing
+reads the current experiment lists. Uncheck the filter to browse or edit unused
+rows, including newly added reactions or species. Filtering is read-only and
+does not alter experiment associations.

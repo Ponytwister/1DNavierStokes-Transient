@@ -200,6 +200,79 @@ TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
     EXPECT_EQ(visibleNames(profiles).size(), 4);
 }
 
+TEST(Gui, ReferenceFiltersUseSelectedExperimentListsAndRefresh)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME,REACTIONS,SPECIES) VALUES"
+                  "('second',' ExtraReaction  FITC_40nm_1 ',' ExtraSpecies FITC '),"
+                  "('unused','UnusedReaction','UnusedSpecies'); "
+                  "INSERT INTO reactions(REACTION_NAME) VALUES('ExtraReaction'),('UnusedReaction'),('FITC_40nm_1-extra'); "
+                  "INSERT INTO species(SPECIES_NAME) VALUES('ExtraSpecies'),('UnusedSpecies'),('FITC-extra')");
+    const auto original = model_controls::load(input.database);
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    auto visibleNames = [](QTableWidget* table) {
+        QStringList names;
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (!table->isRowHidden(row)) names << table->item(row, 0)->text();
+        return names;
+    };
+    auto* reactions = widget<QTableWidget>(window, "reactionsTable");
+    auto* species = widget<QTableWidget>(window, "speciesTable");
+    auto* reactionFilter = widget<QCheckBox>(window, "reactionsSelectedOnly");
+    auto* speciesFilter = widget<QCheckBox>(window, "speciesSelectedOnly");
+    EXPECT_TRUE(reactionFilter->isChecked()); EXPECT_TRUE(speciesFilter->isChecked());
+    tabs->setCurrentIndex(3);
+    EXPECT_EQ(visibleNames(reactions), QStringList{"FITC_40nm_1"});
+    tabs->setCurrentIndex(4);
+    EXPECT_EQ(visibleNames(species), (QStringList{"40nm_Bound_Dye_1", "FITC", "PS_40nm"}));
+    reactionFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(reactions).size(), 4);
+    EXPECT_EQ(visibleNames(species).size(), 3);
+    reactions->setCurrentCell(0, 0); reactions->selectRow(0);
+    EXPECT_TRUE(widget<QPushButton>(window, "reactionsModifyButton")->isEnabled());
+    reactionFilter->setChecked(true);
+    EXPECT_FALSE(widget<QPushButton>(window, "reactionsModifyButton")->isEnabled());
+
+    tabs->setCurrentIndex(1);
+    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "useControlsButton")->isEnabled(); }));
+    auto* choices = widget<QListWidget>(window, "experimentChoices");
+    choices->findItems("second", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
+    widget<QPushButton>(window, "useControlsButton")->click();
+    EXPECT_EQ(model_controls::load(input.database), original);
+    EXPECT_EQ(visibleNames(reactions), (QStringList{"ExtraReaction", "FITC_40nm_1"}));
+    EXPECT_EQ(visibleNames(species), (QStringList{"40nm_Bound_Dye_1", "ExtraSpecies", "FITC", "PS_40nm"}));
+    input.execute("UPDATE experiments SET REACTIONS=NULL,SPECIES='' WHERE NAME='second'");
+    tabs->setCurrentIndex(3);
+    widget<QPushButton>(window, "reactionsRefreshButton")->click();
+    EXPECT_EQ(visibleNames(reactions), QStringList{"FITC_40nm_1"});
+    tabs->setCurrentIndex(4);
+    widget<QPushButton>(window, "speciesRefreshButton")->click();
+    EXPECT_EQ(visibleNames(species).size(), 3);
+    speciesFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(species).size(), 6);
+    EXPECT_EQ(visibleNames(reactions).size(), 1);
+    speciesFilter->setChecked(true);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+
+    Inputs other;
+    other.execute("UPDATE model_controls SET value='missing' WHERE criterion='experiment_name'");
+    other.choose(window);
+    EXPECT_TRUE(visibleNames(species).isEmpty());
+    tabs->setCurrentIndex(3);
+    EXPECT_TRUE(visibleNames(reactions).isEmpty());
+    other.execute("DROP TABLE experiments");
+    widget<QPushButton>(window, "reactionsRefreshButton")->click();
+    EXPECT_TRUE(widget<QLabel>(window, "reactionsFilterStatus")->text().contains("Cannot load"));
+    reactionFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(reactions).size(), 1);
+    tabs->setCurrentIndex(4);
+    EXPECT_TRUE(widget<QLabel>(window, "speciesFilterStatus")->text().contains("Cannot load"));
+    speciesFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(species).size(), 3);
+}
+
 TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
 {
     Inputs input;
@@ -351,6 +424,7 @@ TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
     EXPECT_EQ(input.execute("SELECT count(*) FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
     EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 2.5);
     EXPECT_EQ(input.execute("SELECT DIFFUSION_RATE IS NULL FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
+    widget<QCheckBox>(window, "speciesSelectedOnly")->setChecked(false);
     auto selectNew = [&] {
         for (int row = 0; row < table->rowCount(); ++row)
             if (table->item(row, 0)->text() == "NewSpecies") { table->setCurrentCell(row, 0); table->selectRow(row); return; }
@@ -409,6 +483,7 @@ TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
     });
     add->click();
     EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
+    widget<QCheckBox>(window, "reactionsSelectedOnly")->setChecked(false);
     auto* table = widget<QTableWidget>(window, "reactionsTable");
     for (int row = 0; row < table->rowCount(); ++row)
         if (table->item(row, 0)->text() == "NewReaction") { table->setCurrentCell(row, 0); table->selectRow(row); }

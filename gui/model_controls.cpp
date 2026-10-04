@@ -127,6 +127,24 @@ QStringList experimentNames(const QString& database) {
     if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
     return names;
 }
+QStringList experimentReferences(const QString& database, const QStringList& selected,
+                                 ExperimentReferences references) {
+    if (selected.isEmpty()) return {};
+    auto db = open(database, false);
+    auto statement = prepare(db.get(), references == ExperimentReferences::reactions
+        ? "SELECT NAME, REACTIONS FROM experiments" : "SELECT NAME, SPECIES FROM experiments");
+    QStringList names;
+    int rc;
+    while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        if (sqlite3_column_type(statement.get(), 0) == SQLITE_NULL ||
+            !selected.contains(column(statement.get(), 0)) ||
+            sqlite3_column_type(statement.get(), 1) == SQLITE_NULL) continue;
+        names.append(column(statement.get(), 1).split(' ', Qt::SkipEmptyParts));
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    names.removeDuplicates();
+    return names;
+}
 QStringList solvableParameters(const QString& database) {
     QStringList names{"p1", "kon1", "keq1", "left_edge", "width", "QE1"};
     auto db = open(database, false);
