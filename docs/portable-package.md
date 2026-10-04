@@ -7,9 +7,11 @@ Windows 10 (1809+) / Windows 11 with Qt 6.10.3 and MinGW GCC 13.1.0.
 
 Choose an existing experiment database and an output directory from the **File**
 menu, then Run.
-Open the **Model controls** tab before running to edit settings; **Use values**
-applies them in memory, **Update default** persists them, and **Cancel** discards edits.
-Applying controls clears old results so the next run uses the new settings.
+Open the **Model controls** tab to edit settings. Navigation, closing, and Run
+remain available while editing. Run asks you to accept changed controls; unchanged
+controls run without a prompt. **Update preset** saves to the loaded setup file;
+**Save preset...** prompts for a new file. Database defaults are unchanged.
+**Cancel** discards edits not yet accepted for a run. Starting a run clears old results.
 No experiment database is shipped or selected automatically. Test with a copy
 of your database: loading can create solution records. Report export, profile
 saving, and fitted-input saving are explicit actions. Cancellation is cooperative;

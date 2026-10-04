@@ -25,6 +25,7 @@ ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::op
     setWindowTitle("Model controls"); setObjectName("modelControlsDialog"); resize(780, 780);
     auto* layout = new QVBoxLayout(this);
     auto* description = new QLabel("Edit controls for the next run. Update default saves to the database. Use values applies only in memory; Cancel discards edits.\nDatabase: " + database);
+    description->setObjectName("controlsDescription");
     description->setTextFormat(Qt::PlainText); description->setWordWrap(true); layout->addWidget(description);
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
@@ -84,36 +85,62 @@ void ControlsDialog::populate() {
             auto* edit = new QLineEdit(row.value.value_or(QString{}));
             editor = edit;
         }
+        // Preserve untouched values exactly, including NULL and checklist spacing.
+        auto changed = [editor] { editor->setProperty("controlsEdited", true); };
+        if (auto* picker = dynamic_cast<ChecklistPicker*>(editor))
+            connect(picker->findChild<QListWidget*>(), &QListWidget::itemChanged, editor, changed);
+        else if (auto* check = qobject_cast<QCheckBox*>(editor))
+            connect(check, &QCheckBox::toggled, editor, changed);
+        else if (auto* combo = qobject_cast<QComboBox*>(editor))
+            connect(combo, &QComboBox::currentIndexChanged, editor, changed);
+        else connect(qobject_cast<QLineEdit*>(editor), &QLineEdit::textChanged, editor, changed);
         editor->setObjectName(row.name);
         editor->setToolTip(model_controls::help(row.name));
         form_->addRow(row.name, editor);
         editors_.push_back(editor);
     }
 }
+void ControlsDialog::showStatus(const QString& message) { status_->setText(message); }
+void ControlsDialog::configurePresetButton(const QString& label, std::function<void()> savePreset) {
+    save_->hide();
+    use_->setText(label);
+    disconnect(use_, nullptr, this, nullptr);
+    connect(use_, &QPushButton::clicked, this, [savePreset] { savePreset(); });
+    findChild<QLabel*>("controlsDescription")->setText("Edit controls for the next run. Run asks you to accept changed values. Save a preset to reuse them.");
+}
+model_controls::Snapshot ControlsDialog::draft(bool validate) const {
+    if (!ready()) throw std::runtime_error("Model controls are still loading or could not be loaded.");
+    auto edited = current_.rows;
+    for (std::size_t i = 0; i < editors_.size(); ++i) {
+        auto* editor = editors_[i];
+        if (!editor) continue;
+        if (!editor->property("controlsEdited").toBool()) {
+            if (validate) if (auto* picker = dynamic_cast<ChecklistPicker*>(editor)) picker->value();
+            continue;
+        }
+        if (auto* picker = dynamic_cast<ChecklistPicker*>(editor)) {
+            const auto value = picker->value();
+            edited[i].value = edited[i].name == "universal_solve_for" && value.isEmpty()
+                ? std::nullopt : std::optional<QString>(value);
+        }
+        else if (auto* check = qobject_cast<QCheckBox*>(editor)) {
+            if (check->property("invalidValue").toBool()) edited[i].value.reset();
+            else edited[i].value = check->isChecked() ? "true" : "false";
+        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) edited[i].value = combo->currentText();
+        else {
+            const auto text = qobject_cast<QLineEdit*>(editor)->text();
+            edited[i].value = edited[i].name == "universal_solve_for" && text.trimmed().isEmpty()
+                ? std::nullopt : std::optional<QString>(text);
+        }
+    }
+    if (validate) for (std::size_t i = 0; i < edited.size(); ++i)
+        if (editors_[i]) model_controls::validate(edited[i]);
+    auto result = current_; result.rows = std::move(edited); return result;
+}
 void ControlsDialog::save(bool persist) {
     if (pending_.valid()) return;
-    auto edited = current_.rows;
     try {
-        for (std::size_t i = 0; i < editors_.size(); ++i) {
-            auto* editor = editors_[i];
-            if (!editor) continue;
-            if (auto* picker = dynamic_cast<ChecklistPicker*>(editor)) {
-                const auto value = picker->value();
-                edited[i].value = edited[i].name == "universal_solve_for" && value.isEmpty()
-                    ? std::nullopt : std::optional<QString>(value);
-            }
-            else if (auto* check = qobject_cast<QCheckBox*>(editor)) {
-                if (check->property("invalidValue").toBool()) edited[i].value.reset();
-                else edited[i].value = check->isChecked() ? "true" : "false";
-            } else if (auto* combo = qobject_cast<QComboBox*>(editor)) edited[i].value = combo->currentText();
-            else {
-                const auto text = qobject_cast<QLineEdit*>(editor)->text();
-                edited[i].value = edited[i].name == "universal_solve_for" && text.trimmed().isEmpty()
-                    ? std::nullopt : std::optional<QString>(text);
-            }
-        }
-        for (std::size_t i = 0; i < edited.size(); ++i)
-            if (editors_[i]) model_controls::validate(edited[i]);
+        auto edited = draft().rows;
         if (!persist) { current_.rows = std::move(edited); accept(); return; }
         pending_ = std::async(std::launch::async, [database = database_, original = original_, edited] {
             model_controls::save(database, original, edited);

@@ -2,6 +2,7 @@
 #include "model_controls.h"
 #include <QDialog>
 #include <future>
+#include <functional>
 
 class QLabel;
 class QPushButton;
@@ -11,6 +12,10 @@ public:
     explicit ControlsDialog(const QString& database, QWidget* parent = nullptr,
                             std::optional<model_controls::Snapshot> current = std::nullopt);
     const model_controls::Snapshot& values() const { return current_; }
+    model_controls::Snapshot draft(bool validate = true) const;
+    bool ready() const { return !pending_.valid() && !editors_.empty(); }
+    void showStatus(const QString& message);
+    void configurePresetButton(const QString& label, std::function<void()> savePreset);
     bool updatedDefault() const { return saving_; }
     void reject() override;
 private:

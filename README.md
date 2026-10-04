@@ -31,10 +31,11 @@ licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 and output selection, Run/Cancel, progress, parameter results, and explicit saves.
 The **File** menu contains setup actions and database/output path selection.
 The **Model controls** tab edits controls held in memory, initially loaded
-from the selected database. **Use values** applies edits for subsequent runs without
-writing defaults; **Update default** also saves them to the database; **Cancel**
-discards tab edits and returns to **Run and results**. Changing the database resets
-the active controls.
+from the selected database. Navigation and closing remain available while editing.
+**Run** asks you to accept changed controls; unchanged controls run without a prompt.
+**Update preset** saves the edits to the loaded setup file, or **Save preset...**
+prompts for a new file. Neither action changes database defaults. **Cancel**
+discards edits that have not been accepted for a run. Changing the database resets the active controls.
 The original presets remain terminal-only and require no Qt.
 
 For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).
@@ -139,7 +140,7 @@ model controls in memory for subsequent runs, without writing database defaults.
 Control names must match those in the referenced database, and values for unknown
 controls must remain unchanged from that database. Incompatible setups are rejected.
 Opening a setup clears previous run results; run again to calculate new results.
-Setup actions are disabled while a run, results save, or controls editor is active.
+Setup actions are disabled while a run or results save is active. Saving a setup includes the current model-control edits.
 
 The version 1 JSON format uses `format: "navier-setup"`, `version: 1`, `database`,
 `outputDirectory`, and a `controls` array of `{ "name": "...", "value": "..." }`

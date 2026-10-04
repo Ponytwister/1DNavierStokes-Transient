@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFileDialog>
 #include <QFile>
 #include <QLabel>
 #include <QLineEdit>
@@ -273,8 +274,14 @@ TEST(Gui, RawProfilesCancelConflictsAndMissingExperimentDoNotOverwrite)
 TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
 {
     Inputs input;
-    input.execute("INSERT INTO experiments(NAME) VALUES('second'),('uniform-extra'); "
-                  "INSERT INTO raw_profile(NAME) VALUES('second'),('uniform-extra'),(NULL)");
+    // Acceptance now starts a run, so the selected experiment needs complete inputs.
+    input.execute("INSERT INTO experiments SELECT 'second',LOW_REF_LEFT,LOW_REF_RIGHT,HIGH_REF_LEFT,HIGH_REF_RIGHT,"
+                  "DEFAULT_NORMALIZATION,SPECIES,REACTIONS,ENTRANCE_FLOWRATE,EDGES,SPECIE_INLET_CONC_UNITS,"
+                  "SPECIE_MODEL_CONC_UNITS,WIDTH FROM experiments WHERE NAME='uniform';"
+                  "INSERT INTO experiments(NAME) VALUES('uniform-extra');"
+                  "INSERT INTO raw_profile SELECT 'second',WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,"
+                  "INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT FROM raw_profile WHERE NAME='uniform' LIMIT 1;"
+                  "INSERT INTO raw_profile(NAME) VALUES('uniform-extra'),(NULL)");
     const auto original = model_controls::load(input.database);
     MainWindow window; input.choose(window);
     auto* tabs = widget<QTabWidget>(window, "mainTabs");
@@ -303,7 +310,12 @@ TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
     auto* choices = widget<QListWidget>(window, "experimentChoices");
     for (int i = 0; i < choices->count(); ++i)
         choices->item(i)->setCheckState(choices->item(i)->text() == "second" ? Qt::Checked : Qt::Unchecked);
-    widget<QPushButton>(window, "useControlsButton")->click();
+    QTimer::singleShot(0, [] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        ASSERT_NE(box, nullptr); box->button(QMessageBox::Yes)->click();
+    });
+    widget<QPushButton>(window, "runButton")->click();
+    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "runButton")->isEnabled(); }));
     EXPECT_EQ(model_controls::load(input.database), original);
     EXPECT_EQ(visibleNames(experiments), QStringList{"second"});
     EXPECT_EQ(visibleNames(profiles), QStringList{"second"});
@@ -369,7 +381,12 @@ TEST(Gui, ReferenceFiltersUseSelectedExperimentListsAndRefresh)
     ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "useControlsButton")->isEnabled(); }));
     auto* choices = widget<QListWidget>(window, "experimentChoices");
     choices->findItems("second", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
-    widget<QPushButton>(window, "useControlsButton")->click();
+    QTimer::singleShot(0, [] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        ASSERT_NE(box, nullptr); box->button(QMessageBox::Yes)->click();
+    });
+    widget<QPushButton>(window, "runButton")->click();
+    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "runButton")->isEnabled(); }));
     EXPECT_EQ(model_controls::load(input.database), original);
     EXPECT_EQ(visibleNames(reactions), (QStringList{"ExtraReaction", "FITC_40nm_1"}));
     EXPECT_EQ(visibleNames(species), (QStringList{"40nm_Bound_Dye_1", "ExtraSpecies", "FITC", "PS_40nm"}));
@@ -977,63 +994,119 @@ TEST(Gui, ParameterChecklistSupportsMemoryDefaultsAndEmptySelection)
     EXPECT_FALSE(control(stored.rows, "universal_solve_for").value);
 }
 
-TEST(Gui, ControlsCancelValidationAndSaveBeforeRun)
+TEST(Gui, PresetButtonCreatesUpdatesAndLoadsSetupWithoutDatabaseWrites)
 {
     Inputs input;
-    input.execute("INSERT INTO model_controls VALUES('run_solver','true'),('save_normalized_profiles','false'),"
-                  "('exp_left_padding','0'),('exp_right_padding','0'),('disable_reactions','false'),"
-                  "('disable_reverse_reactions','false'),('use_alglib_init_values','true'),('convergence_epsx','1e-12')");
-    {
-        ControlsDialog dialog(input.database); dialog.show();
-        auto* save = widget<QPushButton>(dialog, "saveControlsButton");
-        ASSERT_TRUE(until([&] { return save->isEnabled(); }));
-
-        widget<QLineEdit>(dialog, "max_iterations")->setText("15");
-        EXPECT_EQ(dialog.findChild<QCheckBox*>("save_normalized_profiles"), nullptr);
-        EXPECT_EQ(dialog.findChild<QCheckBox*>("save_model_profiles"), nullptr);
-        EXPECT_EQ(dialog.findChild<QTableWidget*>(), nullptr);
-        EXPECT_EQ(dialog.findChildren<QCheckBox*>().size(), 4);
-        if (const auto capture = qEnvironmentVariable("NAVIER_CONTROLS_CAPTURE"); !capture.isEmpty()) {
-            QApplication::processEvents(); EXPECT_TRUE(dialog.grab().save(capture));
-        }
-        dialog.reject();
-        EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 3);
-    }
+    const auto defaults = model_controls::load(input.database);
+    const auto filename = input.directory.filePath("preset.navier.json");
     MainWindow window; input.choose(window); window.show();
-    auto* run = widget<QPushButton>(window, "runButton");
-    run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
-    ASSERT_TRUE(widget<QPushButton>(window, "exportButton")->isEnabled());
-    QTimer::singleShot(0, &window, [&] {
-        auto* dialog = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
-        if (!dialog) { ADD_FAILURE() << "Controls dialog missing"; return; }
-        auto* save = widget<QPushButton>(*dialog, "saveControlsButton");
-        if (!until([&] { return save->isEnabled(); })) { ADD_FAILURE() << "Loading timed out"; dialog->reject(); return; }
-        EXPECT_FALSE(run->isEnabled());
-        EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
-        EXPECT_FALSE(widget<QAction>(window, "saveSetupAction")->isEnabled());
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    auto chooseFile = [&](const QString& file) {
+        QTimer::singleShot(0, [file] {
+            auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+            ASSERT_NE(dialog, nullptr);
+            dialog->selectFile(file);
+            QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+        });
+    };
+    tabs->setCurrentIndex(1);
+    auto* editor = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
+    ASSERT_TRUE(until([&] { return editor->ready(); }));
+    auto* button = widget<QPushButton>(*editor, "useControlsButton");
+    EXPECT_EQ(button->text(), "Save preset...");
+    widget<QLineEdit>(*editor, "max_iterations")->setText("9");
+    chooseFile(filename); button->click();
+    auto saved = setup_file::load(filename);
+    EXPECT_EQ(control(saved.controls, "max_iterations").value, std::optional<QString>("9"));
+    EXPECT_EQ(button->text(), "Update preset");
+    widget<QLineEdit>(*editor, "max_iterations")->setText("11");
+    button->click();
+    saved = setup_file::load(filename);
+    EXPECT_EQ(control(saved.controls, "max_iterations").value, std::optional<QString>("11"));
+    chooseFile(filename); widget<QAction>(window, "openSetupAction")->trigger();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    tabs->setCurrentIndex(1);
+    editor = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
+    ASSERT_TRUE(until([&] { return editor->ready(); }));
+    EXPECT_EQ(widget<QLineEdit>(*editor, "max_iterations")->text(), "11");
+    EXPECT_EQ(widget<QPushButton>(*editor, "useControlsButton")->text(), "Update preset");
+    widget<QLineEdit>(*editor, "max_iterations")->setText("13");
+    widget<QPushButton>(*editor, "useControlsButton")->click();
+    saved = setup_file::load(filename);
+    EXPECT_EQ(control(saved.controls, "max_iterations").value, std::optional<QString>("13"));
+    EXPECT_EQ(model_controls::load(input.database), defaults);
+}
 
-        auto* iterations = widget<QLineEdit>(*dialog, "max_iterations");
-        iterations->setText("bad"); save->click();
-        EXPECT_TRUE(widget<QLabel>(*dialog, "controlsStatus")->text().contains("max_iterations"));
-        EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 3);
-        iterations->setText("15");
-        widget<QCheckBox>(*dialog, "run_solver")->setChecked(false);
-        save->click();
-        EXPECT_FALSE(save->isEnabled());
-    });
-    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
-    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "runButton")->isEnabled(); }));
-    EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 15);
-    EXPECT_FALSE(widget<QPushButton>(window, "exportButton")->isEnabled());
-    EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 0);
-    run->click();
-    EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(1));
-    EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
-    EXPECT_FALSE(widget<QAction>(window, "saveSetupAction")->isEnabled());
-    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+TEST(Gui, ModelControlsDoNotLockNavigationOrClose)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    auto* run = widget<QPushButton>(window, "runButton");
+    tabs->setCurrentIndex(1);
+    auto* editor = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
+    ASSERT_NE(editor, nullptr);
+    ASSERT_TRUE(until([&] { return editor->ready(); }));
+    EXPECT_TRUE(run->isEnabled());
+    EXPECT_TRUE(tabs->isTabEnabled(2));
     EXPECT_TRUE(widget<QAction>(window, "openSetupAction")->isEnabled());
-    EXPECT_TRUE(widget<QAction>(window, "saveSetupAction")->isEnabled());
+    widget<QLineEdit>(*editor, "max_iterations")->setText("9");
+    tabs->setCurrentIndex(2);
+    EXPECT_EQ(tabs->currentIndex(), 2);
+    EXPECT_TRUE(run->isEnabled());
+    tabs->setCurrentIndex(1);
+    EXPECT_EQ(widget<QLineEdit>(*editor, "max_iterations")->text(), "9");
+    EXPECT_TRUE(window.close());
+}
+
+TEST(Gui, UntouchedControlsPreserveOptionalValuesAndFormatting)
+{
+    Inputs input;
+    input.execute("UPDATE model_controls SET value='' WHERE criterion='universal_solve_for';"
+                  "UPDATE model_controls SET value=' uniform  ' WHERE criterion='experiment_name'");
+    const auto original = model_controls::load(input.database);
+    ControlsDialog editor(input.database);
+    ASSERT_TRUE(until([&] { return editor.ready(); }));
+    EXPECT_EQ(editor.draft(false).rows, original.rows);
+}
+
+TEST(Gui, RunPromptsOnlyForChangedControlsAndPreservesDefaults)
+{
+    Inputs input;
+    input.execute("INSERT INTO model_controls VALUES('run_solver','false')");
+    const auto defaults = model_controls::load(input.database);
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    auto* run = widget<QPushButton>(window, "runButton");
+    tabs->setCurrentIndex(1);
+    auto* editor = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
+    ASSERT_TRUE(until([&] { return editor->ready(); }));
+    // Merely visiting the tab must not require acceptance.
+    run->click();
+    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    auto* iterations = widget<QLineEdit>(*editor, "max_iterations");
+    iterations->setText("9");
+    auto answer = [](QMessageBox::StandardButton button) {
+        QTimer::singleShot(0, [button] {
+            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            ASSERT_NE(box, nullptr);
+            EXPECT_EQ(box->windowTitle(), "Accept model controls");
+            box->button(button)->click();
+        });
+    };
+    answer(QMessageBox::Cancel); run->click();
+    EXPECT_TRUE(run->isEnabled());
+    EXPECT_EQ(iterations->text(), "9");
+    iterations->setText("bad");
+    answer(QMessageBox::Yes); run->click();
+    EXPECT_TRUE(widget<QLabel>(window, "runStatus")->text().contains("max_iterations"));
+    iterations->setText("9");
+    answer(QMessageBox::Yes); run->click();
+    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
+    run->click(); // Accepted edits do not prompt again.
+    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_EQ(model_controls::load(input.database), defaults);
 }
 
 TEST(ModelControls, WorkerUsesSnapshotBeforeLoadingExperimentInputs)
@@ -1060,65 +1133,6 @@ TEST(ModelControls, WorkerUsesSnapshotBeforeLoadingExperimentInputs)
     EXPECT_TRUE(result.session->parameters().save_model_profiles);
     EXPECT_FALSE(result.result->optimizer_ran);
     EXPECT_EQ(model_controls::load(input.database), defaults);
-}
-
-TEST(Gui, MemoryControlsSurviveReopenAndRunWithoutChangingDefaults)
-{
-    Inputs input;
-    input.execute("INSERT INTO model_controls VALUES('run_solver','true')");
-    const auto defaults = model_controls::load(input.database);
-    MainWindow window; input.choose(window); window.show();
-    auto editControls = [&](bool cancel) {
-        QTimer::singleShot(0, &window, [&] {
-            auto* dialog = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
-            ASSERT_NE(dialog, nullptr);
-            EXPECT_FALSE(dialog->isWindow());
-            EXPECT_EQ(QApplication::activeModalWidget(), nullptr);
-            auto* use = widget<QPushButton>(*dialog, "useControlsButton");
-            ASSERT_TRUE(until([&] { return use->isEnabled(); }));
-
-            auto* solver = widget<QCheckBox>(*dialog, "run_solver");
-            if (cancel) {
-                EXPECT_FALSE(solver->isChecked());
-                solver->setChecked(true); dialog->reject();
-            } else {
-                auto* iterations = widget<QLineEdit>(*dialog, "max_iterations");
-                iterations->setText("bad"); use->click();
-                EXPECT_TRUE(dialog->isVisible());
-                iterations->setText("9"); solver->setChecked(false);
-                auto* tabs = widget<QTabWidget>(window, "mainTabs");
-                tabs->setCurrentIndex(0);
-                EXPECT_FALSE(widget<QPushButton>(window, "runButton")->isEnabled());
-                tabs->setCurrentIndex(1);
-                EXPECT_EQ(iterations->text(), "9");
-                if (const auto capture = qEnvironmentVariable("NAVIER_CONTROLS_TAB_CAPTURE"); !capture.isEmpty()) {
-                    QApplication::processEvents(); EXPECT_TRUE(window.grab().save(capture));
-                }
-                use->click();
-            }
-        });
-        widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
-        ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "runButton")->isEnabled(); }));
-    };
-    editControls(false);
-    editControls(true);
-    auto* run = widget<QPushButton>(window, "runButton");
-    for (int i = 0; i < 2; ++i) {
-        run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
-        EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Optimizer iterations: Not run"));
-        EXPECT_EQ(model_controls::load(input.database), defaults);
-    }
-    // Updating defaults after a memory-only edit must compare with database values.
-    QTimer::singleShot(0, &window, [&] {
-        auto* dialog = dynamic_cast<ControlsDialog*>(window.findChild<QDialog*>("modelControlsEditor"));
-        ASSERT_NE(dialog, nullptr);
-        auto* save = widget<QPushButton>(*dialog, "saveControlsButton");
-        ASSERT_TRUE(until([&] { return save->isEnabled(); }));
-        save->click();
-    });
-    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
-    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "runButton")->isEnabled(); }));
-    EXPECT_EQ(input.execute("SELECT value FROM model_controls WHERE criterion='max_iterations'"), 9);
 }
 
 TEST(Gui, RunExportAndExplicitSaves)
@@ -1259,6 +1273,7 @@ TEST(Gui, FailedExportAbortsCloseAndAllowsRetry)
 } // namespace
 
 int main(int argc, char** argv) {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication application(argc, argv);
     QApplication::setQuitOnLastWindowClosed(false);
     testing::InitGoogleTest(&argc, argv);

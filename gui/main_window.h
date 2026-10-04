@@ -4,6 +4,7 @@
 #include <future>
 #include "model_controls.h"
 
+class ControlsDialog;
 class ExperimentsTab;
 class DatabaseTableTab;
 class QAction;
@@ -36,7 +37,10 @@ private:
     Work work_ = Work::idle;
     bool closing_ = false;
     bool cancelling_ = false;
-    bool editingControls_ = false;
+    ControlsDialog* controlsEditor_ = nullptr;
+    QString presetFilename_;
+    void discardControlsEditor();
+    void savePreset(bool saveAs);
     QString activeDatabase_;
     std::optional<model_controls::Snapshot> modelControls_;
     void loadControls();

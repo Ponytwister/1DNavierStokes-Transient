@@ -125,6 +125,8 @@ MainWindow::MainWindow()
     });
     connect(database_, &QLineEdit::textChanged, this, [this] {
         if (work_ != Work::idle) return;
+        discardControlsEditor(); presetFilename_.clear();
+        if (tabs_->currentIndex() == 1) tabs_->setCurrentIndex(0);
         modelControls_.reset(); experimentsPage_->clear();
         reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); rawProfilesPage_->clear(); clearResult();
         const auto database = database_->text().trimmed();
@@ -145,33 +147,27 @@ MainWindow::MainWindow()
             if (index == 5) alglibPage_->load(database);
             if (index == 6) rawProfilesPage_->load(database);
         }
-        if (index != 1 || work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
+        if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
             tabs_->setCurrentIndex(0);
             setStatus("Choose an existing database file.");
             return;
         }
-        editingControls_ = true; updateControls();
+
         auto* editor = new ControlsDialog(input.absoluteFilePath(), controlsPage_, modelControls_);
+        controlsEditor_ = editor;
+        editor->configurePresetButton(presetFilename_.isEmpty() ? "Save preset..." : "Update preset", [this] { savePreset(false); });
         editor->setWindowFlags(Qt::Widget);
         editor->setObjectName("modelControlsEditor");
         controlsPage_->layout()->addWidget(editor);
         connect(editor, &QDialog::finished, this, [this, editor](int result) {
-            editingControls_ = false;
             if (result == QDialog::Accepted) {
                 modelControls_ = editor->values();
-                experimentsPage_->experimentFilter()->apply();
-                rawProfilesPage_->experimentFilter()->apply();
-                reactionsPage_->experimentFilter()->apply();
-                speciesPage_->experimentFilter()->apply();
                 clearResult();
-                setStatus(editor->updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
             }
+            discardControlsEditor();
             tabs_->setCurrentIndex(0);
-            controlsPage_->layout()->removeWidget(editor);
-            editor->setParent(nullptr);
-            editor->deleteLater();
             updateControls();
         });
         editor->show();
@@ -203,20 +199,35 @@ void MainWindow::setStatus(const QString& value) {
     log_->appendPlainText(value);
 }
 
-void MainWindow::saveSetup() {
-    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
-    const auto filename = QFileDialog::getSaveFileName(this, "Save setup", {}, "Navier setup (*.navier.json)");
-    if (filename.isEmpty()) return;
+void MainWindow::discardControlsEditor() {
+    if (!controlsEditor_) return;
+    controlsPage_->layout()->removeWidget(controlsEditor_);
+    controlsEditor_->hide();
+    controlsEditor_->deleteLater();
+    controlsEditor_ = nullptr;
+}
+
+void MainWindow::saveSetup() { savePreset(true); }
+
+void MainWindow::savePreset(bool saveAs) {
+    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
     try {
-        const auto database = database_->text().trimmed();
         loadControls();
-        setup_file::save(filename, {database, output_->text().trimmed(), modelControls_->rows});
-        setStatus("Setup saved: " + filename);
+        const auto snapshot = controlsEditor_ ? controlsEditor_->draft() : *modelControls_;
+        const auto filename = saveAs || presetFilename_.isEmpty()
+            ? QFileDialog::getSaveFileName(this, "Save preset", presetFilename_, "Navier setup (*.navier.json)")
+            : presetFilename_;
+        if (filename.isEmpty()) return;
+        setup_file::save(filename, {database_->text().trimmed(), output_->text().trimmed(), snapshot.rows});
+        presetFilename_ = filename;
+        if (controlsEditor_) controlsEditor_->configurePresetButton("Update preset", [this] { savePreset(false); });
+        setStatus("Preset saved: " + filename);
+        if (controlsEditor_) controlsEditor_->showStatus("Preset saved: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }
 
 void MainWindow::openSetup() {
-    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
+    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
     const auto filename = QFileDialog::getOpenFileName(this, "Open setup", {}, "Navier setup (*.navier.json);;JSON files (*.json)");
     if (filename.isEmpty()) return;
     try {
@@ -228,9 +239,12 @@ void MainWindow::openSetup() {
                 (model_controls::kind(original.rows[i].name) == model_controls::Kind::unknown && original.rows[i] != setup.controls[i]))
                 throw std::runtime_error("Setup controls do not match this database.");
         }
+        discardControlsEditor();
         clearResult();
         database_->setText(setup.database); output_->setText(setup.outputDirectory);
         modelControls_ = original; modelControls_->rows = setup.controls;
+        presetFilename_ = filename;
+        tabs_->setCurrentIndex(0);
         experimentsPage_->experimentFilter()->apply();
         rawProfilesPage_->experimentFilter()->apply();
         reactionsPage_->experimentFilter()->apply();
@@ -248,15 +262,16 @@ void MainWindow::clearResult()
 
 void MainWindow::updateControls()
 {
-    const bool idle = work_ == Work::idle && !closing_ && !editingControls_ && !experimentsPage_->dirty();
+    const bool idle = work_ == Work::idle && !closing_ && !experimentsPage_->dirty();
     openSetup_->setEnabled(idle);
     saveSetup_->setEnabled(idle && !database_->text().trimmed().isEmpty() && !output_->text().trimmed().isEmpty());
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
-    tabs_->setTabEnabled(1, (idle || editingControls_) && !database_->text().trimmed().isEmpty());
-    tabs_->setTabEnabled(2, work_ == Work::idle && !closing_ && !editingControls_);
-    experimentsPage_->setEnabled(work_ == Work::idle && !closing_ && !editingControls_);
+    tabs_->setTabEnabled(1, idle && !database_->text().trimmed().isEmpty());
+    controlsPage_->setEnabled(work_ == Work::idle && !closing_);
+    tabs_->setTabEnabled(2, work_ == Work::idle && !closing_);
+    experimentsPage_->setEnabled(work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(3, work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(4, work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(5, work_ == Work::idle && !closing_);
@@ -284,9 +299,25 @@ void MainWindow::loadControls() {
 
 void MainWindow::startRun()
 {
-    if (work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
+    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
     const QFileInfo input(database_->text().trimmed());
     if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
+    try {
+        loadControls();
+        if (controlsEditor_) {
+            const auto draft = controlsEditor_->draft(false);
+            if (draft.rows != modelControls_->rows) {
+                if (QMessageBox::question(this, "Accept model controls",
+                    "Accept the model control changes and run?", QMessageBox::Yes | QMessageBox::Cancel,
+                    QMessageBox::Cancel) != QMessageBox::Yes) return;
+                modelControls_ = controlsEditor_->draft();
+                experimentsPage_->experimentFilter()->apply();
+                rawProfilesPage_->experimentFilter()->apply();
+                reactionsPage_->experimentFilter()->apply();
+                speciesPage_->experimentFilter()->apply();
+            }
+        }
+    } catch (...) { reportFailure(std::current_exception()); return; }
     clearResult(); log_->clear(); activeDatabase_ = input.absoluteFilePath();
     try {
         loadControls();
@@ -306,6 +337,7 @@ void MainWindow::reportFailure(std::exception_ptr failure)
     catch (const workflow_error& error) { setStatus(text(operation_name(error.action)) + ": " + text(error.what())); }
     catch (const std::exception& error) { setStatus("Operation failed: " + text(error.what())); }
     catch (...) { setStatus("Operation failed with an unknown error."); }
+    if (controlsEditor_) controlsEditor_->showStatus(status_->text());
 }
 
 void MainWindow::save(operation requested)
@@ -380,7 +412,7 @@ void MainWindow::poll()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (editingControls_ || experimentsPage_->dirty()) {
+    if (experimentsPage_->dirty()) {
         setStatus("Finish editing or discard edits before closing."); event->ignore(); return;
     }
     if (work_ == Work::idle) { timer_->stop(); event->accept(); return; }

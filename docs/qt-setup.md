@@ -126,7 +126,7 @@ Starting a new run also replaces the previous result session.
 
 Use **File > Open setup...** and **File > Save setup...** for setup files.
 **File > Database** and **File > Output directory** provide editable paths and
-Browse buttons. These actions are locked while work or control editing is active.
+Browse buttons. These actions are locked while a calculation or result save is active.
 
 Before running, open the **Model controls** tab to edit the selected database's
 `model_controls` rows. Boolean controls use true/false choices; resolution,
@@ -142,34 +142,35 @@ has more than one space-separated reaction in `REACTIONS`, it also offers `p2`,
 all parameter selections stores NULL. Parameter-link semantics are unchanged. Each control has a dedicated form row, with checkboxes for
 true/false values. Hover over a control for a description. Only
 `universal_solve_for` may be blank (stored as SQL NULL); all other values are
-required. Both apply actions validate every displayed field, including unchanged
+required. Saving a preset or accepting changed controls validates every displayed field, including unchanged
 values. `debug_level` accepts integers 0 through 6, and `convergence_epsx` must be
 finite and strictly between 0 and 1e-3. These are editor constraints; model equations
 and CLI loading behavior are unchanged. Validation does not establish whether a
 combination is physically appropriate or will converge.
 
-Use **Use values**, **Update default**, or **Cancel** to finish editing and return
-to **Run and results**. Run and file actions remain disabled until editing finishes.
+Model-control edits leave navigation, closing, and Run available. Run asks you
+to accept changed controls, then uses them in memory; unchanged controls run
+without a prompt. Cancelling the prompt keeps the edits and does not start a run.
+**Update preset** saves the current controls to the loaded setup file, or
+**Save preset...** prompts for a new file. **File > Save setup...** saves a separate
+file. These actions do not change database defaults. **Cancel** discards edits
+not yet accepted for a run and returns to **Run and results**.
 
 Controls start from database defaults and remain in memory for subsequent runs.
-**Use values** applies edits in memory; **Update default** also writes them to the
-database; **Cancel** discards tab edits. Applying controls clears previous results to prevent
-mixing results with newly edited inputs. The editor is unavailable while running
-or saving results. Reads and writes run in a worker while the tab stays
-responsive. Close/Cancel waits until a pending database operation finishes.
+Starting a run clears previous results. The editor is unavailable while running
+or saving results. Initial loading runs in a worker while the tab stays responsive.
 
 Both the original `Parameter`/`Setting` layout and the test `criterion`/`value`
 layout are supported, following the loader's first-two-column convention.
-No schema migration is needed. The editor updates existing recognized rows only;
-unknown rows, unchanged values, extra columns, and experiment/result tables are preserved.
+No schema migration is needed. Presets preserve unknown controls and unchanged
+values; saving them does not modify database tables.
 Unknown rows are not displayed as controls. The legacy `save_normalized_profiles`
 and `save_model_profiles` rows are preserved in existing databases but are not
 editable controls or applied by desktop runs. **Save profiles** remains available
 after a successful run and saves only when explicitly clicked, regardless of the
 legacy flag. CLI behavior is unchanged.
-Updates use one transaction and roll back on failure. If another application
-changes the controls after loading, saving refuses to overwrite them; close and
-reopen the editor to reload. No writes occur when merely opening or cancelling.
+Preset files are saved atomically. No writes occur when merely opening or cancelling
+the controls tab.
 
 The loader now honors `run_solver=false`: it evaluates the model without fitting,
 using the existing non-optimizer workflow. Previously false left the default true
@@ -306,8 +307,8 @@ Writes use bound parameters and a transaction. Modify compares the complete
 original row, including unknown columns, to detect concurrent changes; on conflict,
 cancel and Refresh before retrying. Extra columns are retained on Modify and use
 database defaults on Add. A successful save clears previous run results. Add and
-Modify are unavailable while model controls or channel dimensions have pending
-edits, or while a calculation/result save is active. No schema migration is needed.
+Modify are unavailable while channel dimensions have pending edits, or while a
+calculation/result save is active. No schema migration is needed.
 
 ### ALGLIB tab
 
