@@ -69,8 +69,8 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     form->addRow("NAME", name);
     std::map<QString, QLineEdit*> edits;
     std::map<QString, QCheckBox*> nulls;
-    for (const auto& field : QStringList{"WT_PERCENT", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INLET_COND_ID", "ENTRANCE_CONC", "LEFT_EDGE", "WIDTH"}) {
-        if (!columns.contains(field)) continue;
+    auto addField = [&](const QString& field) {
+        if (!columns.contains(field)) return;
         auto* line = new QLineEdit(old(field).toString()); line->setObjectName(field);
         if (adding && field == "CHANNEL_LEFT_EDGE") line->setText("0");
         edits[field] = line;
@@ -81,10 +81,14 @@ bool editRawProfile(const QString& database, const QStringList& columns,
             nulls[field] = null;
             auto* row = new QHBoxLayout; row->addWidget(line); row->addWidget(null); form->addRow(field, row);
         } else form->addRow(field, line);
+    };
+    addField("WT_PERCENT");
+    ChecklistPicker* picker = nullptr;
+    const QString solveField = "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR";
+    if (columns.contains(solveField)) {
+        picker = new ChecklistPicker(parameters, old(solveField).toString(), solveField, "rawProfileParameterChoices", "None (optional)");
+        picker->setObjectName(solveField); form->addRow(solveField, picker);
     }
-    const auto initialIntensity = old("INTENSITY_ARRAY").toString().replace('\t', ' ');
-    auto* intensity = new QPlainTextEdit(initialIntensity); intensity->setObjectName("INTENSITY_ARRAY");
-    intensity->setMinimumHeight(130); form->addRow("INTENSITY_ARRAY", intensity);
     auto* omit = new QComboBox; omit->setObjectName("OMIT");
     omit->addItem("NULL", QVariant{}); omit->addItem("false", "false"); omit->addItem("true", "true");
     if (old("OMIT").isValid()) {
@@ -93,12 +97,11 @@ bool editRawProfile(const QString& database, const QStringList& columns,
         omit->setCurrentIndex(index);
     }
     const int initialOmit = omit->currentIndex(); form->addRow("OMIT", omit);
-    ChecklistPicker* picker = nullptr;
-    const QString solveField = "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR";
-    if (columns.contains(solveField)) {
-        picker = new ChecklistPicker(parameters, old(solveField).toString(), solveField, "rawProfileParameterChoices", "None (optional)");
-        picker->setObjectName(solveField); form->addRow(solveField, picker);
-    }
+    for (const auto& field : QStringList{"LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "INLET_COND_ID", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE"})
+        addField(field);
+    const auto initialIntensity = old("INTENSITY_ARRAY").toString().replace('\t', ' ');
+    auto* intensity = new QPlainTextEdit(initialIntensity); intensity->setObjectName("INTENSITY_ARRAY");
+    intensity->setMinimumHeight(130); form->addRow("INTENSITY_ARRAY", intensity);
     auto* error = new QLabel; error->setObjectName("rawProfileEditorStatus");
     error->setTextFormat(Qt::PlainText); error->setWordWrap(true); layout->addWidget(error);
     if (!adding && name->currentIndex() < 0) error->setText("The saved experiment no longer exists. Choose a valid NAME before saving.");
