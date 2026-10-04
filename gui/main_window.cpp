@@ -191,6 +191,7 @@ MainWindow::MainWindow()
     reactionsPage_->saved = referenceSaved;
     speciesPage_->saved = referenceSaved;
     alglibPage_->saved = referenceSaved;
+    rawProfilesPage_->saved = [this] { clearResult(); setStatus("Raw profile saved. Run again to calculate results."); };
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
@@ -267,6 +268,7 @@ void MainWindow::updateControls()
     reactionsPage_->setEditingEnabled(idle);
     speciesPage_->setEditingEnabled(idle);
     alglibPage_->setEditingEnabled(idle);
+    rawProfilesPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);

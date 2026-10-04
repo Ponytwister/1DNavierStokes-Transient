@@ -18,6 +18,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -125,7 +126,7 @@ TEST(Gui, RawProfilesBrowseRefreshAndClearWithoutWrites)
     EXPECT_EQ(table->horizontalHeaderItem(0)->text(), "NAME");
     EXPECT_EQ(table->item(0, 0)->text(), "uniform");
     EXPECT_EQ(table->editTriggers(), QAbstractItemView::NoEditTriggers);
-    EXPECT_TRUE(widget<QPushButton>(window, "raw_profileAddButton")->isHidden());
+    EXPECT_TRUE(widget<QPushButton>(window, "raw_profileAddButton")->isEnabled());
     input.execute("INSERT INTO raw_profile(NAME) VALUES('second')");
     widget<QPushButton>(window, "raw_profileRefreshButton")->click();
     ASSERT_EQ(table->rowCount(), 5);
@@ -137,6 +138,136 @@ TEST(Gui, RawProfilesBrowseRefreshAndClearWithoutWrites)
     EXPECT_TRUE(widget<QLabel>(window, "raw_profileStatus")->text().contains("Cannot load"));
     input.choose(window);
     EXPECT_EQ(table->rowCount(), 5);
+}
+
+TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
+{
+    Inputs input;
+    input.execute("CREATE TABLE edited_profiles(NAME TEXT NOT NULL, WT_PERCENT DOUBLE NOT NULL, "
+                  "CHANNEL_LEFT_EDGE INT, CHANNEL_RIGHT_EDGE INT, INTENSITY_ARRAY TEXT, ENTRANCE_CONC ANY, "
+                  "INLET_COND_ID INTEGER, OMIT ANY, INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT, "
+                  "LEFT_EDGE NUMERIC, WIDTH NUMERIC, EXTRA_DATA BLOB, PRIMARY KEY(NAME,WT_PERCENT)); "
+                  "INSERT INTO edited_profiles(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT) "
+                  "SELECT NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT FROM raw_profile; "
+                  "DROP TABLE raw_profile; ALTER TABLE edited_profiles RENAME TO raw_profile; "
+                  "INSERT INTO experiments(NAME) VALUES('second')");
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(6);
+    auto* table = widget<QTableWidget>(window, "raw_profileTable");
+    auto* add = widget<QPushButton>(window, "raw_profileAddButton");
+    auto* modify = widget<QPushButton>(window, "raw_profileModifyButton");
+    auto fill = [](QWidget& editor) {
+        auto* name = widget<QComboBox>(editor, "NAME");
+        EXPECT_FALSE(name->isEditable()); EXPECT_EQ(name->count(), 2);
+        name->setCurrentText("uniform");
+        widget<QLineEdit>(editor, "WT_PERCENT")->setText("5");
+        widget<QLineEdit>(editor, "CHANNEL_LEFT_EDGE")->setText("0");
+        widget<QLineEdit>(editor, "CHANNEL_RIGHT_EDGE")->setText("3");
+        widget<QPlainTextEdit>(editor, "INTENSITY_ARRAY")->setPlainText("1  2 3");
+        widget<QLineEdit>(editor, "INLET_COND_ID")->setText("1");
+    };
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        fill(*editor);
+        EXPECT_EQ(widget<QComboBox>(*editor, "OMIT")->currentText(), "NULL");
+        auto* save = widget<QPushButton>(*editor, "saveRawProfileButton");
+        auto* error = widget<QLabel>(*editor, "rawProfileEditorStatus");
+        auto* left = widget<QLineEdit>(*editor, "CHANNEL_LEFT_EDGE");
+        left->setText("-1"); save->click(); EXPECT_TRUE(error->text().contains("non-negative"));
+        left->setText("0.5"); save->click(); EXPECT_TRUE(error->text().contains("integer"));
+        left->setText("0");
+        auto* right = widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE");
+        right->setText("4"); save->click(); EXPECT_TRUE(error->text().contains("no greater"));
+        right->setText("3");
+        auto* intensity = widget<QPlainTextEdit>(*editor, "INTENSITY_ARRAY");
+        intensity->setPlainText("1 nan 3"); save->click(); EXPECT_TRUE(error->text().contains("finite"));
+        intensity->setPlainText("1  2 3");
+        auto* name = widget<QComboBox>(*editor, "NAME");
+        name->setCurrentIndex(-1); save->click(); EXPECT_TRUE(error->text().contains("NAME"));
+        name->setCurrentText("uniform");
+        auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
+        EXPECT_EQ(choices->count(), model_controls::solvableParameters(input.database).size());
+        choices->findItems("left_edge", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
+        choices->findItems("width", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
+        save->click();
+        EXPECT_FALSE(editor->isVisible()) << error->text().toStdString();
+        if (editor->isVisible()) widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    add->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile"), 5);
+    EXPECT_EQ(input.execute("SELECT OMIT IS NULL FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr); fill(*editor);
+        widget<QPushButton>(*editor, "saveRawProfileButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "rawProfileEditorStatus")->text().contains("already exists"));
+        widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    add->click(); EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile"), 5);
+    input.execute("UPDATE raw_profile SET EXTRA_DATA=x'0011' WHERE WT_PERCENT='5.0'");
+    widget<QPushButton>(window, "raw_profileRefreshButton")->click();
+    for (int row = 0; row < table->rowCount(); ++row)
+        if (table->item(row, 1)->text().toDouble() == 5) { table->setCurrentCell(row, 0); table->selectRow(row); }
+    ASSERT_TRUE(modify->isEnabled());
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QComboBox>(*editor, "NAME")->setCurrentText("second");
+        widget<QLineEdit>(*editor, "WT_PERCENT")->setText("6");
+        widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("2"); // Below sample count is allowed.
+        widget<QComboBox>(*editor, "OMIT")->setCurrentText("true");
+        auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
+        for (int i = 0; i < choices->count(); ++i) choices->item(i)->setCheckState(Qt::Unchecked);
+        widget<QPushButton>(*editor, "saveRawProfileButton")->click();
+        EXPECT_FALSE(editor->isVisible()) << widget<QLabel>(*editor, "rawProfileEditorStatus")->text().toStdString();
+        if (editor->isVisible()) widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    modify->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE NAME='uniform'"), 4);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE NAME='second' AND WT_PERCENT='6.0' AND CHANNEL_RIGHT_EDGE=2 AND OMIT='true' AND INDEPENDENT_PARAMETERS_TO_SOLVE_FOR IS NULL AND EXTRA_DATA=x'0011'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+}
+
+TEST(Gui, RawProfilesCancelConflictsAndMissingExperimentDoNotOverwrite)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(6);
+    auto* table = widget<QTableWidget>(window, "raw_profileTable");
+    table->setCurrentCell(0, 0); table->selectRow(0);
+    const auto weight = table->item(0, 1)->text();
+    auto* modify = widget<QPushButton>(window, "raw_profileModifyButton");
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("8");
+        widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    modify->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE CHANNEL_RIGHT_EDGE=9"), 4);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        input.execute(("UPDATE raw_profile SET OMIT='true' WHERE WT_PERCENT='" + weight + "'").toUtf8());
+        widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("8");
+        widget<QPushButton>(*editor, "saveRawProfileButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "rawProfileEditorStatus")->text().contains("changed in the database"));
+        widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    modify->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE CHANNEL_RIGHT_EDGE=9"), 4);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE OMIT='true'"), 1);
+    widget<QPushButton>(window, "raw_profileRefreshButton")->click();
+    table->setCurrentCell(0, 0); table->selectRow(0);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        input.execute("DELETE FROM experiments");
+        widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("8");
+        widget<QPushButton>(*editor, "saveRawProfileButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "rawProfileEditorStatus")->text().contains("experiment is missing"));
+        widget<QPushButton>(*editor, "cancelRawProfileButton")->click();
+    });
+    modify->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE CHANNEL_RIGHT_EDGE=9"), 4);
 }
 
 TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)

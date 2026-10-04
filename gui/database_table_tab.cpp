@@ -1,4 +1,5 @@
 #include "database_table_tab.h"
+#include "raw_profile_editor.h"
 #include <QHeaderView>
 #include <QCheckBox>
 #include <QDialog>
@@ -51,7 +52,6 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     connect(add_, &QPushButton::clicked, this, [this] { editRow(true); });
     connect(modify_, &QPushButton::clicked, this, [this] { editRow(false); });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { updateButtons(); });
-    if (tableKind_ == Table::raw_profile) { add_->hide(); modify_->hide(); }
     clear();
 }
 
@@ -98,17 +98,21 @@ void DatabaseTableTab::load(QString database) {
         while ((rc = sqlite3_step(query)) == SQLITE_ROW) {
             const int row = table_->rowCount(); table_->insertRow(row);
             for (int col = 0; col < table_->columnCount(); ++col) {
-                const bool null = sqlite3_column_type(query, col) == SQLITE_NULL;
+                const int storageType = sqlite3_column_type(query, col);
+                const bool null = storageType == SQLITE_NULL;
+                // sqlite3_column_text can convert a blob's reported storage type.
+                const auto blob = storageType == SQLITE_BLOB
+                    ? QByteArray(static_cast<const char*>(sqlite3_column_blob(query, col)), sqlite3_column_bytes(query, col)) : QByteArray{};
                 const auto value = null ? QString("NULL") : QString::fromUtf8(
                     reinterpret_cast<const char*>(sqlite3_column_text(query, col)), sqlite3_column_bytes(query, col));
                 auto* item = new QTableWidgetItem(value);
                 // Retain SQLite storage types for exact optimistic concurrency checks.
                 QVariant original;
-                switch (sqlite3_column_type(query, col)) {
+                switch (storageType) {
                 case SQLITE_INTEGER: original = QVariant::fromValue<qlonglong>(sqlite3_column_int64(query, col)); break;
                 case SQLITE_FLOAT: original = sqlite3_column_double(query, col); break;
                 case SQLITE_TEXT: original = value; break;
-                case SQLITE_BLOB: original = QByteArray(static_cast<const char*>(sqlite3_column_blob(query, col)), sqlite3_column_bytes(query, col)); break;
+                case SQLITE_BLOB: original = blob; break;
                 }
                 item->setData(Qt::UserRole, original);
                 item->setData(Qt::UserRole + 1, null);
@@ -122,8 +126,6 @@ void DatabaseTableTab::load(QString database) {
         if (filter_) filter_->apply();
         status_->setText(QString("%1 %2 rows in %3. Use Add or select a row and choose Modify.")
             .arg(table_->rowCount()).arg(tableName_).arg(database));
-        if (tableKind_ == Table::raw_profile)
-            status_->setText(QString("%1 raw profile rows in %2. Read-only.").arg(table_->rowCount()).arg(database));
     } catch (const std::exception& error) {
         loaded_ = false; columns_.clear(); updateButtons();
         table_->clear(); table_->setRowCount(0); table_->setColumnCount(0);
@@ -134,6 +136,8 @@ void DatabaseTableTab::load(QString database) {
 namespace {
 QString quoteIdentifier(QString name) { return '"' + name.replace('"', "\"\"") + '"'; }
 QStringList editableColumns(DatabaseTableTab::Table table) {
+    if (table == DatabaseTableTab::Table::raw_profile)
+        return {"NAME", "WT_PERCENT", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY", "INLET_COND_ID", "OMIT"};
     if (table == DatabaseTableTab::Table::alglib)
         return {"VARIABLE", "INITIAL VALUE", "LOWER BOUND", "UPPER BOUND", "SCALE"};
     return table == DatabaseTableTab::Table::reactions ? QStringList{"REACTION_NAME", "SPECIES", "COEFFICIENTS", "Ks", "EXPONENTS"}
@@ -161,14 +165,14 @@ void DatabaseTableTab::setEditingEnabled(bool enabled) {
 
 void DatabaseTableTab::updateButtons() {
     const auto expected = editableColumns(tableKind_);
-    bool supported = loaded_ && editingEnabled_ && tableKind_ != Table::raw_profile;
+    bool supported = loaded_ && editingEnabled_;
     for (const auto& column : expected) supported = supported && columns_.contains(column);
     add_->setEnabled(supported);
     modify_->setEnabled(supported && !table_->selectedItems().isEmpty());
 }
 
 void DatabaseTableTab::editRow(bool adding) {
-    if (tableKind_ == Table::raw_profile || !loaded_ || !editingEnabled_ || (!adding && table_->selectedItems().isEmpty())) return;
+    if (!loaded_ || !editingEnabled_ || (!adding && table_->selectedItems().isEmpty())) return;
     const bool reactions = tableKind_ == Table::reactions;
     const bool alglib = tableKind_ == Table::alglib;
     const auto fields = editableColumns(tableKind_);
@@ -179,6 +183,18 @@ void DatabaseTableTab::editRow(bool adding) {
     std::vector<QVariant> original;
     if (!adding) for (int col = 0; col < table_->columnCount(); ++col)
         original.push_back(table_->item(row, col)->data(Qt::UserRole));
+
+    if (tableKind_ == Table::raw_profile) {
+        try {
+            if (editRawProfile(database, columns, original, this)) {
+                load(database);
+                if (saved) saved();
+            }
+        } catch (const std::exception& error) {
+            status_->setText("Cannot edit raw profile: " + QString::fromUtf8(error.what()));
+        }
+        return;
+    }
 
     QDialog dialog(this); dialog.setObjectName(tableName_ + "Editor");
     dialog.setWindowTitle((adding ? "Add " : "Modify ") + QString(reactions ? "reaction" : alglib ? "ALGLIB input" : "species"));

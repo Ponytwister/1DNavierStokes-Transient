@@ -327,7 +327,7 @@ application work, and editing is disabled while other input edits are pending.
 ### Raw profiles tab
 
 The **Raw profiles** tab displays all columns from `raw_profile`, ordered by
-`NAME`. It is read-only and has a Refresh button. Opening or refreshing it uses
+`NAME`. Add and Modify open a profile editor; Refresh reloads the table. Opening or refreshing it uses
 a short-lived read-only connection without initializing a model or writing data.
 Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
@@ -348,3 +348,18 @@ Model controls and opened setups update the filters; opening a tab or refreshing
 reads the current experiment lists. Uncheck the filter to browse or edit unused
 rows, including newly added reactions or species. Filtering is read-only and
 does not alter experiment associations.
+
+Raw profile editing uses existing experiment names in a non-editable NAME dropdown.
+`NAME` and `WT_PERCENT` identify a row; duplicate pairs are rejected. The editor
+requires finite intensity samples, non-negative integer channel edges, a right
+edge no greater than the sample count and greater than the left edge, and an
+integer inlet condition ID. Space-separated intensity input is saved with tab
+separators for the existing solver; unchanged arrays retain their original bytes.
+`OMIT` defaults to SQL NULL, with false and true choices. When present in the
+schema, `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` uses the same checklist and available
+choices as `universal_solve_for`; clearing it saves NULL. This does not change
+which independent parameters the numerical loader implements. Optional input
+columns are shown when present, with NULL controls. No schema migration is made.
+Save uses a transaction, rechecks the experiment, and rejects concurrent changes
+to the original row. Cancel does not write; a successful save clears prior results.
+As with other input editors, writes are disabled during runs and pending input edits.
