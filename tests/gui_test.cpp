@@ -113,6 +113,192 @@ TEST(Gui, ExperimentsTabReadsAllRowsWithoutModelWritesAndClearsStaleData)
     EXPECT_EQ(table->rowCount(), 2);
 }
 
+TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
+{
+    Inputs input;
+    input.execute("INSERT INTO reactions(REACTION_NAME) VALUES('!Unassigned')");
+    input.execute("INSERT INTO species(SPECIES_NAME) VALUES('!Unassigned')");
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    struct Spec { int index; const char* title; const char* table; const char* refresh; const char* firstColumn; int rows; };
+    for (const auto& spec : {
+        Spec{3, "Reactions", "reactionsTable", "reactionsRefreshButton", "REACTION_NAME", 2},
+        Spec{4, "Species", "speciesTable", "speciesRefreshButton", "SPECIES_NAME", 4}}) {
+        EXPECT_EQ(tabs->tabText(spec.index), spec.title);
+        tabs->setCurrentIndex(spec.index);
+        auto* table = widget<QTableWidget>(window, spec.table);
+        ASSERT_EQ(table->rowCount(), spec.rows);
+        EXPECT_EQ(table->horizontalHeaderItem(0)->text(), spec.firstColumn);
+        EXPECT_EQ(table->item(0, 0)->text(), "!Unassigned");
+        EXPECT_EQ(table->item(0, 1)->text(), "NULL");
+        EXPECT_EQ(table->item(0, 1)->toolTip(), "SQL NULL (no value)");
+        EXPECT_EQ(table->editTriggers(), QAbstractItemView::NoEditTriggers);
+        for (int row = 0; row < table->rowCount(); ++row)
+            for (int col = 0; col < table->columnCount(); ++col)
+                EXPECT_FALSE(table->item(row, col)->flags() & Qt::ItemIsEditable);
+        // Refresh preserves model controls and causes no model initialization.
+        widget<QPushButton>(window, spec.refresh)->click();
+        EXPECT_EQ(table->rowCount(), spec.rows);
+    }
+    input.execute("UPDATE reactions SET Ks='2 3' WHERE REACTION_NAME='!Unassigned'");
+    tabs->setCurrentIndex(3);
+    auto* reactions = widget<QTableWidget>(window, "reactionsTable");
+    EXPECT_EQ(reactions->item(0, 3)->text(), "2 3");
+    input.execute("UPDATE reactions SET Ks='4 5' WHERE REACTION_NAME='!Unassigned'");
+    widget<QPushButton>(window, "reactionsRefreshButton")->click();
+    EXPECT_EQ(reactions->item(0, 3)->text(), "4 5");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+    EXPECT_DOUBLE_EQ(input.execute("SELECT DIFFUSION_RATE FROM species WHERE SPECIES_NAME='FITC'"), 4.9e-10);
+    Inputs other;
+    other.choose(window);
+    ASSERT_EQ(reactions->rowCount(), 1);
+    EXPECT_EQ(reactions->item(0, 0)->text(), "FITC_40nm_1");
+    auto* species = widget<QTableWidget>(window, "speciesTable");
+    EXPECT_EQ(species->rowCount(), 0); // Hidden tab cleared on a database switch.
+    tabs->setCurrentIndex(4);
+    EXPECT_EQ(species->rowCount(), 3);
+}
+
+TEST(Gui, ReferenceTabsClearMissingInputsAndHandleEmptyTables)
+{
+    Inputs input;
+    MainWindow window;
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    tabs->setCurrentIndex(3);
+    EXPECT_FALSE(widget<QPushButton>(window, "reactionsRefreshButton")->isEnabled());
+    input.choose(window);
+    auto* reactions = widget<QTableWidget>(window, "reactionsTable");
+    ASSERT_EQ(reactions->rowCount(), 1);
+    input.execute("DROP TABLE reactions");
+    widget<QPushButton>(window, "reactionsRefreshButton")->click();
+    EXPECT_EQ(reactions->rowCount(), 0);
+    EXPECT_EQ(reactions->columnCount(), 0);
+    EXPECT_TRUE(widget<QLabel>(window, "reactionsStatus")->text().contains("Cannot load reactions"));
+    tabs->setCurrentIndex(4);
+    auto* species = widget<QTableWidget>(window, "speciesTable");
+    ASSERT_EQ(species->rowCount(), 3);
+    input.execute("DELETE FROM species");
+    widget<QPushButton>(window, "speciesRefreshButton")->click();
+    EXPECT_EQ(species->rowCount(), 0);
+    EXPECT_EQ(species->columnCount(), 7);
+    const auto missing = input.directory.filePath("missing-reference.db");
+    widget<QLineEdit>(window, "databasePath")->setText(missing);
+    EXPECT_EQ(species->rowCount(), 0);
+    EXPECT_EQ(species->columnCount(), 0);
+    EXPECT_FALSE(QFile::exists(missing));
+    EXPECT_TRUE(widget<QLabel>(window, "speciesStatus")->text().contains("Cannot load species"));
+}
+
+TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(4);
+    auto* add = widget<QPushButton>(window, "speciesAddButton");
+    auto* modify = widget<QPushButton>(window, "speciesModifyButton");
+    auto* table = widget<QTableWidget>(window, "speciesTable");
+    EXPECT_TRUE(add->isEnabled()); EXPECT_FALSE(modify->isEnabled());
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "SPECIES_NAME")->setText("NewSpecies");
+        widget<QLineEdit>(*editor, "SPECIES_TYPE")->setText("molecule");
+        widget<QCheckBox>(*editor, "QENull")->setChecked(false);
+        widget<QLineEdit>(*editor, "QE")->setText("nan");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(editor->isVisible());
+        widget<QLineEdit>(*editor, "QE")->setText("2.5");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+    });
+    add->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
+    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 2.5);
+    EXPECT_EQ(input.execute("SELECT DIFFUSION_RATE IS NULL FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
+    auto selectNew = [&] {
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (table->item(row, 0)->text() == "NewSpecies") { table->setCurrentCell(row, 0); table->selectRow(row); return; }
+        ADD_FAILURE() << "New species missing";
+    };
+    selectNew(); EXPECT_TRUE(modify->isEnabled());
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(widget<QLineEdit>(*editor, "SPECIES_NAME")->isReadOnly());
+        widget<QLineEdit>(*editor, "QE")->setText("4");
+        widget<QPushButton>(*editor, "cancelReferenceButton")->click();
+    });
+    modify->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 2.5);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "QE")->setText("4");
+        input.execute("UPDATE species SET QE=3 WHERE SPECIES_NAME='NewSpecies'");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("changed in the database"));
+        widget<QPushButton>(*editor, "cancelReferenceButton")->click();
+    });
+    modify->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 3);
+    widget<QPushButton>(window, "speciesRefreshButton")->click(); selectNew();
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "QE")->setText("4");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+    });
+    modify->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 4);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+}
+
+TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(3);
+    auto* add = widget<QPushButton>(window, "reactionsAddButton");
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "REACTION_NAME")->setText("NewReaction");
+        widget<QLineEdit>(*editor, "SPECIES")->setText("FITC Missing");
+        widget<QLineEdit>(*editor, "COEFFICIENTS")->setText("-1 1");
+        widget<QLineEdit>(*editor, "Ks")->setText("0 1 2");
+        widget<QLineEdit>(*editor, "EXPONENTS")->setText("1 1");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("incorrect number"));
+        widget<QLineEdit>(*editor, "Ks")->setText("0 1");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("Unknown or ambiguous species"));
+        widget<QLineEdit>(*editor, "SPECIES")->setText("FITC PS_40nm");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+    });
+    add->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
+    auto* table = widget<QTableWidget>(window, "reactionsTable");
+    for (int row = 0; row < table->rowCount(); ++row)
+        if (table->item(row, 0)->text() == "NewReaction") { table->setCurrentCell(row, 0); table->selectRow(row); }
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(widget<QLineEdit>(*editor, "REACTION_NAME")->isReadOnly());
+        widget<QLineEdit>(*editor, "Ks")->setText("2 3");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+    });
+    widget<QPushButton>(window, "reactionsModifyButton")->click();
+    EXPECT_EQ(input.execute("SELECT Ks='2 3' FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "REACTION_NAME")->setText("NewReaction");
+        widget<QLineEdit>(*editor, "SPECIES")->setText("FITC");
+        widget<QLineEdit>(*editor, "COEFFICIENTS")->setText("-1");
+        widget<QLineEdit>(*editor, "Ks")->setText("0 1");
+        widget<QLineEdit>(*editor, "EXPONENTS")->setText("1");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("already exists"));
+        widget<QPushButton>(*editor, "cancelReferenceButton")->click();
+    });
+    add->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+}
+
 TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
 {
     Inputs input;
@@ -594,7 +780,11 @@ TEST(Gui, RunExportAndExplicitSaves)
     run->click();
     EXPECT_FALSE(widget<QLineEdit>(window, "databasePath")->isEnabled());
     EXPECT_FALSE(run->isEnabled());
+    EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(3));
+    EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(4));
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(3));
+    EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(4));
     ASSERT_TRUE(exportButton->isEnabled());
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 1);
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Termination code:"));

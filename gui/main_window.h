@@ -5,6 +5,7 @@
 #include "model_controls.h"
 
 class ExperimentsTab;
+class DatabaseTableTab;
 class QAction;
 class QLineEdit;
 class QPushButton;
@@ -54,4 +55,5 @@ private:
     QTabWidget* tabs_;
     QWidget* controlsPage_;
     ExperimentsTab* experimentsPage_;
+    DatabaseTableTab *reactionsPage_, *speciesPage_;
 };

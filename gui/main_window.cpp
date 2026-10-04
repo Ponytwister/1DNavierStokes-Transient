@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include "experiments_tab.h"
+#include "database_table_tab.h"
 #include "controls_dialog.h"
 #include "setup_file.h"
 #include <QCloseEvent>
@@ -41,6 +42,10 @@ MainWindow::MainWindow()
     tabs_->addTab(controlsPage_, "Model controls");
     experimentsPage_ = new ExperimentsTab;
     tabs_->addTab(experimentsPage_, "Experiments");
+    reactionsPage_ = new DatabaseTableTab(DatabaseTableTab::Table::reactions);
+    tabs_->addTab(reactionsPage_, "Reactions");
+    speciesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::species);
+    tabs_->addTab(speciesPage_, "Species");
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -98,12 +103,24 @@ MainWindow::MainWindow()
         auto selected = QFileDialog::getExistingDirectory(this, "Choose output directory", output_->text());
         if (!selected.isEmpty()) output_->setText(selected);
     });
-    connect(database_, &QLineEdit::textChanged, this, [this] { if (work_ == Work::idle) { modelControls_.reset(); experimentsPage_->clear(); clearResult();
-        if (tabs_->currentIndex() == 2) experimentsPage_->load(database_->text().trimmed()); } });
+    connect(database_, &QLineEdit::textChanged, this, [this] {
+        if (work_ != Work::idle) return;
+        modelControls_.reset(); experimentsPage_->clear();
+        reactionsPage_->clear(); speciesPage_->clear(); clearResult();
+        const auto database = database_->text().trimmed();
+        if (tabs_->currentIndex() == 2) experimentsPage_->load(database);
+        if (tabs_->currentIndex() == 3) reactionsPage_->load(database);
+        if (tabs_->currentIndex() == 4) speciesPage_->load(database);
+    });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == 2 && work_ == Work::idle && !closing_) experimentsPage_->load(database_->text().trimmed());
+        if (work_ == Work::idle && !closing_) {
+            const auto database = database_->text().trimmed();
+            if (index == 2) experimentsPage_->load(database);
+            if (index == 3) reactionsPage_->load(database);
+            if (index == 4) speciesPage_->load(database);
+        }
         if (index != 1 || work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
@@ -142,6 +159,9 @@ MainWindow::MainWindow()
     });
     experimentsPage_->changed = [this] { updateControls(); };
     experimentsPage_->saved = [this] { clearResult(); setStatus("Experiment channel dimensions saved. Run again to calculate results."); };
+    auto referenceSaved = [this] { clearResult(); setStatus("Reference data saved. Run again to calculate results."); };
+    reactionsPage_->saved = referenceSaved;
+    speciesPage_->saved = referenceSaved;
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
@@ -203,6 +223,12 @@ void MainWindow::updateControls()
     tabs_->setTabEnabled(1, (idle || editingControls_) && !database_->text().trimmed().isEmpty());
     tabs_->setTabEnabled(2, work_ == Work::idle && !closing_ && !editingControls_);
     experimentsPage_->setEnabled(work_ == Work::idle && !closing_ && !editingControls_);
+    tabs_->setTabEnabled(3, work_ == Work::idle && !closing_);
+    tabs_->setTabEnabled(4, work_ == Work::idle && !closing_);
+    reactionsPage_->setEnabled(work_ == Work::idle && !closing_);
+    speciesPage_->setEnabled(work_ == Work::idle && !closing_);
+    reactionsPage_->setEditingEnabled(idle);
+    speciesPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);

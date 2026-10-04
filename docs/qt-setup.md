@@ -276,3 +276,35 @@ rows. Browsing experiments does not load a model or create solution records.
 Channel dimensions can be edited and saved per experiment after applying the
 [channel dimensions migration](channel-dimensions.md). Dimensions are in meters
 and may differ between experiments in a combined run.
+
+### Reactions and Species tabs
+
+The **Reactions** and **Species** tabs display all columns of the selected
+database's `reactions` and `species` tables, ordered by `REACTION_NAME` and
+`SPECIES_NAME`, respectively. Table cells are read-only; use **Add...** or select one row and choose **Modify...**
+to open the editor. Values, column names, and stored units are not transformed. SQL NULL displays as `NULL` with a tooltip.
+
+Opening a tab, selecting another database, or clicking **Refresh** reloads the
+view. A missing database/table or read error clears old rows and shows the error;
+an empty table retains its column headers. Reads open existing databases only and
+close their connections afterward. They do not create solution records or change
+reaction rates, species properties, parameter links, or unsaved control edits.
+Both tabs and their Refresh buttons are disabled while a run or result save is
+active, following the main window's existing work-state controls.
+
+The reference-table editors save only when **Save** is pressed; **Cancel** discards
+edits. Names are fixed when modifying a row so existing experiment/reaction
+references remain intact. New names must be unique, nonempty, and contain no
+whitespace or apostrophes (the model uses space-separated names and SQL lookups).
+Species type must be `molecule` or `particle`; numeric fields require finite
+numbers or explicit SQL NULL. Reaction species must exist in the database;
+coefficients and exponents require one number per species, and `Ks` requires two
+numbers, matching the loader's forward/reverse rate array. These checks do not
+establish physical suitability or convergence.
+
+Writes use bound parameters and a transaction. Modify compares the complete
+original row, including unknown columns, to detect concurrent changes; on conflict,
+cancel and Refresh before retrying. Extra columns are retained on Modify and use
+database defaults on Add. A successful save clears previous run results. Add and
+Modify are unavailable while model controls or channel dimensions have pending
+edits, or while a calculation/result save is active. No schema migration is needed.
