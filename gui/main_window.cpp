@@ -46,6 +46,8 @@ MainWindow::MainWindow()
     tabs_->addTab(reactionsPage_, "Reactions");
     speciesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::species);
     tabs_->addTab(speciesPage_, "Species");
+    alglibPage_ = new DatabaseTableTab(DatabaseTableTab::Table::alglib);
+    tabs_->addTab(alglibPage_, "ALGLIB");
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -106,11 +108,12 @@ MainWindow::MainWindow()
     connect(database_, &QLineEdit::textChanged, this, [this] {
         if (work_ != Work::idle) return;
         modelControls_.reset(); experimentsPage_->clear();
-        reactionsPage_->clear(); speciesPage_->clear(); clearResult();
+        reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); clearResult();
         const auto database = database_->text().trimmed();
         if (tabs_->currentIndex() == 2) experimentsPage_->load(database);
         if (tabs_->currentIndex() == 3) reactionsPage_->load(database);
         if (tabs_->currentIndex() == 4) speciesPage_->load(database);
+        if (tabs_->currentIndex() == 5) alglibPage_->load(database);
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
@@ -120,6 +123,7 @@ MainWindow::MainWindow()
             if (index == 2) experimentsPage_->load(database);
             if (index == 3) reactionsPage_->load(database);
             if (index == 4) speciesPage_->load(database);
+            if (index == 5) alglibPage_->load(database);
         }
         if (index != 1 || work_ != Work::idle || closing_ || editingControls_ || experimentsPage_->dirty()) return;
         const QFileInfo input(database_->text().trimmed());
@@ -162,6 +166,7 @@ MainWindow::MainWindow()
     auto referenceSaved = [this] { clearResult(); setStatus("Reference data saved. Run again to calculate results."); };
     reactionsPage_->saved = referenceSaved;
     speciesPage_->saved = referenceSaved;
+    alglibPage_->saved = referenceSaved;
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
@@ -225,10 +230,13 @@ void MainWindow::updateControls()
     experimentsPage_->setEnabled(work_ == Work::idle && !closing_ && !editingControls_);
     tabs_->setTabEnabled(3, work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(4, work_ == Work::idle && !closing_);
+    tabs_->setTabEnabled(5, work_ == Work::idle && !closing_);
     reactionsPage_->setEnabled(work_ == Work::idle && !closing_);
     speciesPage_->setEnabled(work_ == Work::idle && !closing_);
+    alglibPage_->setEnabled(work_ == Work::idle && !closing_);
     reactionsPage_->setEditingEnabled(idle);
     speciesPage_->setEditingEnabled(idle);
+    alglibPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     profiles_->setEnabled(idle && session_);

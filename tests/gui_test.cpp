@@ -190,6 +190,56 @@ TEST(Gui, ReferenceTabsClearMissingInputsAndHandleEmptyTables)
     EXPECT_TRUE(widget<QLabel>(window, "speciesStatus")->text().contains("Cannot load species"));
 }
 
+TEST(Gui, AlglibBrowseAddValidateAndModify)
+{
+    Inputs input;
+    MainWindow window; input.choose(window); window.show();
+    auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(5);
+    EXPECT_EQ(tabs->tabText(5), "ALGLIB");
+    auto* table = widget<QTableWidget>(window, "alglib_inputTable");
+    ASSERT_EQ(table->rowCount(), 1); ASSERT_EQ(table->columnCount(), 5);
+    EXPECT_EQ(table->item(0, 0)->text(), "keq1");
+    EXPECT_EQ(table->horizontalHeaderItem(1)->text(), "INITIAL VALUE");
+    EXPECT_EQ(input.execute("SELECT [INITIAL VALUE] FROM alglib_input"), .75);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "VARIABLE")->setText("new_variable");
+        widget<QLineEdit>(*editor, "INITIAL VALUE")->setText("1");
+        widget<QLineEdit>(*editor, "LOWER BOUND")->setText("0");
+        widget<QLineEdit>(*editor, "UPPER BOUND")->setText("2");
+        auto* scale = widget<QLineEdit>(*editor, "SCALE");
+        auto* save = widget<QPushButton>(*editor, "saveReferenceButton");
+        scale->setText("nan"); save->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("finite"));
+        scale->setText("0"); save->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("nonzero"));
+        scale->setText("1");
+        widget<QLineEdit>(*editor, "LOWER BOUND")->setText("3"); save->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("must not exceed"));
+        widget<QLineEdit>(*editor, "LOWER BOUND")->setText("0");
+        widget<QLineEdit>(*editor, "INITIAL VALUE")->setText("3"); save->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("within the bounds"));
+        widget<QLineEdit>(*editor, "INITIAL VALUE")->setText("1"); save->click();
+    });
+    widget<QPushButton>(window, "alglib_inputAddButton")->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM alglib_input"), 2);
+    table->setCurrentCell(0, 0); table->selectRow(0);
+    QTimer::singleShot(0, &window, [&] {
+        auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(widget<QLineEdit>(*editor, "VARIABLE")->isReadOnly());
+        widget<QLineEdit>(*editor, "INITIAL VALUE")->setText("1.25");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+    });
+    widget<QPushButton>(window, "alglib_inputModifyButton")->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT [INITIAL VALUE] FROM alglib_input WHERE VARIABLE='keq1'"), 1.25);
+    EXPECT_EQ(input.execute("SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
+    input.execute("DROP TABLE alglib_input");
+    widget<QPushButton>(window, "alglib_inputRefreshButton")->click();
+    EXPECT_EQ(table->rowCount(), 0);
+    EXPECT_FALSE(widget<QPushButton>(window, "alglib_inputAddButton")->isEnabled());
+    EXPECT_TRUE(widget<QLabel>(window, "alglib_inputStatus")->text().contains("Cannot load alglib_input"));
+}
+
 TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
 {
     Inputs input;
@@ -782,9 +832,11 @@ TEST(Gui, RunExportAndExplicitSaves)
     EXPECT_FALSE(run->isEnabled());
     EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(3));
     EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(4));
+    EXPECT_FALSE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(5));
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
     EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(3));
     EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(4));
+    EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(5));
     ASSERT_TRUE(exportButton->isEnabled());
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 1);
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Termination code:"));

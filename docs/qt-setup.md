@@ -308,3 +308,18 @@ cancel and Refresh before retrying. Extra columns are retained on Modify and use
 database defaults on Add. A successful save clears previous run results. Add and
 Modify are unavailable while model controls or channel dimensions have pending
 edits, or while a calculation/result save is active. No schema migration is needed.
+
+### ALGLIB tab
+
+The ALGLIB tab displays `alglib_input`, ordered by `VARIABLE`, with Add, Modify,
+and Refresh controls. The editor exposes `VARIABLE`, `INITIAL VALUE`, `LOWER BOUND`,
+`UPPER BOUND`, and `SCALE`. All four numeric values are required and finite;
+the lower bound must not exceed the upper bound, the initial value must lie within
+those bounds, and scale must be nonzero. Existing variable names cannot be renamed.
+Adding a row does not select that variable for solving; selection remains in Model
+controls. No schema migration is needed.
+
+Browsing does not write to the database. Save uses the same transactional writes
+and concurrent-change detection as the Reactions and Species editors, then clears
+previous results. Cancel leaves the database unchanged. The tab is disabled during
+application work, and editing is disabled while other input edits are pending.

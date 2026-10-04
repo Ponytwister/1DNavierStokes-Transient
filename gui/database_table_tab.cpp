@@ -20,7 +20,7 @@
 #include <stdexcept>
 
 DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
-    : QWidget(parent), tableKind_(table), tableName_(table == Table::reactions ? "reactions" : "species") {
+    : QWidget(parent), tableKind_(table), tableName_(table == Table::reactions ? "reactions" : table == Table::species ? "species" : "alglib_input") {
     auto* layout = new QVBoxLayout(this);
     status_ = new QLabel;
     status_->setObjectName(tableName_ + "Status");
@@ -72,7 +72,8 @@ void DatabaseTableTab::load(QString database) {
         // Fixed queries: no user-controlled table or column names enter SQL.
         const char* sql = tableKind_ == Table::reactions
             ? "SELECT * FROM reactions ORDER BY REACTION_NAME"
-            : "SELECT * FROM species ORDER BY SPECIES_NAME";
+            : tableKind_ == Table::species ? "SELECT * FROM species ORDER BY SPECIES_NAME"
+            : "SELECT * FROM alglib_input ORDER BY VARIABLE";
         sqlite3_stmt* query = nullptr;
         const int prepared = sqlite3_prepare_v2(db.get(), sql, -1, &query, nullptr);
         std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(query, sqlite3_finalize);
@@ -119,6 +120,8 @@ void DatabaseTableTab::load(QString database) {
 namespace {
 QString quoteIdentifier(QString name) { return '"' + name.replace('"', "\"\"") + '"'; }
 QStringList editableColumns(DatabaseTableTab::Table table) {
+    if (table == DatabaseTableTab::Table::alglib)
+        return {"VARIABLE", "INITIAL VALUE", "LOWER BOUND", "UPPER BOUND", "SCALE"};
     return table == DatabaseTableTab::Table::reactions ? QStringList{"REACTION_NAME", "SPECIES", "COEFFICIENTS", "Ks", "EXPONENTS"}
                      : QStringList{"SPECIES_NAME", "SPECIES_TYPE", "DIFFUSION_RATE", "QE", "PARTICLE_DIAMETER", "PARTICLE_DENSITY", "MOLECULAR_WEIGHT"};
 }
@@ -153,6 +156,7 @@ void DatabaseTableTab::updateButtons() {
 void DatabaseTableTab::editRow(bool adding) {
     if (!loaded_ || !editingEnabled_ || (!adding && table_->selectedItems().isEmpty())) return;
     const bool reactions = tableKind_ == Table::reactions;
+    const bool alglib = tableKind_ == Table::alglib;
     const auto fields = editableColumns(tableKind_);
     for (const auto& field : fields) if (!columns_.contains(field)) return;
     const auto database = database_;
@@ -163,7 +167,7 @@ void DatabaseTableTab::editRow(bool adding) {
         original.push_back(table_->item(row, col)->data(Qt::UserRole));
 
     QDialog dialog(this); dialog.setObjectName(tableName_ + "Editor");
-    dialog.setWindowTitle((adding ? "Add " : "Modify ") + QString(reactions ? "reaction" : "species"));
+    dialog.setWindowTitle((adding ? "Add " : "Modify ") + QString(reactions ? "reaction" : alglib ? "ALGLIB input" : "species"));
     dialog.resize(660, 440);
     auto* layout = new QVBoxLayout(&dialog);
     auto* note = new QLabel("Values use the database's existing units. Names cannot be changed when modifying a row, to preserve references.");
@@ -203,9 +207,9 @@ void DatabaseTableTab::editRow(bool adding) {
             for (int i = 0; i < fields.size(); ++i) {
                 const QString text = edits[i]->text();
                 QVariant value = nulls[i]->isChecked() ? QVariant{} : QVariant(text);
-                if (value.isValid() && !reactions && i >= 2) {
+                if (value.isValid() && !reactions && i >= (alglib ? 1 : 2)) {
                     bool ok = false; const double number = text.toDouble(&ok);
-                    if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + ": enter a finite number or select NULL.").toStdString());
+                    if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + (alglib ? ": enter a finite number." : ": enter a finite number or select NULL.")).toStdString());
                     value = number;
                 }
                 if (!adding) {
@@ -232,6 +236,12 @@ void DatabaseTableTab::editRow(bool adding) {
                     values[i] = tokens.join(' ');
                 }
                 values[1] = species.join(' ');
+            } else if (alglib) {
+                const double initial = values[1].toDouble();
+                const double lower = values[2].toDouble(), upper = values[3].toDouble();
+                if (lower > upper) throw std::invalid_argument("LOWER BOUND must not exceed UPPER BOUND.");
+                if (initial < lower || initial > upper) throw std::invalid_argument("INITIAL VALUE must lie within the bounds.");
+                if (values[4].toDouble() == 0) throw std::invalid_argument("SCALE must be nonzero.");
             } else if (values[1].toString() != "molecule" && values[1].toString() != "particle")
                 throw std::invalid_argument("SPECIES_TYPE must be molecule or particle.");
 
