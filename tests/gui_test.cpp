@@ -139,6 +139,67 @@ TEST(Gui, RawProfilesBrowseRefreshAndClearWithoutWrites)
     EXPECT_EQ(table->rowCount(), 5);
 }
 
+TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
+{
+    Inputs input;
+    input.execute("INSERT INTO experiments(NAME) VALUES('second'),('uniform-extra'); "
+                  "INSERT INTO raw_profile(NAME) VALUES('second'),('uniform-extra'),(NULL)");
+    const auto original = model_controls::load(input.database);
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    auto visibleNames = [](QTableWidget* table) {
+        QStringList names;
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (!table->isRowHidden(row)) names << table->item(row, 0)->text();
+        return names;
+    };
+    auto* experiments = widget<QTableWidget>(window, "experimentsTable");
+    auto* profiles = widget<QTableWidget>(window, "raw_profileTable");
+    auto* experimentFilter = widget<QCheckBox>(window, "experimentsSelectedOnly");
+    auto* profileFilter = widget<QCheckBox>(window, "raw_profileSelectedOnly");
+    EXPECT_TRUE(experimentFilter->isChecked()); EXPECT_TRUE(profileFilter->isChecked());
+    tabs->setCurrentIndex(2);
+    EXPECT_EQ(visibleNames(experiments), QStringList{"uniform"});
+    tabs->setCurrentIndex(6);
+    EXPECT_EQ(visibleNames(profiles), (QStringList{"uniform", "uniform", "uniform", "uniform"}));
+    profileFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(profiles).size(), 7);
+    EXPECT_EQ(visibleNames(experiments), QStringList{"uniform"});
+    profileFilter->setChecked(true);
+
+    tabs->setCurrentIndex(1);
+    ASSERT_TRUE(until([&] { return widget<QPushButton>(window, "useControlsButton")->isEnabled(); }));
+    auto* choices = widget<QListWidget>(window, "experimentChoices");
+    for (int i = 0; i < choices->count(); ++i)
+        choices->item(i)->setCheckState(choices->item(i)->text() == "second" ? Qt::Checked : Qt::Unchecked);
+    widget<QPushButton>(window, "useControlsButton")->click();
+    EXPECT_EQ(model_controls::load(input.database), original);
+    EXPECT_EQ(visibleNames(experiments), QStringList{"second"});
+    EXPECT_EQ(visibleNames(profiles), QStringList{"second"});
+    tabs->setCurrentIndex(6);
+    widget<QPushButton>(window, "raw_profileRefreshButton")->click();
+    EXPECT_EQ(visibleNames(profiles), QStringList{"second"});
+    tabs->setCurrentIndex(2);
+    widget<QPushButton>(window, "reloadExperimentsButton")->click();
+    EXPECT_EQ(visibleNames(experiments), QStringList{"second"});
+    experimentFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(experiments).size(), 3);
+    EXPECT_EQ(visibleNames(profiles), QStringList{"second"});
+    experimentFilter->setChecked(true);
+
+    Inputs other;
+    other.execute("UPDATE model_controls SET value='' WHERE criterion='experiment_name'");
+    other.choose(window);
+    EXPECT_TRUE(visibleNames(experiments).isEmpty());
+    tabs->setCurrentIndex(6);
+    EXPECT_TRUE(visibleNames(profiles).isEmpty());
+    other.execute("DROP TABLE model_controls");
+    widget<QPushButton>(window, "raw_profileRefreshButton")->click();
+    EXPECT_TRUE(widget<QLabel>(window, "raw_profileFilterStatus")->text().contains("Cannot load"));
+    profileFilter->setChecked(false);
+    EXPECT_EQ(visibleNames(profiles).size(), 4);
+}
+
 TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
 {
     Inputs input;
@@ -395,7 +456,15 @@ TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
     }
     ASSERT_GE(width, 0); ASSERT_GE(height, 0); ASSERT_GE(length, 0);
     EXPECT_FALSE(table->item(0, 0)->flags() & Qt::ItemIsEditable);
-    table->item(0, width)->setText("nan"); save->click();
+    auto* selectedOnly = widget<QCheckBox>(window, "experimentsSelectedOnly");
+    selectedOnly->setChecked(false);
+    table->item(0, width)->setText("nan");
+    selectedOnly->setChecked(true);
+    EXPECT_TRUE(table->isRowHidden(0));
+    selectedOnly->setChecked(false);
+    EXPECT_EQ(table->item(0, width)->text(), "nan");
+    EXPECT_TRUE(save->isEnabled());
+    save->click();
     EXPECT_TRUE(save->isEnabled());
     EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='second'"), 5e-4);
     EXPECT_FALSE(widget<QPushButton>(window, "runButton")->isEnabled());

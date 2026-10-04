@@ -268,7 +268,7 @@ Deployment API reference:
 
 ### Experiments tab
 
-The **Experiments** tab displays all rows and columns of the selected database's
+The **Experiments** tab displays columns and filterable rows of the selected database's
 `experiments` table, ordered by `NAME`. SQL NULL is shown explicitly. The table
 refreshes when opened or when the database changes; a read error clears stale
 rows. Browsing experiments does not load a model or create solution records.
@@ -331,3 +331,11 @@ The **Raw profiles** tab displays all columns from `raw_profile`, ordered by
 a short-lived read-only connection without initializing a model or writing data.
 Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
+
+Both **Raw profiles** and **Experiments** have an **Only selected experiments**
+checkbox, on by default. Each checkbox independently hides rows whose `NAME` is
+not an exact match for a selected experiment in Model controls. Applied in-memory
+controls (including opened setups) take precedence over database defaults.
+Uncheck it to show all rows. Filtering does not change data or discard pending
+channel-dimension edits. If the selection cannot be read, an error is shown and
+rows remain hidden until the filter is turned off or the selection is available.

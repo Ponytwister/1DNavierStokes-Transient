@@ -23,6 +23,8 @@ ExperimentsTab::ExperimentsTab(QWidget* parent) : QWidget(parent) {
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    filter_ = new ExperimentRowFilter(table_, "experiments");
+    layout->addWidget(filter_);
     layout->addWidget(table_);
     auto* buttons = new QHBoxLayout;
     save_ = new QPushButton("Save channel dimensions"); save_->setObjectName("saveDimensionsButton");
@@ -39,11 +41,12 @@ void ExperimentsTab::clear() {
     dimensionColumns_ = {-1, -1, -1}; nameColumn_ = -1;
     setDirty(false);
     table_->clear(); table_->setRowCount(0); table_->setColumnCount(0);
+    filter_->apply();
     status_->setText("Choose a database from the File menu.");
 }
 
 void ExperimentsTab::load(const QString& database) {
-    if (dirty_ && database == database_) return;
+    if (dirty_ && database == database_) { filter_->apply(); return; }
     clear();
     database_ = database;
     const QSignalBlocker blocker(table_);
@@ -98,11 +101,13 @@ void ExperimentsTab::load(const QString& database) {
                     item->setText(QString::fromLatin1(buffer, static_cast<int>(formatted.ptr - buffer)));
                     item->setData(Qt::UserRole, number);
                 }
+                item->setData(Qt::UserRole + 1, null);
                 item->setToolTip(null ? "SQL NULL (no value)" : value);
                 table_->setItem(row, col, item);
             }
         }
         check(rc, SQLITE_DONE);
+        filter_->apply();
         // Keep physical dimensions visible beside NAME even in wide legacy tables.
         if (editable) {
             table_->horizontalHeader()->moveSection(table_->horizontalHeader()->visualIndex(nameColumn_), 0);

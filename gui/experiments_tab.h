@@ -1,5 +1,6 @@
 #pragma once
 #include <QWidget>
+#include "experiment_row_filter.h"
 #include <functional>
 #include <array>
 class QTableWidget;
@@ -12,10 +13,12 @@ public:
     explicit ExperimentsTab(QWidget* parent = nullptr);
     void load(const QString& database);
     void clear();
+    ExperimentRowFilter* experimentFilter() const { return filter_; }
     bool dirty() const { return dirty_; }
     std::function<void()> changed;
     std::function<void()> saved;
 private:
+    ExperimentRowFilter* filter_ = nullptr;
     void saveDimensions();
     void setDirty(bool value);
     QString database_;

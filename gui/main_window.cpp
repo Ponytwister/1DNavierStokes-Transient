@@ -50,6 +50,14 @@ MainWindow::MainWindow()
     tabs_->addTab(alglibPage_, "ALGLIB");
     rawProfilesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::raw_profile);
     tabs_->addTab(rawProfilesPage_, "Raw profiles");
+    auto selectedExperiments = [this] {
+        const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
+        for (const auto& row : snapshot.rows)
+            if (row.name == "experiment_name") return row.value.value_or(QString{}).split(' ', Qt::SkipEmptyParts);
+        return QStringList{};
+    };
+    experimentsPage_->experimentFilter()->selectedNames = selectedExperiments;
+    rawProfilesPage_->experimentFilter()->selectedNames = selectedExperiments;
     auto* layout = new QVBoxLayout(results);
     auto* title = new QLabel("Navier transient model");
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
@@ -145,6 +153,8 @@ MainWindow::MainWindow()
             editingControls_ = false;
             if (result == QDialog::Accepted) {
                 modelControls_ = editor->values();
+                experimentsPage_->experimentFilter()->apply();
+                rawProfilesPage_->experimentFilter()->apply();
                 clearResult();
                 setStatus(editor->updatedDefault() ? "Model controls applied and database defaults updated." : "Model controls applied in memory. Database defaults unchanged.");
             }
@@ -210,6 +220,8 @@ void MainWindow::openSetup() {
         clearResult();
         database_->setText(setup.database); output_->setText(setup.outputDirectory);
         modelControls_ = original; modelControls_->rows = setup.controls;
+        experimentsPage_->experimentFilter()->apply();
+        rawProfilesPage_->experimentFilter()->apply();
         setStatus("Setup opened: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }

@@ -32,6 +32,10 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    if (tableKind_ == Table::raw_profile) {
+        filter_ = new ExperimentRowFilter(table_, "raw_profile");
+        layout->addWidget(filter_);
+    }
     layout->addWidget(table_, 1);
     auto* buttons = new QHBoxLayout;
     refresh_ = new QPushButton("Refresh");
@@ -53,6 +57,7 @@ void DatabaseTableTab::clear() {
     database_.clear();
     table_->clear(); table_->setRowCount(0); table_->setColumnCount(0);
     refresh_->setEnabled(false); updateButtons();
+    if (filter_) filter_->apply();
     status_->setText("Choose a database from the File menu.");
 }
 
@@ -103,6 +108,7 @@ void DatabaseTableTab::load(QString database) {
                 case SQLITE_BLOB: original = QByteArray(static_cast<const char*>(sqlite3_column_blob(query, col)), sqlite3_column_bytes(query, col)); break;
                 }
                 item->setData(Qt::UserRole, original);
+                item->setData(Qt::UserRole + 1, null);
                 item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
                 item->setToolTip(null ? "SQL NULL (no value)" : value);
                 table_->setItem(row, col, item);
@@ -110,6 +116,7 @@ void DatabaseTableTab::load(QString database) {
         }
         check(rc, SQLITE_DONE);
         loaded_ = true; updateButtons();
+        if (filter_) filter_->apply();
         status_->setText(QString("%1 %2 rows in %3. Use Add or select a row and choose Modify.")
             .arg(table_->rowCount()).arg(tableName_).arg(database));
         if (tableKind_ == Table::raw_profile)
