@@ -255,6 +255,7 @@ void MainWindow::openSetup() {
 void MainWindow::clearResult()
 {
     session_.reset(); activeDatabase_.clear(); values_->setRowCount(0); summary_->clear(); resultDatabase_->clear();
+    latestResidualSum_.reset();
     status_->setText("Choose a database, then run the calculation.");
     updateControls();
 }
@@ -383,8 +384,16 @@ void MainWindow::poll()
         for (const auto& event : runner_.drain_events()) {
             if (event.kind == event_kind::parameters_initialized)
                 showParameters(event.parameters, false);
-            else if (event.kind == event_kind::evaluation)
-                summary_->setText("Completed model evaluations: " + QString::number(event.evaluations.value_or(0)));
+            else if (event.kind == event_kind::evaluation || event.kind == event_kind::optimizer_progress) {
+                if (event.kind == event_kind::optimizer_progress) {
+                    showParameters(event.parameters, true);
+                    latestResidualSum_ = event.sum_squared_residuals;
+                }
+                QString summary = "Completed model evaluations: " + QString::number(event.evaluations.value_or(0));
+                if (latestResidualSum_)
+                    summary += " · Sum of squared residuals: " + QString::number(*latestResidualSum_, 'g', 15);
+                summary_->setText(summary);
+            }
             else if (event.kind != event_kind::message || event.detail_level >= 3)
                 log_->appendPlainText(text(event.message));
         }
@@ -400,6 +409,9 @@ void MainWindow::poll()
                     .arg(result.optimizer_iterations ? QString::number(*result.optimizer_iterations) : "Not run")
                     .arg(result.termination_type ? QString::number(*result.termination_type) : "Not run"));
                 resultDatabase_->setText("Results from: " + activeDatabase_);
+                if (result.sum_squared_residuals)
+                    summary_->setText(summary_->text() + " · Sum of squared residuals: " +
+                                      QString::number(*result.sum_squared_residuals, 'g', 15));
                 showParameters(result.parameters, true);
                 setStatus("Run finished. Review the termination code and results before saving.");
             }

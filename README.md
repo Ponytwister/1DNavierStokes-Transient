@@ -29,6 +29,15 @@ See [Qt kit setup](docs/qt-setup.md) for installation, build/launch commands, an
 licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 `NavierGui` application alongside the terminal executable. It provides database
 and output selection, Run/Cancel, progress, parameter results, and explicit saves.
+During fitting, the parameter **Value** column and **Sum of squared residuals**
+update at ALGLIB reporting points (including the initial point and internal steps).
+Initial values remain visible for comparison. The latest reported residual sum stays
+visible during trial model evaluations and is included in the final GUI/terminal summary.
+This is ALGLIB's objective, `sum(fi[i]^2)`: the current model already returns squared
+profile discrepancies as `fi`, so it is a sum of fourth powers of those discrepancies.
+Reporting does not change the residual definition or convergence settings. Model
+evaluation counts are distinct from optimizer iterations; a run without optimization
+reports the residual sum from its single model evaluation.
 The **File** menu contains setup actions and database/output path selection.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.

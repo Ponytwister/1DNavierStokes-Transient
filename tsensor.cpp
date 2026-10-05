@@ -32,6 +32,13 @@ public:
             return;
         }
         finish_line();
+        if (event.kind == event_kind::optimizer_progress) {
+            std::cout << "Sum of squared residuals: " << event.sum_squared_residuals.value() << '\n';
+            for (const auto& parameter : event.parameters)
+                std::cout << '(' << parameter.source << ':' << parameter.name << ':' << parameter.value << ") ";
+            std::cout << '\n';
+            return;
+        }
         // Failure exceptions are printed once by main's error handler.
         if (event.kind == event_kind::failed) return;
         std::cout << event.message << '\n';
@@ -73,6 +80,8 @@ main(int argc, char* argv[])
         session.load_inputs();
         const auto result = session.run();
         print_progress.final_count(result.residual_evaluations);
+        if (result.sum_squared_residuals)
+            std::cout << "Sum of squared residuals: " << *result.sum_squared_residuals << '\n';
         if (result.optimizer_ran) {
             std::cout << "Optimizer iterations: " << result.optimizer_iterations.value()
                       << "; termination code: " << result.termination_type.value() << '\n';

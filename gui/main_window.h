@@ -53,6 +53,7 @@ private:
     QAction *openSetup_, *saveSetup_;
     QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_;
     QLabel *status_, *summary_, *resultDatabase_;
+    std::optional<double> latestResidualSum_;
     QPlainTextEdit* log_;
     QTableWidget* values_;
     QProgressBar* activity_;

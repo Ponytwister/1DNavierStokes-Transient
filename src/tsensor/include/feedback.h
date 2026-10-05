@@ -11,7 +11,7 @@ namespace tsensor_workflow {
 
 enum class operation { none, open_database, load_inputs, solve, export_results,
                        save_model_profiles, save_fitted_parameters };
-enum class event_kind { started, message, evaluation, completed, failed, parameters_initialized };
+enum class event_kind { started, message, evaluation, completed, failed, parameters_initialized, optimizer_progress };
 enum class error_code { invalid_state, invalid_input, database, solver, io, internal, cancelled };
 
 struct parameter_value {
@@ -30,8 +30,9 @@ struct progress_event {
     std::optional<int> evaluations;
     std::optional<error_code> error;
     std::optional<int> sqlite_code;
-    // Owned parameter snapshot, delivered before solving rather than as log lines.
+    // Owned parameter snapshot, delivered at initialization and optimizer reports.
     std::vector<parameter_value> parameters;
+    std::optional<double> sum_squared_residuals;
 };
 
 using progress_callback = std::function<void(const progress_event&)>;

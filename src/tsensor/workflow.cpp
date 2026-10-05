@@ -189,7 +189,32 @@ run_result run(parameters_t& p)
     alglib::minlmsetscale(state, s);
     alglib::minlmsetnonmonotonicsteps(state, 2);
     if (p.run_solver) {
-        alglib::minlmoptimize(state, alglib_solver, nullptr, &p);   // Optimize
+        struct progress_context {
+            parameters_t& parameters;
+            run_result& result;
+            const std::vector<double>& initial_values;
+        } context{p, result, initial_values};
+        const auto evaluate = [](const alglib::real_1d_array& x, alglib::real_1d_array& fi, void* ptr) {
+            alglib_solver(x, fi, &static_cast<progress_context*>(ptr)->parameters);
+        };
+        const auto report = [](const alglib::real_1d_array& x, double objective, void* ptr) {
+            auto& context = *static_cast<progress_context*>(ptr);
+            auto& p = context.parameters;
+            check_cancellation(p);
+            context.result.sum_squared_residuals = objective;
+            progress_event event{event_kind::optimizer_progress, operation::solve, {}};
+            event.evaluations = p.iterations;
+            event.sum_squared_residuals = objective;
+            for (std::size_t i = 0; i < p.solvables.size(); ++i) {
+                const auto& parameter = p.solvables[i];
+                event.parameters.push_back({parameter.source_name, parameter.name, x[i], context.initial_values[i]});
+            }
+            publish_event(p, std::move(event));
+        };
+        // Reports include the initial point and internal optimizer steps, not
+        // finite-difference trial evaluations. The objective is sum(fi[i]^2).
+        alglib::minlmsetxrep(state, true);
+        alglib::minlmoptimize(state, +evaluate, +report, &context);
         alglib::minlmresults(state, control_parameters, rep);
         result.optimizer_ran = true;
         result.optimizer_iterations = rep.iterationscount;
@@ -202,6 +227,10 @@ run_result run(parameters_t& p)
     } else {
         alglib::real_1d_array residuals;
         alglib_solver(control_parameters, residuals, &p);
+        double objective = 0;
+        for (alglib::ae_int_t i = 0; i < residuals.length(); ++i)
+            objective += residuals[i] * residuals[i];
+        result.sum_squared_residuals = objective;
     }
     check_cancellation(p);
     result.residual_evaluations = p.iterations;

@@ -1147,6 +1147,19 @@ TEST(Gui, RunExportAndExplicitSaves)
     MainWindow window; input.choose(window); window.show();
     auto* run = widget<QPushButton>(window, "runButton");
     auto* exportButton = widget<QPushButton>(window, "exportButton");
+    bool sawLiveParameters = false;
+    auto* liveTable = widget<QTableWidget>(window, "parameterTable");
+    QObject::connect(liveTable, &QTableWidget::itemChanged, &window, [&](QTableWidgetItem* item) {
+        // The final result uses a different summary. Observe the queued
+        // optimizer report even when this small solve finishes between polls.
+        if (item->column() == 3 && !item->text().isEmpty() &&
+            widget<QLabel>(window, "resultSummary")->text().startsWith("Completed model evaluations:")) {
+            sawLiveParameters = true;
+            EXPECT_FALSE(run->isEnabled());
+            EXPECT_NEAR(item->text().toDouble(), 1, 1e-10);
+            EXPECT_DOUBLE_EQ(liveTable->item(item->row(), 2)->text().toDouble(), 1);
+        }
+    });
     EXPECT_FALSE(exportButton->isEnabled());
     run->click();
     EXPECT_FALSE(widget<QLineEdit>(window, "databasePath")->isEnabled());
@@ -1159,6 +1172,7 @@ TEST(Gui, RunExportAndExplicitSaves)
     EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(4));
     EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(5));
     ASSERT_TRUE(exportButton->isEnabled());
+    EXPECT_TRUE(sawLiveParameters);
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 1);
     auto* parameters = widget<QTableWidget>(window, "parameterTable");
     ASSERT_EQ(parameters->columnCount(), 4);
@@ -1167,6 +1181,7 @@ TEST(Gui, RunExportAndExplicitSaves)
     EXPECT_NEAR(parameters->item(0, 3)->text().toDouble(), 1, 1e-10);
     EXPECT_FALSE(widget<QPlainTextEdit>(window, "progressLog")->toPlainText().contains("Initial parameter "));
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Termination code:"));
+    EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Sum of squared residuals:"));
     if (const auto capture = qEnvironmentVariable("NAVIER_GUI_CAPTURE"); !capture.isEmpty()) {
         QApplication::processEvents();
         EXPECT_TRUE(window.grab().save(capture));

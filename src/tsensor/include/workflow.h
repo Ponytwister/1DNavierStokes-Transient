@@ -12,6 +12,7 @@ struct run_result {
     int residual_evaluations = 0;
     std::optional<alglib::ae_int_t> optimizer_iterations;
     std::optional<alglib::ae_int_t> termination_type;
+    std::optional<double> sum_squared_residuals;
     // Owned snapshot of the returned optimizer vector (or inputs if disabled).
     std::vector<parameter_value> parameters;
 };

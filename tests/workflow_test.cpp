@@ -97,6 +97,11 @@ TEST(ScatterControl, DatabaseAndInMemoryChoicesReachResiduals) {
                 const auto result = session.run();
                 EXPECT_GT(result.residual_evaluations, 0);
                 const double factor = choice == "none" ? 1 : 1 - amplitude + center * slope;
+                // The existing model returns squared discrepancies as residuals;
+                // ALGLIB squares these again in its least-squares objective.
+                ASSERT_TRUE(result.sum_squared_residuals.has_value());
+                near(*result.sum_squared_residuals,
+                     session.parameters().total_window_size * std::pow(factor - 1, 4));
                 for (const auto& exp : session.parameters().experiments) {
                     for (double value : exp.model_profile) near(value, 20);
                     for (double value : exp.error) near(value, (factor - 1) * (factor - 1));
@@ -273,8 +278,27 @@ TEST(Workflow, InitialParameterSnapshotPrecedesSolveAndOwnsStartingValues)
         ASSERT_EQ(result.parameters.size(), 1u);
         near(result.parameters[0].initial_value, 1);
         near(result.parameters[0].value, 1);
+        ASSERT_TRUE(result.sum_squared_residuals.has_value());
+        near(*result.sum_squared_residuals, 0); // Uniform equilibrium matches exactly.
+        std::size_t reports = 0;
+        for (const auto& event : events) {
+            if (event.kind != event_kind::optimizer_progress) continue;
+            ++reports;
+            ASSERT_TRUE(event.sum_squared_residuals.has_value());
+            near(*event.sum_squared_residuals, 0);
+            ASSERT_EQ(event.parameters.size(), 1u);
+            EXPECT_EQ(event.parameters[0].source, "global");
+            EXPECT_EQ(event.parameters[0].name, "keq1");
+            near(event.parameters[0].initial_value, 1);
+            near(event.parameters[0].value, 1);
+            EXPECT_GT(event.evaluations.value_or(0), 0);
+        }
+        EXPECT_EQ(reports > 0, optimize);
         session.parameters().initial_values_alglib[0] = 2;
         near(result.parameters[0].initial_value, 1); // Owned, not a live reference.
+        for (const auto& event : events)
+            if (event.kind == event_kind::optimizer_progress)
+                near(event.parameters[0].initial_value, 1);
     }
 }
 
