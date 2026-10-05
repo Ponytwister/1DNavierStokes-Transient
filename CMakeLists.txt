@@ -5,6 +5,13 @@ option(NAVIER_BUILD_GUI "Build the Qt Widgets desktop application" OFF)
 
 include(CTest)
 add_executable(${PROJECT_NAME} tsensor.cpp)
+if(WIN32)
+    enable_language(RC)
+    configure_file(assets/navier.rc.in ${CMAKE_CURRENT_BINARY_DIR}/navier.rc @ONLY)
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/navier.rc PROPERTIES
+        OBJECT_DEPENDS "${PROJECT_SOURCE_DIR}/assets/navier.ico")
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/navier.rc)
+endif()
 
 add_subdirectory(src)
 if(NAVIER_BUILD_GUI)

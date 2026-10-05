@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Navier microchannel</title>
+  <desc>Three inlet channels converge inside a blue microfluidic chip beneath a red fluorescence detector.</desc>
+  <g stroke="#203b50" stroke-width="7" stroke-linejoin="round">
+    <path fill="#8bbad5" d="M18 130 162 173 238 133 238 163 162 207 18 163Z"/>
+    <path fill="#dceff9" d="M18 130 94 87 238 133 162 177Z"/>
+    <path fill="none" stroke="#437891" stroke-width="8" stroke-linecap="round" d="M49 131 120 146 209 147 M74 117 120 146 M98 105 120 146"/>
+    <path fill="none" stroke="#f04452" stroke-width="6" d="M135 68 149 147 179 155 233 89"/>
+    <path fill="#263744" d="M119 65 174 43 237 61 184 85Z"/>
+  </g>
+  <path fill="none" stroke="#ff6973" stroke-width="5" stroke-linecap="round" d="M145 64 178 53 209 62"/>
+</svg>

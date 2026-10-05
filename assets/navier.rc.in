@@ -1,0 +1,2 @@
+// Shared Explorer icon for the terminal and desktop executables.
+1 ICON "@PROJECT_SOURCE_DIR@/assets/navier.ico"

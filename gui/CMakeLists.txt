@@ -22,6 +22,8 @@ target_link_libraries(navier_gui PUBLIC tsensor Qt6::Widgets)
 target_include_directories(navier_gui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(navier_gui PROPERTIES AUTOMOC ON)
 add_executable(NavierGui WIN32 main.cpp)
+target_sources(NavierGui PRIVATE ${PROJECT_BINARY_DIR}/navier.rc ${PROJECT_SOURCE_DIR}/assets/navier.qrc)
+set_target_properties(NavierGui PROPERTIES AUTORCC ON)
 target_link_libraries(NavierGui PRIVATE navier_gui)
 
 include(${PROJECT_SOURCE_DIR}/cmake/PackageGui.cmake)
