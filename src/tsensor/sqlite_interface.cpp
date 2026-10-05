@@ -850,6 +850,19 @@ int
 raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
 {
     auto& p = *static_cast<parameters_t*>(data);
+    // SELECT * follows schema order; OMIT can come after the fit parameters.
+    // Decide before registering any profile-local solver variables. The GUI and
+    // ALGLIB both consume the resulting solvables list.
+    bool omit = false;
+    for (int i = 0; i < count; ++i) {
+        if (std::string(columnNames[i]) == "OMIT" && argv[i] != nullptr) {
+            std::string value = argv[i];
+            removeSpaces(value);
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            omit = value == "true";
+        }
+    }
     add_report(p, 0, "callback_start");
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
@@ -883,6 +896,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
                     if (p.experiments.at(j).second_name == value && run_ptr == p.experiments.at(j).run) {
                         row = j;
                         exp_ptr = &p.experiments.at(j);
+                        exp_ptr->omit = omit;
                         break;
                     } else if (j == p.experiments.size() - 1) {
                         pop_report(p, 0); // clear criterion
@@ -944,7 +958,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             pop_report(p, 0);
         } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
             add_report(p, 0, "Value=" + value);
-            if (!value.empty()) {
+            if (!omit && !value.empty()) {
                 while (getline(ss, s, ' ')) {
                     if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
                         p.solve_for.push_back(s);
@@ -984,15 +998,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             }
             pop_report(p, 0);
         } else if (criterion == "OMIT") {
-            add_report(p, 0, "Value=" + value);
-            exp_ptr->omit = false;
-            if (!value.empty()) {
-                std::transform(value.begin(), value.end(), value.begin(), ::tolower);
-                if (value == "true") {
-                    exp_ptr->omit = true;
-                }
-            }
-            pop_report(p, 0);
+            // Already applied when the experiment was identified above.
         }
     };
     pop_report(p, 0); // clear final criterion

@@ -56,6 +56,54 @@ void migrate_channels(sqlite3* db) {
     sql(db, std::string(std::istreambuf_iterator<char>(file), {}));
 }
 
+TEST(Workflow, OmittedProfileParametersNeverReachGuiEventsOrSolver) {
+    for (bool omit_first : {false, true}) {
+        SCOPED_TRACE(omit_first);
+        fixture files;
+        std::vector<progress_event> events;
+        run_session session(files.database, [&](const progress_event& event) {
+            events.push_back(event);
+        });
+        auto* db = session.database();
+        // Exercise either column order: omission must be known before registration.
+        sql(db, "ALTER TABLE raw_profile RENAME TO original_profiles");
+        sql(db, std::string("CREATE TABLE raw_profile AS SELECT ") +
+            (omit_first ? "OMIT," : "") +
+            "NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,"
+            "INLET_COND_ID,'width' AS INDEPENDENT_PARAMETERS_TO_SOLVE_FOR,LEFT_EDGE,WIDTH" +
+            (omit_first ? "" : ",OMIT") + " FROM original_profiles");
+        sql(db, "UPDATE raw_profile SET OMIT='TrUe' WHERE WT_PERCENT='4.0';"
+                "INSERT INTO alglib_input VALUES('width',8,7,9,1);"
+                "INSERT INTO model_controls VALUES('run_solver','true')");
+        session.load_inputs();
+        auto& p = session.parameters();
+        ASSERT_EQ(p.solvables.size(), 4u); // Universal keq1 and three active widths.
+        EXPECT_EQ(p.initial_values_alglib.size(), 4u);
+        EXPECT_EQ(p.scale.size(), 4u);
+        EXPECT_EQ(p.low_bound.size(), 4u);
+        EXPECT_EQ(p.up_bound.size(), 4u);
+        for (const auto& parameter : p.solvables)
+            EXPECT_NE(parameter.source_name, "uniform_4.0");
+        ASSERT_TRUE(p.experiments.back().omit);
+        EXPECT_EQ(p.experiments.back().width.source, &p.experiments.back().run->width);
+        const auto result = session.run();
+        EXPECT_GT(result.residual_evaluations, 0);
+        ASSERT_EQ(result.parameters.size(), 4u);
+        bool initialized = false, progressed = false;
+        for (const auto& event : events) {
+            if (event.kind != event_kind::parameters_initialized &&
+                event.kind != event_kind::optimizer_progress) continue;
+            initialized |= event.kind == event_kind::parameters_initialized;
+            progressed |= event.kind == event_kind::optimizer_progress;
+            EXPECT_EQ(event.parameters.size(), 4u);
+            for (const auto& parameter : event.parameters)
+                EXPECT_NE(parameter.source, "uniform_4.0");
+        }
+        EXPECT_TRUE(initialized);
+        EXPECT_TRUE(progressed);
+    }
+}
+
 TEST(ScatterControl, DatabaseAndInMemoryChoicesReachResiduals) {
     // Uniform dye and beads, zero reaction rate, and no-flux walls give a
     // constant analytical solution. At the Gaussian center the correction
