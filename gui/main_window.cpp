@@ -47,7 +47,7 @@ MainWindow::MainWindow()
     speciesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::species);
     tabs_->addTab(speciesPage_, "Species");
     alglibPage_ = new DatabaseTableTab(DatabaseTableTab::Table::alglib);
-    tabs_->addTab(alglibPage_, "ALGLIB");
+    tabs_->addTab(alglibPage_, "Variables");
     rawProfilesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::raw_profile);
     tabs_->addTab(rawProfilesPage_, "Raw profiles");
     auto selectedExperiments = [this] {

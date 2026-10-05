@@ -503,7 +503,7 @@ TEST(Gui, AlglibBrowseAddValidateAndModify)
     Inputs input;
     MainWindow window; input.choose(window); window.show();
     auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(5);
-    EXPECT_EQ(tabs->tabText(5), "ALGLIB");
+    EXPECT_EQ(tabs->tabText(5), "Variables");
     auto* table = widget<QTableWidget>(window, "alglib_inputTable");
     ASSERT_EQ(table->rowCount(), 1); ASSERT_EQ(table->columnCount(), 5);
     EXPECT_EQ(table->item(0, 0)->text(), "keq1");

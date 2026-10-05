@@ -310,9 +310,9 @@ database defaults on Add. A successful save clears previous run results. Add and
 Modify are unavailable while channel dimensions have pending edits, or while a
 calculation/result save is active. No schema migration is needed.
 
-### ALGLIB tab
+### Variables tab
 
-The ALGLIB tab displays `alglib_input`, ordered by `VARIABLE`, with Add, Modify,
+The Variables tab displays `alglib_input`, ordered by `VARIABLE`, with Add, Modify,
 and Refresh controls. The editor exposes `VARIABLE`, `INITIAL VALUE`, `LOWER BOUND`,
 `UPPER BOUND`, and `SCALE`. All four numeric values are required and finite;
 the lower bound must not exceed the upper bound, the initial value must lie within
