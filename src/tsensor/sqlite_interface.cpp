@@ -1175,26 +1175,6 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
     }
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
-
-    for (int entrance = 0; entrance < p.experiments.at(3).entrances.size(); entrance++) {
-        int row = 3;
-        experiment_struct* exp_ptr = &p.experiments.at(row);
-        entrance_struct* entr_ptr = &exp_ptr->entrances.at(entrance);
-        experiment_run_struct* run_ptr = exp_ptr->run;
-        add_report(p, 3, "Entrance " + std::to_string(entrance) + ": ");
-        for (int specie = 0; specie < run_ptr->species.size(); specie++) {
-            specie_struct* specie_ptr = &run_ptr->species.at(specie);
-            double conc = 0;
-            for (auto specie_key : entr_ptr->CONC) {
-                if (specie_key.first == specie_ptr) {
-                    conc = specie_key.second;
-                    break;
-                }
-            }
-            add_report(p, 3, std::to_string(conc * unit_conversion(run_ptr, specie, run_ptr->species.at(specie).input_units, run_ptr->species.at(specie).model_units)) + " " + run_ptr->species.at(specie).model_units + " " + specie_ptr->name + ",");
-        }
-        add_finishing_report(p, 3, "");
-    }
 }
 
 int 
