@@ -71,11 +71,22 @@ part of these workflow tests.
 this fixture at the Gaussian center of each existing scatter calibration, with
 particle diameters of 20 and 40 nm. Zero reaction rate and a uniform inlet keep
 the dye profile at 20 and the bead concentration constant. The independently
-simplified correction is `1 - amplitude + center * slope`; the expected squared
-residual is `(correction - 1)^2`, or zero with `none`. The test covers database
+simplified correction is `1 - amplitude + center * slope`; the expected signed
+residual is `correction - 1`, or zero with `none`. ALGLIB's objective is the sample
+count times `(correction - 1)^2`; exported errors retain that squared discrepancy.
+The test covers database
 controls and in-memory controls that deliberately contradict the database,
 including an off/on/off sequence of fresh sessions. It uses the existing finite
 value tolerance. The model profile itself remains uncorrected under both choices;
 the correction currently affects only residuals. This checks control propagation
 and the existing formula, not the empirical calibration or general transient
 solver accuracy.
+
+`Workflow.SignedResidualsGiveLeastSquaresObjectiveAndPreserveReportedErrors`
+uses the same uniform equilibrium (normalized model = 1) with normalized observations
+0.5, 3, 1, and 5. The last profile is omitted. The residuals must be 0.5, -2, 0,
+and 0, with squared reported errors 0.25, 4, 0, and 0. Nine samples per profile
+give a least-squares objective of 38.25, rather than the former fourth-power
+objective of 144.5625. Both the ALGLIB progress reports and final objective are
+checked using the unchanged finite-value tolerance. This is an analytical objective
+regression, not validation of parameter recovery or the full transient solver.

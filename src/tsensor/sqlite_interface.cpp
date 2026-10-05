@@ -2276,9 +2276,12 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
         }
 
         assert (i + exp_ptr->window_start < p.total_window_size); // residuals input is out of bounds
-        residuals[i + exp_ptr->window_start] = pow(exp_ptr->model_profile.at(i) * scatter / run_ptr->dye_conc - exp_ptr->experimental_profile.at(i), 2.0d) * !exp_ptr->omit;
+        // MinLM minimizes sum(fi^2); supply signed discrepancies, not their squares.
+        const double residual = (exp_ptr->model_profile.at(i) * scatter / run_ptr->dye_conc - exp_ptr->experimental_profile.at(i)) * !exp_ptr->omit;
+        residuals[i + exp_ptr->window_start] = residual;
 
-        exp_ptr->error.at(i) = residuals[i + exp_ptr->window_start];
+        // Preserve squared-error semantics in exported profiles and database rows.
+        exp_ptr->error.at(i) = residual * residual;
 
         if (i == 0 || i == exp_ptr->window_size - 1) {
             exp_ptr->experimental_derivative.at(i) = 0.0;

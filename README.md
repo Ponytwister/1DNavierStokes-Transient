@@ -33,11 +33,15 @@ During fitting, the parameter **Value** column and **Sum of squared residuals**
 update at ALGLIB reporting points (including the initial point and internal steps).
 Initial values remain visible for comparison. The latest reported residual sum stays
 visible during trial model evaluations and is included in the final GUI/terminal summary.
-This is ALGLIB's objective, `sum(fi[i]^2)`: the current model already returns squared
-profile discrepancies as `fi`, so it is a sum of fourth powers of those discrepancies.
-Reporting does not change the residual definition or convergence settings. Model
+This is ALGLIB's least-squares objective, `sum(fi[i]^2)`, with signed residuals
+`fi = (model * scatter / dye_conc - experimental) * !omit`. ALGLIB performs the
+squaring once. Earlier versions supplied squared discrepancies, minimizing their
+fourth powers instead; fitted parameters and convergence trajectories can therefore
+change with this correction. Profile/report/database `Error` values remain squared
+discrepancies. Normalization, omission, units, boundary conditions, parameter links,
+and convergence settings are unchanged. Model
 evaluation counts are distinct from optimizer iterations; a run without optimization
-reports the residual sum from its single model evaluation.
+reports the residual sum returned by the callback.
 The **File** menu contains setup actions and database/output path selection.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.

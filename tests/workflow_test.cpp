@@ -97,17 +97,59 @@ TEST(ScatterControl, DatabaseAndInMemoryChoicesReachResiduals) {
                 const auto result = session.run();
                 EXPECT_GT(result.residual_evaluations, 0);
                 const double factor = choice == "none" ? 1 : 1 - amplitude + center * slope;
-                // The existing model returns squared discrepancies as residuals;
-                // ALGLIB squares these again in its least-squares objective.
+                // ALGLIB squares the signed profile discrepancies exactly once.
                 ASSERT_TRUE(result.sum_squared_residuals.has_value());
                 near(*result.sum_squared_residuals,
-                     session.parameters().total_window_size * std::pow(factor - 1, 4));
+                     session.parameters().total_window_size * std::pow(factor - 1, 2));
                 for (const auto& exp : session.parameters().experiments) {
                     for (double value : exp.model_profile) near(value, 20);
                     for (double value : exp.error) near(value, (factor - 1) * (factor - 1));
                 }
             }
         }
+    }
+}
+
+TEST(Workflow, SignedResidualsGiveLeastSquaresObjectiveAndPreserveReportedErrors)
+{
+    fixture files;
+    std::vector<progress_event> reports;
+    run_session session(files.database, [&](const progress_event& event) {
+        if (event.kind == event_kind::optimizer_progress) reports.push_back(event);
+    });
+    sql(session.database(), "INSERT INTO model_controls VALUES('run_solver','true')");
+    session.load_inputs();
+    auto& p = session.parameters();
+    ASSERT_EQ(p.experiments.size(), 4u);
+    // Uniform equilibrium gives model/dye_conc = 1 independently of keq1.
+    // Choose normalized observations to exercise both signs, zero, and omission.
+    const double observations[] = {0.5, 3.0, 1.0, 5.0};
+    const double expected[] = {0.5, -2.0, 0.0, 0.0};
+    double expected_sum = 0;
+    for (std::size_t row = 0; row < p.experiments.size(); ++row) {
+        auto& exp = p.experiments[row];
+        std::fill(exp.raw_experimental_profile.begin(), exp.raw_experimental_profile.end(), observations[row]);
+        exp.omit = row == 3;
+        expected_sum += exp.window_size * expected[row] * expected[row];
+    }
+    alglib::real_1d_array controls, residuals;
+    controls.setcontent(p.initial_values_alglib.size(), p.initial_values_alglib.data());
+    residuals.setlength(p.total_window_size);
+    alglib_solver(controls, residuals, &p);
+    for (std::size_t row = 0; row < p.experiments.size(); ++row) {
+        const auto& exp = p.experiments[row];
+        for (int i = 0; i < exp.window_size; ++i) {
+            near(residuals[exp.window_start + i], expected[row]);
+            near(exp.error[i], expected[row] * expected[row]);
+        }
+    }
+    const auto result = session.run();
+    ASSERT_TRUE(result.sum_squared_residuals.has_value());
+    near(*result.sum_squared_residuals, expected_sum);
+    ASSERT_FALSE(reports.empty());
+    for (const auto& report : reports) {
+        ASSERT_TRUE(report.sum_squared_residuals.has_value());
+        near(*report.sum_squared_residuals, expected_sum);
     }
 }
 
