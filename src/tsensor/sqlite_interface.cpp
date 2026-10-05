@@ -1281,15 +1281,18 @@ get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using call
 
     experiment_struct* exp_ptr;
     bool recursive_call_required = false;
+    std::size_t records_to_create = 0;
     for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
         exp_ptr = &p.experiments.at(j);
         if (exp_ptr->SOLUTION_ID == 0) {
-            add_report(p, 3, "Creating a solutions record for " + exp_ptr->run->name);
+            ++records_to_create;
             recursive_call_required = true;
             sqltext.append("INSERT INTO solutions (SOLVE_SETTING_ID, EXPERIMENT_NAME, INLET_COND_ID)");
             sqltext.append(" VALUES ('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + exp_ptr->run->name + "','" + std::to_string(exp_ptr->INLET_COND_ID) + "'); ");
         }
     }
+    if (records_to_create)
+        add_report(p, 3, "Creating " + std::to_string(records_to_create) + " solution records");
     execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     if (p.SOLUTION_ID_RECURSIVE_CALL == true && recursive_call_required) {
         throw std::runtime_error("SOLUTION_ID_RECURSIVE_CALL recursively called more than once.");

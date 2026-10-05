@@ -191,19 +191,24 @@ TEST(Feedback, LoadingIdentityRecordsIsAnExplicitlyReportedWrite)
     )");
     p.experiment_runs.emplace_back();
     p.experiment_runs[0].name = "fixture";
-    p.experiments.emplace_back();
-    p.experiments[0].run = &p.experiment_runs[0];
-    p.experiments[0].INLET_COND_ID = 1;
+    for (int inlet = 1; inlet <= 4; ++inlet) {
+        p.experiments.emplace_back();
+        p.experiments.back().run = &p.experiment_runs[0];
+        p.experiments.back().INLET_COND_ID = inlet;
+    }
     get_solve_settings_ID_from_db(p, session.database());
     get_SOLUTION_IDs_from_db(p, session.database());
     EXPECT_GT(p.SOLVE_SETTING_ID, 0);
     EXPECT_GT(p.experiments[0].SOLUTION_ID, 0);
     EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT count(*) FROM solve_settings;"), 1.0);
-    EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT count(*) FROM solutions;"), 1.0);
+    EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT count(*) FROM solutions;"), 4.0);
     const auto creations = std::count_if(events.begin(), events.end(), [](const progress_event& event) {
         return event.action == operation::load_inputs && event.message.find("Creating ") == 0;
     });
-    EXPECT_EQ(creations, 2);
+    EXPECT_EQ(creations, 2); // One settings message and one summary for all four profiles.
+    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const progress_event& event) {
+        return event.message == "Creating 4 solution records";
+    }), 1);
     events.clear();
     get_solve_settings_ID_from_db(p, session.database());
     get_SOLUTION_IDs_from_db(p, session.database());
