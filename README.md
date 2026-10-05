@@ -43,6 +43,12 @@ and convergence settings are unchanged. Model
 evaluation counts are distinct from optimizer iterations; a run without optimization
 reports the residual sum returned by the callback.
 The **File** menu contains setup actions and database/output path selection.
+The Experiments, Reactions, Species, Variables (`alglib_input`), and Raw profiles
+(`raw_profile`) tables load into memory when a database is selected and remain
+there when switching tabs. Loading costs are paid on database selection; memory
+usage scales with the table contents. Use **Refresh** to see external database
+changes. Row edits refresh their table, saving fitted inputs refreshes all five,
+and selecting another database replaces every cached table.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.

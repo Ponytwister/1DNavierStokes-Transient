@@ -24,7 +24,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 private:
     enum class Work { idle, solve, save };
-    struct ActionResult { QString message; std::exception_ptr error; };
+    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; };
     void startRun();
     void saveSetup();
     void openSetup();
@@ -45,6 +45,8 @@ private:
     QString activeDatabase_;
     std::optional<model_controls::Snapshot> modelControls_;
     void loadControls();
+    void reloadTables();
+    void applyTableFilters();
     tsensor_workflow::background_runner runner_;
     std::unique_ptr<tsensor_workflow::run_session> session_;
     // Destroy/join pending work before destroying the session it borrows.

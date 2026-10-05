@@ -416,9 +416,35 @@ TEST(Gui, ReferenceFiltersUseSelectedExperimentListsAndRefresh)
     reactionFilter->setChecked(false);
     EXPECT_EQ(visibleNames(reactions).size(), 1);
     tabs->setCurrentIndex(4);
+    widget<QPushButton>(window, "speciesRefreshButton")->click();
     EXPECT_TRUE(widget<QLabel>(window, "speciesFilterStatus")->text().contains("Cannot load"));
     speciesFilter->setChecked(false);
     EXPECT_EQ(visibleNames(species).size(), 3);
+}
+
+TEST(Gui, AllDatabaseTabsArePreloadedAndRetainedDuringNavigation)
+{
+    Inputs input;
+    MainWindow window; input.choose(window);
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    ASSERT_EQ(tabs->currentIndex(), 0);
+    const char* tables[] = {"experimentsTable", "reactionsTable", "speciesTable", "alglib_inputTable", "raw_profileTable"};
+    // Remove the disposable database after loading: even first visits must use memory.
+    ASSERT_TRUE(QFile::remove(input.database));
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < 5; ++i) {
+            auto* table = widget<QTableWidget>(window, tables[i]);
+            ASSERT_GT(table->rowCount(), 0);
+            auto* first = table->item(0, 0);
+            table->selectRow(0);
+            tabs->setCurrentIndex(i + 2);
+            EXPECT_EQ(table->item(0, 0), first);
+            EXPECT_EQ(table->currentRow(), 0);
+            ASSERT_GT(table->selectedItems().size(), 0);
+        }
+    }
+    widget<QLineEdit>(window, "databasePath")->clear();
+    for (const auto* name : tables) EXPECT_EQ(widget<QTableWidget>(window, name)->rowCount(), 0);
 }
 
 TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
@@ -451,7 +477,7 @@ TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
     input.execute("UPDATE reactions SET Ks='2 3' WHERE REACTION_NAME='!Unassigned'");
     tabs->setCurrentIndex(3);
     auto* reactions = widget<QTableWidget>(window, "reactionsTable");
-    EXPECT_EQ(reactions->item(0, 3)->text(), "2 3");
+    EXPECT_EQ(reactions->item(0, 3)->text(), "NULL"); // Navigation retains the cached snapshot.
     input.execute("UPDATE reactions SET Ks='4 5' WHERE REACTION_NAME='!Unassigned'");
     widget<QPushButton>(window, "reactionsRefreshButton")->click();
     EXPECT_EQ(reactions->item(0, 3)->text(), "4 5");
@@ -463,7 +489,7 @@ TEST(Gui, ReferenceTabsBrowseRefreshAndSwitchDatabasesWithoutWrites)
     ASSERT_EQ(reactions->rowCount(), 1);
     EXPECT_EQ(reactions->item(0, 0)->text(), "FITC_40nm_1");
     auto* species = widget<QTableWidget>(window, "speciesTable");
-    EXPECT_EQ(species->rowCount(), 0); // Hidden tab cleared on a database switch.
+    EXPECT_EQ(species->rowCount(), 3); // Hidden tabs are preloaded for the new database.
     tabs->setCurrentIndex(4);
     EXPECT_EQ(species->rowCount(), 3);
 }

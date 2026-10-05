@@ -129,24 +129,12 @@ MainWindow::MainWindow()
         if (tabs_->currentIndex() == 1) tabs_->setCurrentIndex(0);
         modelControls_.reset(); experimentsPage_->clear();
         reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); rawProfilesPage_->clear(); clearResult();
-        const auto database = database_->text().trimmed();
-        if (tabs_->currentIndex() == 2) experimentsPage_->load(database);
-        if (tabs_->currentIndex() == 3) reactionsPage_->load(database);
-        if (tabs_->currentIndex() == 4) speciesPage_->load(database);
-        if (tabs_->currentIndex() == 5) alglibPage_->load(database);
-        if (tabs_->currentIndex() == 6) rawProfilesPage_->load(database);
+        // Each table owns its in-memory rows for the selected database.
+        reloadTables();
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (work_ == Work::idle && !closing_) {
-            const auto database = database_->text().trimmed();
-            if (index == 2) experimentsPage_->load(database);
-            if (index == 3) reactionsPage_->load(database);
-            if (index == 4) speciesPage_->load(database);
-            if (index == 5) alglibPage_->load(database);
-            if (index == 6) rawProfilesPage_->load(database);
-        }
         if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
@@ -164,6 +152,7 @@ MainWindow::MainWindow()
         connect(editor, &QDialog::finished, this, [this, editor](int result) {
             if (result == QDialog::Accepted) {
                 modelControls_ = editor->values();
+                applyTableFilters();
                 clearResult();
             }
             discardControlsEditor();
@@ -181,7 +170,7 @@ MainWindow::MainWindow()
         if (QMessageBox::question(this, "Save fitted inputs", "Replace fitted initial inputs in\n" + activeDatabase_ + "?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
             save(operation::save_fitted_parameters);
     });
-    experimentsPage_->saved = [this] { clearResult(); setStatus("Experiment saved. Run again to calculate results."); };
+    experimentsPage_->saved = [this] { applyTableFilters(); clearResult(); setStatus("Experiment saved. Run again to calculate results."); };
     auto referenceSaved = [this] { clearResult(); setStatus("Reference data saved. Run again to calculate results."); };
     reactionsPage_->saved = referenceSaved;
     speciesPage_->saved = referenceSaved;
@@ -191,6 +180,22 @@ MainWindow::MainWindow()
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
     updateControls();
+}
+
+void MainWindow::reloadTables() {
+    const auto database = database_->text().trimmed();
+    experimentsPage_->load(database);
+    reactionsPage_->load(database);
+    speciesPage_->load(database);
+    alglibPage_->load(database);
+    rawProfilesPage_->load(database);
+}
+
+void MainWindow::applyTableFilters() {
+    experimentsPage_->experimentFilter()->apply();
+    rawProfilesPage_->experimentFilter()->apply();
+    reactionsPage_->experimentFilter()->apply();
+    speciesPage_->experimentFilter()->apply();
 }
 
 void MainWindow::setStatus(const QString& value) {
@@ -355,7 +360,7 @@ void MainWindow::save(operation requested)
                 } else if (requested == operation::save_model_profiles) {
                     session->save_model_profiles(); result.message = "Profiles saved.";
                 } else {
-                    session->save_fitted_parameters(); result.message = "Fitted inputs saved.";
+                    session->save_fitted_parameters(); result.reloadTables = true; result.message = "Fitted inputs saved.";
                 }
             } catch (...) { result.error = std::current_exception(); }
             return result;
@@ -423,7 +428,10 @@ void MainWindow::poll()
             // Keep errors and results visible for retry after a deferred close.
             closing_ = false;
             reportFailure(result.error);
-        } else setStatus(result.message);
+        } else {
+            if (result.reloadTables) reloadTables();
+            setStatus(result.message);
+        }
         updateControls();
     }
     if (closing_ && work_ == Work::idle) close();
