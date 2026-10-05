@@ -144,6 +144,13 @@ void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_value
     get_SOLUTION_IDs_from_db(p, db);
     //get_solvable_initial_values_from_db(p, db);
     read_alglib_values_from_db(p, db);
+    progress_event initialized{event_kind::parameters_initialized, operation::load_inputs, {}};
+    for (std::size_t i = 0; i < p.solvables.size(); ++i) {
+        const auto& parameter = p.solvables[i];
+        initialized.parameters.push_back({parameter.source_name, parameter.name,
+                                         p.initial_values_alglib[i], p.initial_values_alglib[i]});
+    }
+    publish_event(p, std::move(initialized));
     check_cancellation(p);
     normalize_profile(p);
     check_cancellation(p);
@@ -164,6 +171,7 @@ run_result run(parameters_t& p)
     Recommended values: 1E-9 ... 1E-12.
     */
     run_result result;
+    const auto initial_values = p.initial_values_alglib;
     double DiffStep = 0.0001;
     alglib::real_1d_array control_parameters;
     control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib.data());
@@ -199,7 +207,7 @@ run_result run(parameters_t& p)
     result.residual_evaluations = p.iterations;
     for (std::size_t i = 0; i < p.solvables.size(); ++i) {
         const auto& parameter = p.solvables[i];
-        result.parameters.push_back({parameter.source_name, parameter.name, p.initial_values_alglib[i]});
+        result.parameters.push_back({parameter.source_name, parameter.name, p.initial_values_alglib[i], initial_values[i]});
     }
     return result;
 }

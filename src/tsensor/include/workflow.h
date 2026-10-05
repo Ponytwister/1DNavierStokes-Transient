@@ -7,12 +7,6 @@
 // run_session below, which owns state/connection and enforces operation order.
 namespace tsensor_workflow {
 
-struct parameter_value {
-    std::string source;
-    std::string name;
-    double value;
-};
-
 struct run_result {
     bool optimizer_ran = false;
     int residual_evaluations = 0;

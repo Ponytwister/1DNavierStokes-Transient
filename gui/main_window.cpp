@@ -102,8 +102,8 @@ MainWindow::MainWindow()
     summary_ = new QLabel; summary_->setObjectName("resultSummary"); summary_->setWordWrap(true);
     resultDatabase_ = new QLabel; resultDatabase_->setTextFormat(Qt::PlainText); resultDatabase_->setWordWrap(true);
     layout->addWidget(summary_); layout->addWidget(resultDatabase_);
-    values_ = new QTableWidget(0, 3); values_->setObjectName("parameterTable");
-    values_->setHorizontalHeaderLabels({"Source", "Parameter", "Value"});
+    values_ = new QTableWidget(0, 4); values_->setObjectName("parameterTable");
+    values_->setHorizontalHeaderLabels({"Source", "Parameter", "Initial value", "Value"});
     values_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     values_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     layout->addWidget(values_, 1);
@@ -364,13 +364,27 @@ void MainWindow::save(operation requested)
     } catch (...) { reportFailure(std::current_exception()); }
 }
 
+void MainWindow::showParameters(const std::vector<parameter_value>& parameters, bool completed)
+{
+    values_->setRowCount(static_cast<int>(parameters.size()));
+    for (int i = 0; i < values_->rowCount(); ++i) {
+        const auto& parameter = parameters[i];
+        values_->setItem(i, 0, new QTableWidgetItem(text(parameter.source)));
+        values_->setItem(i, 1, new QTableWidgetItem(text(parameter.name)));
+        values_->setItem(i, 2, new QTableWidgetItem(QString::number(parameter.initial_value, 'g', 15)));
+        values_->setItem(i, 3, new QTableWidgetItem(completed ? QString::number(parameter.value, 'g', 15) : QString{}));
+    }
+}
+
 void MainWindow::poll()
 {
     if (work_ == Work::solve) {
         // Observe completion before draining so terminal progress is not lost.
         const auto state = runner_.status();
         for (const auto& event : runner_.drain_events()) {
-            if (event.kind == event_kind::evaluation)
+            if (event.kind == event_kind::parameters_initialized)
+                showParameters(event.parameters, false);
+            else if (event.kind == event_kind::evaluation)
                 summary_->setText("Completed model evaluations: " + QString::number(event.evaluations.value_or(0)));
             else if (event.kind != event_kind::message || event.detail_level >= 3)
                 log_->appendPlainText(text(event.message));
@@ -387,13 +401,7 @@ void MainWindow::poll()
                     .arg(result.optimizer_iterations ? QString::number(*result.optimizer_iterations) : "Not run")
                     .arg(result.termination_type ? QString::number(*result.termination_type) : "Not run"));
                 resultDatabase_->setText("Results from: " + activeDatabase_);
-                values_->setRowCount(static_cast<int>(result.parameters.size()));
-                for (int i = 0; i < values_->rowCount(); ++i) {
-                    const auto& parameter = result.parameters[i];
-                    values_->setItem(i, 0, new QTableWidgetItem(text(parameter.source)));
-                    values_->setItem(i, 1, new QTableWidgetItem(text(parameter.name)));
-                    values_->setItem(i, 2, new QTableWidgetItem(QString::number(parameter.value, 'g', 15)));
-                }
+                showParameters(result.parameters, true);
                 setStatus("Run finished. Review the termination code and results before saving.");
             }
             updateControls();

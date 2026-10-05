@@ -31,6 +31,7 @@ private:
     void poll();
     void updateControls();
     void clearResult();
+    void showParameters(const std::vector<tsensor_workflow::parameter_value>& parameters, bool completed);
     void save(tsensor_workflow::operation action);
     void reportFailure(std::exception_ptr error);
     void setStatus(const QString& text);

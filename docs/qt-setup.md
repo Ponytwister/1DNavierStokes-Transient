@@ -118,7 +118,10 @@ Inputs are locked while a calculation or save is active. The progress indicator
 shows activity, not a completion percentage; completed model evaluations are
 reported separately. The log keeps the most recent 500 lines.
 
-The result table lists parameter source, name, and value. The summary reports
+The result table lists parameter source, name, initial value, and result value.
+Initial values populate after input loading, before solving; result values appear
+only after successful completion. Initial values remain visible if solving fails
+or is cancelled, and are cleared when starting another run or changing databases. The summary reports
 optimizer iterations and the termination code; "finished" does not imply a
 converged fit. The result database is displayed above the table. Choosing another
 database clears the old results to prevent saving them to the wrong destination.

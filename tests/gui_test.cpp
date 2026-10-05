@@ -1154,6 +1154,12 @@ TEST(Gui, RunExportAndExplicitSaves)
     EXPECT_TRUE(widget<QTabWidget>(window, "mainTabs")->isTabEnabled(5));
     ASSERT_TRUE(exportButton->isEnabled());
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 1);
+    auto* parameters = widget<QTableWidget>(window, "parameterTable");
+    ASSERT_EQ(parameters->columnCount(), 4);
+    EXPECT_EQ(parameters->horizontalHeaderItem(2)->text(), "Initial value");
+    EXPECT_DOUBLE_EQ(parameters->item(0, 2)->text().toDouble(), 1);
+    EXPECT_NEAR(parameters->item(0, 3)->text().toDouble(), 1, 1e-10);
+    EXPECT_FALSE(widget<QPlainTextEdit>(window, "progressLog")->toPlainText().contains("Initial parameter "));
     EXPECT_TRUE(widget<QLabel>(window, "resultSummary")->text().contains("Termination code:"));
     if (const auto capture = qEnvironmentVariable("NAVIER_GUI_CAPTURE"); !capture.isEmpty()) {
         QApplication::processEvents();
@@ -1180,6 +1186,23 @@ TEST(Gui, RunExportAndExplicitSaves)
     widget<QLineEdit>(window, "databasePath")->setText("another.db");
     EXPECT_FALSE(exportButton->isEnabled());
     EXPECT_EQ(widget<QTableWidget>(window, "parameterTable")->rowCount(), 0);
+}
+
+TEST(Gui, InitialValuesRemainVisibleWhenSolveFails)
+{
+    Inputs input;
+    // Invalid optimizer settings fail after inputs (and initial values) are loaded.
+    input.execute("UPDATE model_controls SET value='-1' WHERE criterion='max_iterations'");
+    MainWindow window; input.choose(window);
+    auto* run = widget<QPushButton>(window, "runButton");
+    run->click();
+    ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    auto* table = widget<QTableWidget>(window, "parameterTable");
+    ASSERT_EQ(table->rowCount(), 1);
+    EXPECT_EQ(table->item(0, 1)->text(), "keq1");
+    EXPECT_DOUBLE_EQ(table->item(0, 2)->text().toDouble(), 1);
+    EXPECT_TRUE(table->item(0, 3)->text().isEmpty());
+    EXPECT_TRUE(widget<QLabel>(window, "runStatus")->text().contains("negative MaxIts"));
 }
 
 TEST(Gui, CancelAndCloseDuringCalculation)

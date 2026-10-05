@@ -22,6 +22,7 @@ public:
     ~ProgressPrinter() { finish_line(); }
     void operator()(const tsensor_workflow::progress_event& event) {
         using tsensor_workflow::event_kind;
+        if (event.kind == event_kind::parameters_initialized) return;
         if (event.kind == event_kind::message && event.detail_level < 3) return;
         if (event.kind == event_kind::evaluation) {
             if (interactive_) {

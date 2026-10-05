@@ -1448,8 +1448,6 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         p.up_bound[i] = p.up_bound_map.at(s.name); 
         p.scale[i] = p.scale_map.at(s.name);
 
-        add_report(p, 3, "Initial parameter " + s.source_name + ":" + s.name + " = "
-                         + double_to_string(p.initial_values_alglib[i]));
     }
 }
 

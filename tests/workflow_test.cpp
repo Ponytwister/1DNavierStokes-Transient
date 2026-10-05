@@ -247,6 +247,37 @@ void verify_persistence(run_session& session, const std::filesystem::path& direc
     near(scalar(db, "SELECT MODEL_DA FROM solutions WHERE SOLUTION_ID=99"), 4);
 }
 
+TEST(Workflow, InitialParameterSnapshotPrecedesSolveAndOwnsStartingValues)
+{
+    for (bool optimize : {false, true}) {
+        fixture files;
+        std::vector<progress_event> events;
+        run_session session(files.database, [&](const progress_event& event) { events.push_back(event); });
+        sql(session.database(), std::string("INSERT INTO model_controls VALUES('run_solver','") +
+            (optimize ? "true" : "false") + "')");
+        session.load_inputs();
+        auto initial = std::find_if(events.begin(), events.end(), [](const progress_event& event) {
+            return event.kind == event_kind::parameters_initialized;
+        });
+        ASSERT_NE(initial, events.end());
+        ASSERT_EQ(initial->parameters.size(), 1u);
+        EXPECT_EQ(initial->parameters[0].source, "global");
+        EXPECT_EQ(initial->parameters[0].name, "keq1");
+        // The fixture's explicit reaction Ks="0 1" initializes the linked keq1
+        // to 1, taking precedence over the Variables table's 0.75 default.
+        near(initial->parameters[0].initial_value, 1);
+        EXPECT_FALSE(std::any_of(events.begin(), events.end(), [](const progress_event& event) {
+            return event.message.find("Initial parameter ") != std::string::npos;
+        }));
+        const auto result = session.run();
+        ASSERT_EQ(result.parameters.size(), 1u);
+        near(result.parameters[0].initial_value, 1);
+        near(result.parameters[0].value, 1);
+        session.parameters().initial_values_alglib[0] = 2;
+        near(result.parameters[0].initial_value, 1); // Owned, not a live reference.
+    }
+}
+
 TEST(Workflow, SynchronousLoadSolveExportSaveAndReload)
 {
     fixture files;
