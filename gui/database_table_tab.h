@@ -11,7 +11,7 @@ class QTableWidget;
 // Browse reference tables without loading the model or retaining a connection.
 class DatabaseTableTab : public QWidget {
 public:
-    enum class Table { reactions, species, alglib, raw_profile };
+    enum class Table { reactions, species, alglib, raw_profile, experiments };
     explicit DatabaseTableTab(Table table, QWidget* parent = nullptr);
     void load(QString database);
     void clear();

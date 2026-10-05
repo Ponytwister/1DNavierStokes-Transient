@@ -277,7 +277,8 @@ The **Experiments** tab displays columns and filterable rows of the selected dat
 refreshes when opened or when the database changes; a read error clears stale
 rows. Browsing experiments does not load a model or create solution records.
 
-Channel dimensions can be edited and saved per experiment after applying the
+Use **Add...** or select a row and choose **Modify...** to edit experiment metadata
+and channel dimensions in a Save/Cancel dialog after applying the
 [channel dimensions migration](channel-dimensions.md). Dimensions are in meters
 and may differ between experiments in a combined run.
 
@@ -310,8 +311,7 @@ Writes use bound parameters and a transaction. Modify compares the complete
 original row, including unknown columns, to detect concurrent changes; on conflict,
 cancel and Refresh before retrying. Extra columns are retained on Modify and use
 database defaults on Add. A successful save clears previous run results. Add and
-Modify are unavailable while channel dimensions have pending edits, or while a
-calculation/result save is active. No schema migration is needed.
+Modify are unavailable while a calculation/result save is active. No schema migration is needed.
 
 ### Variables tab
 

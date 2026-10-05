@@ -1,16 +1,16 @@
 # Per-experiment channel dimensions
 
 The Experiments tab exposes **Channel Width (m)**, **Channel Height (m)**, and
-**Channel Length (m)** beside NAME. Double-click a dimension, edit it, and select
-**Save channel dimensions**. Other experiment metadata remains read-only. All
-three values must be finite positive numbers in meters. These are physical
+**Channel Length (m)** beside NAME. Use **Add...** to create an experiment or
+select a row and choose **Modify...** to edit its metadata and dimensions. All
+three dimensions must be finite positive numbers in meters. These are physical
 channel dimensions, distinct from the existing `WIDTH` profile/fit parameter.
+New experiments start with dimensions 5e-4 x 4e-5 x 0.025 m.
 
-Edits persist in `experiments.CHANNEL_WIDTH`, `CHANNEL_HEIGHT`, and
-`CHANNEL_LENGTH`. Save updates changed rows in one transaction and rejects a
-concurrent dimension change; **Reload / discard edits** reloads database values.
-Drafts survive tab switches. Run, setup/path changes, and model-control editing
-are blocked until drafts are saved or discarded. Saving invalidates old results.
+The dialog's **Save** writes the experiment in one transaction; **Cancel**
+discards edits. Names cannot be changed when modifying an experiment. A save
+rejects concurrent changes to the original row; cancel and **Refresh** to retry.
+Saving invalidates old results. The table itself is read-only.
 A setup JSON still stores paths and model controls only; channel dimensions come
 from its referenced database at run time.
 

@@ -323,7 +323,7 @@ TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
     widget<QPushButton>(window, "raw_profileRefreshButton")->click();
     EXPECT_EQ(visibleNames(profiles), QStringList{"second"});
     tabs->setCurrentIndex(2);
-    widget<QPushButton>(window, "reloadExperimentsButton")->click();
+    widget<QPushButton>(window, "experimentsRefreshButton")->click();
     EXPECT_EQ(visibleNames(experiments), QStringList{"second"});
     experimentFilter->setChecked(false);
     EXPECT_EQ(visibleNames(experiments).size(), 3);
@@ -668,46 +668,52 @@ TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
     MainWindow window; input.choose(window); window.show();
     auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(2);
     auto* table = widget<QTableWidget>(window, "experimentsTable");
-    auto* save = widget<QPushButton>(window, "saveDimensionsButton");
-    auto* reload = widget<QPushButton>(window, "reloadExperimentsButton");
-    int width = -1, height = -1, length = -1;
-    for (int i = 0; i < table->columnCount(); ++i) {
-        const auto label = table->horizontalHeaderItem(i)->text();
-        if (label == "Channel Width (m)") width = i;
-        if (label == "Channel Height (m)") height = i;
-        if (label == "Channel Length (m)") length = i;
-    }
-    ASSERT_GE(width, 0); ASSERT_GE(height, 0); ASSERT_GE(length, 0);
-    EXPECT_FALSE(table->item(0, 0)->flags() & Qt::ItemIsEditable);
-    auto* selectedOnly = widget<QCheckBox>(window, "experimentsSelectedOnly");
-    selectedOnly->setChecked(false);
-    table->item(0, width)->setText("nan");
-    selectedOnly->setChecked(true);
-    EXPECT_TRUE(table->isRowHidden(0));
-    selectedOnly->setChecked(false);
-    EXPECT_EQ(table->item(0, width)->text(), "nan");
-    EXPECT_TRUE(save->isEnabled());
-    save->click();
-    EXPECT_TRUE(save->isEnabled());
+    EXPECT_EQ(window.findChild<QPushButton*>("saveDimensionsButton"), nullptr);
+    auto* modify = widget<QPushButton>(window, "experimentsModifyButton");
+    EXPECT_FALSE(modify->isEnabled());
+    widget<QCheckBox>(window, "experimentsSelectedOnly")->setChecked(false);
+    table->selectRow(1);
+    EXPECT_FALSE(table->item(1, 0)->flags() & Qt::ItemIsEditable);
+    QTimer::singleShot(0, [&] {
+        auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(widget<QLineEdit>(*editor, "NAME")->isReadOnly());
+        auto* width = widget<QLineEdit>(*editor, "CHANNEL_WIDTH");
+        for (const auto invalid : {"nan", "0", "-1"}) {
+            width->setText(invalid);
+            widget<QPushButton>(*editor, "saveReferenceButton")->click();
+            EXPECT_FALSE(widget<QLabel>(*editor, "referenceEditorStatus")->text().isEmpty());
+            EXPECT_TRUE(editor->isVisible());
+        }
+        width->setText(".001");
+        input.execute("UPDATE experiments SET CHANNEL_WIDTH=.002 WHERE NAME='uniform'");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("changed in the database"));
+        widget<QPushButton>(*editor, "cancelReferenceButton")->click();
+    });
+    modify->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='uniform'"), .002);
     EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='second'"), 5e-4);
-    EXPECT_FALSE(widget<QPushButton>(window, "runButton")->isEnabled());
-    EXPECT_FALSE(widget<QAction>(window, "openSetupAction")->isEnabled());
-    tabs->setCurrentIndex(0); tabs->setCurrentIndex(2);
-    EXPECT_EQ(table->item(0, width)->text(), "nan");
-    table->item(0, width)->setText("0.001");
-    table->item(1, width)->setText("0.003");
-    input.execute("UPDATE experiments SET CHANNEL_WIDTH=.002 WHERE NAME='uniform'");
-    save->click();
-    EXPECT_TRUE(widget<QLabel>(window, "experimentsStatus")->text().contains("changed in the database"));
-    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='second'"), 5e-4);
-    reload->click();
-    EXPECT_FALSE(save->isEnabled());
-    table->item(1, width)->setText("0.001");
-    table->item(1, height)->setText("0.00008");
-    table->item(1, length)->setText("0.05");
-    save->click();
-    EXPECT_FALSE(save->isEnabled());
-    EXPECT_TRUE(widget<QPushButton>(window, "runButton")->isEnabled());
+    widget<QPushButton>(window, "experimentsRefreshButton")->click(); table->selectRow(1);
+    QTimer::singleShot(0, [&] {
+        auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "CHANNEL_WIDTH")->setText(".001");
+        widget<QLineEdit>(*editor, "CHANNEL_HEIGHT")->setText(".00008");
+        widget<QLineEdit>(*editor, "CHANNEL_LENGTH")->setText(".05");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        if (editor->isVisible()) { ADD_FAILURE(); editor->reject(); }
+    });
+    modify->click();
+    QTimer::singleShot(0, [&] {
+        auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
+        widget<QLineEdit>(*editor, "NAME")->setText("uniform");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("already exists"));
+        widget<QLineEdit>(*editor, "NAME")->setText("new-experiment");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        if (editor->isVisible()) { ADD_FAILURE(); editor->reject(); }
+    });
+    widget<QPushButton>(window, "experimentsAddButton")->click();
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='new-experiment'"), 5e-4);
     EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_WIDTH FROM experiments WHERE NAME='uniform'"), .001);
     EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_HEIGHT FROM experiments WHERE NAME='uniform'"), .00008);
     EXPECT_DOUBLE_EQ(input.execute("SELECT CHANNEL_LENGTH FROM experiments WHERE NAME='uniform'"), .05);

@@ -147,7 +147,7 @@ MainWindow::MainWindow()
             if (index == 5) alglibPage_->load(database);
             if (index == 6) rawProfilesPage_->load(database);
         }
-        if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
+        if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
             tabs_->setCurrentIndex(0);
@@ -181,8 +181,7 @@ MainWindow::MainWindow()
         if (QMessageBox::question(this, "Save fitted inputs", "Replace fitted initial inputs in\n" + activeDatabase_ + "?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
             save(operation::save_fitted_parameters);
     });
-    experimentsPage_->changed = [this] { updateControls(); };
-    experimentsPage_->saved = [this] { clearResult(); setStatus("Experiment channel dimensions saved. Run again to calculate results."); };
+    experimentsPage_->saved = [this] { clearResult(); setStatus("Experiment saved. Run again to calculate results."); };
     auto referenceSaved = [this] { clearResult(); setStatus("Reference data saved. Run again to calculate results."); };
     reactionsPage_->saved = referenceSaved;
     speciesPage_->saved = referenceSaved;
@@ -210,7 +209,7 @@ void MainWindow::discardControlsEditor() {
 void MainWindow::saveSetup() { savePreset(true); }
 
 void MainWindow::savePreset(bool saveAs) {
-    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
+    if (work_ != Work::idle || closing_) return;
     try {
         loadControls();
         const auto snapshot = controlsEditor_ ? controlsEditor_->draft() : *modelControls_;
@@ -227,7 +226,7 @@ void MainWindow::savePreset(bool saveAs) {
 }
 
 void MainWindow::openSetup() {
-    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
+    if (work_ != Work::idle || closing_) return;
     const auto filename = QFileDialog::getOpenFileName(this, "Open setup", {}, "Navier setup (*.navier.json);;JSON files (*.json)");
     if (filename.isEmpty()) return;
     try {
@@ -262,7 +261,7 @@ void MainWindow::clearResult()
 
 void MainWindow::updateControls()
 {
-    const bool idle = work_ == Work::idle && !closing_ && !experimentsPage_->dirty();
+    const bool idle = work_ == Work::idle && !closing_;
     openSetup_->setEnabled(idle);
     saveSetup_->setEnabled(idle && !database_->text().trimmed().isEmpty() && !output_->text().trimmed().isEmpty());
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
@@ -299,7 +298,7 @@ void MainWindow::loadControls() {
 
 void MainWindow::startRun()
 {
-    if (work_ != Work::idle || closing_ || experimentsPage_->dirty()) return;
+    if (work_ != Work::idle || closing_) return;
     const QFileInfo input(database_->text().trimmed());
     if (!input.isFile()) { setStatus("Choose an existing database file."); return; }
     try {
@@ -420,9 +419,6 @@ void MainWindow::poll()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (experimentsPage_->dirty()) {
-        setStatus("Finish editing or discard edits before closing."); event->ignore(); return;
-    }
     if (work_ == Work::idle) { timer_->stop(); event->accept(); return; }
     closing_ = true;
     if (work_ == Work::solve) runner_.request_cancel();
