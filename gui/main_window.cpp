@@ -3,6 +3,7 @@
 #include "database_table_tab.h"
 #include "controls_dialog.h"
 #include "setup_file.h"
+#include "report_tab.h"
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -50,6 +51,8 @@ MainWindow::MainWindow()
     tabs_->addTab(alglibPage_, "Variables");
     rawProfilesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::raw_profile);
     tabs_->addTab(rawProfilesPage_, "Raw profiles");
+    reportPage_ = new ReportTab;
+    tabs_->addTab(reportPage_, "Report");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
         for (const auto& row : snapshot.rows)
@@ -364,6 +367,7 @@ void MainWindow::save(operation requested)
             try {
                 if (requested == operation::export_results) {
                     auto written = session->export_results(directory);
+                    result.reportFile = QString::fromStdWString(written.wstring());
                     result.message = "Exported report: " + QString::fromStdWString(written.wstring());
                 } else if (requested == operation::save_model_profiles) {
                     session->save_model_profiles(); result.message = "Profiles saved.";
@@ -438,6 +442,10 @@ void MainWindow::poll()
             reportFailure(result.error);
         } else {
             if (result.reloadTables) reloadTables();
+            if (!result.reportFile.isEmpty()) {
+                reportPage_->loadFile(result.reportFile);
+                if (!closing_) tabs_->setCurrentWidget(reportPage_);
+            }
             setStatus(result.message);
         }
         updateControls();

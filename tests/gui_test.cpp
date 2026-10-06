@@ -1,4 +1,7 @@
 #include <main_window.h>
+#include <report_tab.h>
+#include <QClipboard>
+#include <QTableView>
 #include <controls_dialog.h>
 #include <model_controls.h>
 #include <setup_file.h>
@@ -27,6 +30,59 @@
 #include <thread>
 
 namespace {
+TEST(Report, PreservesUnitsNamesPrecisionAndUnequalProfileLengths)
+{
+    const QString header = "res_time  bind_ratio(p1)  forward_reaction_rate_1  equalibrium_constant_1  dye_conc.  bead_conc.  bead_surface_area  D-A  profile_type  0  10  \r\n";
+    const QString units = "sec  mol bead  rate  keq  mg/ml  wt%  mol  deriv  Channel_Width_(um)->  1  \r\n";
+    const QString profile = "1e-09  2  3  4  5  6  7  -  run name_Experimental_Profile  1.23456e-12    \r\n";
+    auto rows = report_format::parse(header + units + profile + "\r\n" + header);
+    ASSERT_EQ(rows.size(), 5);
+    EXPECT_EQ(rows[0].size(), 11);
+    EXPECT_EQ(rows[1][1], "mol bead");
+    EXPECT_EQ(rows[2].size(), 10);
+    EXPECT_EQ(rows[2][8], "run name_Experimental_Profile");
+    EXPECT_TRUE(rows[3].isEmpty());
+    EXPECT_EQ(rows[0], rows[4]);
+    EXPECT_TRUE(report_format::tsv(rows).contains("1e-09\t2\t3\t4\t5\t6\t7\t-\trun name_Experimental_Profile\t1.23456e-12\r\n\r\n"));
+    EXPECT_THROW(report_format::parse("unrelated text"), std::runtime_error);
+    EXPECT_THROW(report_format::parse(header + "1  2\n"), std::runtime_error);
+}
+
+TEST(Report, CopiesImportedReportAndClearsStaleDataOnFailure)
+{
+    QTemporaryDir directory;
+    const auto filename = directory.filePath("report.txt");
+    QFile file(filename);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write("res_time  b  k  eq  d  c  s  D-A  profile_type  0  \n"); file.close();
+    ReportTab tab;
+    ASSERT_TRUE(tab.loadFile(filename));
+    auto* copy = tab.findChild<QPushButton*>("copyReportButton");
+    ASSERT_NE(copy, nullptr); copy->click();
+    EXPECT_EQ(QApplication::clipboard()->text(), "res_time\tb\tk\teq\td\tc\ts\tD-A\tprofile_type\t0\r\n");
+    EXPECT_FALSE(tab.loadFile(directory.filePath("missing.txt")));
+    EXPECT_FALSE(copy->isEnabled());
+    EXPECT_EQ(tab.findChild<QTableView*>("reportTable")->model(), nullptr);
+}
+
+TEST(Report, OptionalExternalSample)
+{
+    const auto filename = qEnvironmentVariable("NAVIER_TEST_REPORT");
+    if (filename.isEmpty()) GTEST_SKIP() << "Set NAVIER_TEST_REPORT to check an external report without copying it into the repository.";
+    QFile file(filename);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const auto source = QString::fromUtf8(file.readAll());
+    const auto rows = report_format::parse(source);
+    EXPECT_EQ(report_format::parse(report_format::tsv(rows)), rows);
+    ReportTab tab;
+    ASSERT_TRUE(tab.loadFile(filename));
+    auto* table = tab.findChild<QTableView*>("reportTable");
+    ASSERT_NE(table->model(), nullptr);
+    EXPECT_EQ(table->model()->rowCount(), rows.size());
+    tab.findChild<QPushButton*>("copyReportButton")->click();
+    EXPECT_EQ(QApplication::clipboard()->text(), report_format::tsv(rows));
+}
+
 template<class T> T* widget(QWidget& window, const char* name) {
     auto* result = window.findChild<T*>(name);
     if (!result) throw std::runtime_error(name);
@@ -1261,6 +1317,10 @@ TEST(Gui, RunExportAndExplicitSaves)
     exportButton->click();
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
     EXPECT_TRUE(QFile::exists(input.directory.filePath("reports/uniform,.txt")));
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    EXPECT_EQ(tabs->tabText(tabs->currentIndex()), "Report");
+    ASSERT_NE(widget<QTableView>(window, "reportTable")->model(), nullptr);
+    EXPECT_TRUE(widget<QPushButton>(window, "copyReportButton")->isEnabled());
     widget<QPushButton>(window, "profilesButton")->click();
     ASSERT_TRUE(until([&] { return run->isEnabled(); }));
     EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 36);

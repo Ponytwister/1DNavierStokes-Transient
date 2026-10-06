@@ -17,6 +17,15 @@ of your database: loading can create solution records. Report export, profile
 saving, and fitted-input saving are explicit actions. Cancellation is cooperative;
 closing waits for workers, and failed saves keep the window open for retry.
 
+The **Report** tab opens existing text exports and automatically displays newly
+exported reports. Header and units rows are highlighted. **Copy for Excel** copies
+all rows with tabs between cells; paste using Excel's **Paste Special > Text** to
+keep your sheet's formatting. **Save tab-separated file...** creates a UTF-8 TSV
+for tab-delimited import. Repeated headers, blank separators, unequal profile
+lengths and the original numeric text are retained. Excel may interpret numeric
+text using its own precision and locale settings. The preview is read-only and
+does not recalculate results or modify the source report or database.
+
 ## Dependency and redistribution record
 
 This is a local development/test package, not a completed public release.

@@ -7,6 +7,7 @@
 class ControlsDialog;
 class ExperimentsTab;
 class DatabaseTableTab;
+class ReportTab;
 class QAction;
 class QLineEdit;
 class QPushButton;
@@ -24,7 +25,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 private:
     enum class Work { idle, solve, save };
-    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; };
+    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; QString reportFile; };
     void startRun();
     void saveSetup();
     void openSetup();
@@ -63,5 +64,6 @@ private:
     QTabWidget* tabs_;
     QWidget* controlsPage_;
     ExperimentsTab* experimentsPage_;
+    ReportTab* reportPage_;
     DatabaseTableTab *reactionsPage_, *speciesPage_, *alglibPage_, *rawProfilesPage_;
 };
