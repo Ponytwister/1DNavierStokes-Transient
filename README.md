@@ -49,6 +49,10 @@ there when switching tabs. Loading costs are paid on database selection; memory
 usage scales with the table contents. Use **Refresh** to see external database
 changes. Row edits refresh their table, saving fitted inputs refreshes all five,
 and selecting another database replaces every cached table.
+The Variables tab defaults to **Only used by selected experiments**. It shows the
+union of `universal_solve_for` in the active Model controls, `PARAMETERS_TO_SOLVE_FOR`
+in selected experiments, and `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` in their
+non-omitted raw profiles. Uncheck the toggle to view all variables.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.

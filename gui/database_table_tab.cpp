@@ -34,9 +34,9 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    if (tableKind_ != Table::alglib) {
+    {
         const auto column = tableKind_ == Table::reactions ? "REACTION_NAME"
-            : tableKind_ == Table::species ? "SPECIES_NAME" : "NAME";
+            : tableKind_ == Table::species ? "SPECIES_NAME" : tableKind_ == Table::alglib ? "VARIABLE" : "NAME";
         filter_ = new ExperimentRowFilter(table_, tableName_, column,
             (tableKind_ == Table::raw_profile || tableKind_ == Table::experiments) ? "Only selected experiments" : "Only used by selected experiments");
         layout->addWidget(filter_);

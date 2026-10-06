@@ -160,6 +160,41 @@ QStringList solvableParameters(const QString& database) {
     if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
     return names;
 }
+QStringList selectedVariables(const QString& database, const Snapshot& controls) {
+    QStringList names, experiments;
+    for (const auto& row : controls.rows) {
+        const auto tokens = row.value.value_or(QString{}).split(' ', Qt::SkipEmptyParts);
+        if (row.name == "universal_solve_for") names.append(tokens);
+        if (row.name == "experiment_name") experiments = tokens;
+    }
+    auto db = open(database, false);
+    for (const auto* table : {"experiments", "raw_profile"}) {
+        const bool profiles = QString(table) == "raw_profile";
+        auto statement = prepare(db.get(), "SELECT * FROM " + QString(table));
+        int name = -1, variables = -1, omit = -1;
+        for (int i = 0; i < sqlite3_column_count(statement.get()); ++i) {
+            const QString field = QString::fromUtf8(sqlite3_column_name(statement.get(), i));
+            if (field == "NAME") name = i;
+            if (field == (profiles ? "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR" : "PARAMETERS_TO_SOLVE_FOR")) variables = i;
+            if (field == "OMIT") omit = i;
+        }
+        // Older databases can omit the optional parameter selection columns.
+        if (name < 0 || variables < 0) continue;
+        int rc;
+        while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+            if (!experiments.contains(column(statement.get(), name))) continue;
+            // Match the model's space-padded, case-insensitive true flag.
+            auto omitted = omit < 0 ? QString{} : column(statement.get(), omit);
+            while (omitted.startsWith(' ')) omitted.remove(0, 1);
+            while (omitted.endsWith(' ')) omitted.chop(1);
+            if (profiles && omitted.compare("true", Qt::CaseInsensitive) == 0) continue;
+            names.append(column(statement.get(), variables).split(' ', Qt::SkipEmptyParts));
+        }
+        if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    }
+    names.removeDuplicates();
+    return names;
+}
 Snapshot load(const QString& database) { auto db = open(database, false); return read(db.get()); }
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited) {
     if (edited.size() != original.rows.size()) fail("Control rows cannot be added or removed here.");

@@ -271,6 +271,50 @@ TEST(Gui, RawProfilesCancelConflictsAndMissingExperimentDoNotOverwrite)
     EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE CHANNEL_RIGHT_EDGE=9"), 4);
 }
 
+TEST(Gui, VariableFilterCombinesSelectionsAndExcludesOmittedProfiles)
+{
+    Inputs input;
+    input.execute("ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT;"
+                  "ALTER TABLE raw_profile ADD COLUMN INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT;"
+                  "UPDATE experiments SET PARAMETERS_TO_SOLVE_FOR=' p1  keq1 ';"
+                  "INSERT INTO experiments(NAME,PARAMETERS_TO_SOLVE_FOR) VALUES('uniform-extra','kon1');"
+                  "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='width' WHERE INLET_COND_ID=1;"
+                  "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge',OMIT=' TrUe ' WHERE INLET_COND_ID=2;"
+                  "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='QE1',OMIT=NULL WHERE INLET_COND_ID=3;"
+                  "INSERT INTO raw_profile(NAME,INDEPENDENT_PARAMETERS_TO_SOLVE_FOR) VALUES('uniform-extra','kon1');"
+                  "INSERT INTO alglib_input VALUES('p1',1,0,2,1),('width',1,0,2,1),('left_edge',1,0,2,1),"
+                  "('QE1',1,0,2,1),('kon1',1,0,2,1)");
+    MainWindow window; input.choose(window);
+    auto* table = widget<QTableWidget>(window, "alglib_inputTable");
+    auto* toggle = widget<QCheckBox>(window, "alglib_inputSelectedOnly");
+    auto visible = [&] {
+        QStringList names;
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (!table->isRowHidden(row)) names << table->item(row, 0)->text();
+        return names;
+    };
+    EXPECT_TRUE(toggle->isChecked());
+    EXPECT_EQ(visible(), (QStringList{"QE1", "keq1", "p1", "width"}));
+    toggle->setChecked(false);
+    EXPECT_EQ(visible().size(), 6);
+    toggle->setChecked(true);
+    input.execute("UPDATE raw_profile SET OMIT='false' WHERE INLET_COND_ID=2");
+    widget<QPushButton>(window, "alglib_inputRefreshButton")->click();
+    EXPECT_EQ(visible(), (QStringList{"QE1", "keq1", "left_edge", "p1", "width"}));
+    auto controls = model_controls::load(input.database);
+    control(controls.rows, "universal_solve_for").value = std::nullopt;
+    control(controls.rows, "experiment_name").value = "uniform-extra";
+    EXPECT_EQ(model_controls::selectedVariables(input.database, controls), QStringList{"kon1"});
+    control(controls.rows, "experiment_name").value = "";
+    EXPECT_TRUE(model_controls::selectedVariables(input.database, controls).isEmpty());
+    input.execute("DROP TABLE raw_profile");
+    widget<QPushButton>(window, "alglib_inputRefreshButton")->click();
+    EXPECT_TRUE(visible().isEmpty());
+    EXPECT_TRUE(widget<QLabel>(window, "alglib_inputFilterStatus")->text().contains("Cannot load"));
+    toggle->setChecked(false);
+    EXPECT_EQ(visible().size(), 6);
+}
+
 TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
 {
     Inputs input;

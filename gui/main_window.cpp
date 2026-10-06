@@ -58,6 +58,11 @@ MainWindow::MainWindow()
     };
     experimentsPage_->experimentFilter()->selectedNames = selectedExperiments;
     rawProfilesPage_->experimentFilter()->selectedNames = selectedExperiments;
+    alglibPage_->experimentFilter()->selectedNames = [this] {
+        const auto database = database_->text().trimmed();
+        return model_controls::selectedVariables(database,
+            modelControls_ ? *modelControls_ : model_controls::load(database));
+    };
     reactionsPage_->experimentFilter()->selectedNames = [this, selectedExperiments] {
         return model_controls::experimentReferences(database_->text().trimmed(), selectedExperiments(),
             model_controls::ExperimentReferences::reactions);
@@ -175,7 +180,7 @@ MainWindow::MainWindow()
     reactionsPage_->saved = referenceSaved;
     speciesPage_->saved = referenceSaved;
     alglibPage_->saved = referenceSaved;
-    rawProfilesPage_->saved = [this] { clearResult(); setStatus("Raw profile saved. Run again to calculate results."); };
+    rawProfilesPage_->saved = [this] { applyTableFilters(); clearResult(); setStatus("Raw profile saved. Run again to calculate results."); };
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
@@ -192,6 +197,7 @@ void MainWindow::reloadTables() {
 }
 
 void MainWindow::applyTableFilters() {
+    alglibPage_->experimentFilter()->apply();
     experimentsPage_->experimentFilter()->apply();
     rawProfilesPage_->experimentFilter()->apply();
     reactionsPage_->experimentFilter()->apply();
@@ -253,6 +259,7 @@ void MainWindow::openSetup() {
         rawProfilesPage_->experimentFilter()->apply();
         reactionsPage_->experimentFilter()->apply();
         speciesPage_->experimentFilter()->apply();
+        alglibPage_->experimentFilter()->apply();
         setStatus("Setup opened: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }
@@ -320,6 +327,7 @@ void MainWindow::startRun()
                 rawProfilesPage_->experimentFilter()->apply();
                 reactionsPage_->experimentFilter()->apply();
                 speciesPage_->experimentFilter()->apply();
+                alglibPage_->experimentFilter()->apply();
             }
         }
     } catch (...) { reportFailure(std::current_exception()); return; }

@@ -27,6 +27,8 @@ QStringList experimentReferences(const QString& database, const QStringList& sel
                                  ExperimentReferences references);
 QStringList experimentNames(const QString& database);
 QStringList solvableParameters(const QString& database);
+// Selected global/experiment variables and non-omitted profile-local variables.
+QStringList selectedVariables(const QString& database, const Snapshot& controls);
 // Compare against the original snapshot under a write transaction. Only changed
 // values are written; any conflict or failure rolls the entire transaction back.
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited);
