@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QStringList>
+#include <functional>
 
 class QLabel;
 class QPushButton;
@@ -33,11 +34,18 @@ public:
     explicit ReportTab(QWidget* parent = nullptr);
     bool loadFile(const QString& filename);
     bool saveFile(const QString& filename);
+    bool loadGenerated(const QString& text, const QString& source, const QString& suggestedFile);
+    void setRunAvailable(bool available);
+    void clearGenerated();
+    std::function<void()> generateRequested;
 private:
+    bool loadSource(const QString& text, bool preserveSelections);
+    void clearSource();
     void updatePreview();
     QLabel* status_;
     QTableView* table_;
     QPushButton *copy_, *save_;
+    QPushButton* generate_;
     report_format::Rows rows_;
     report_format::Rows selected_;
     QListWidget *blocks_, *types_, *columns_;
@@ -45,4 +53,6 @@ private:
     QComboBox* numberFormat_;
     QSpinBox* decimals_;
     QString filename_;
+    QString sourceLabel_;
+    bool generated_ = false;
 };

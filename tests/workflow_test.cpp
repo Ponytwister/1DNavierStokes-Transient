@@ -409,6 +409,67 @@ TEST(Workflow, SynchronousLoadSolveExportSaveAndReload)
     near(scalar(again.database(), "SELECT count(*) FROM solutions"), 5);
 }
 
+TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
+{
+    fixture files;
+    run_session session(files.database);
+    EXPECT_THROW(session.generate_report(), workflow_error);
+    session.load_inputs();
+    EXPECT_THROW(session.generate_report(), workflow_error);
+    session.run();
+    auto& p = session.parameters();
+    p.row_count = 1;
+    auto& exp = p.experiments.front();
+    auto& run = *exp.run;
+    // Independent export fixture: 12 bound dye / 3 dye per bead = 4 mg/ml;
+    // density 2 g/ml means 1 wt% = 20 mg/ml, so bound beads = 0.2 wt%.
+    run.solution_density = 2;
+    auto& bead = run.species.at(run.PS_beads);
+    bead.model_units = "mg/ml"; bead.input_units = "wt%";
+    run.reactions.at(run.FITC_Bead_1).coef.at(&run.species.at(run.FITC)).value() = -3;
+    exp.species_out.at(run.Bound_Dye_1).assign(p.X, 12);
+    exp.species_out.at(run.PS_beads).assign(p.X, 2);
+    for (int i = 0; i < exp.window_size; ++i) exp.analytical_zero[i] = .125 * i;
+    exp.channel_position[0] = 1e-310;
+    const auto changes = sqlite3_total_changes(session.database());
+    const auto generated = session.generate_report();
+    EXPECT_EQ(sqlite3_total_changes(session.database()), changes);
+    EXPECT_EQ(exp.channel_position[0], 1e-310);
+    EXPECT_FALSE(std::filesystem::exists(files.root / "reports"));
+    auto profile = [](const std::string& report, const std::string& name) {
+        std::istringstream input(report);
+        std::string line;
+        while (std::getline(input, line)) {
+            std::istringstream row(line); std::string label;
+            for (int i = 0; i < 9; ++i) row >> label;
+            if (label != name) continue;
+            std::vector<double> values; double value;
+            while (row >> value) values.push_back(value);
+            return values;
+        }
+        return std::vector<double>{};
+    };
+    const auto bound = profile(generated, "Bound_Beads_(wt%)");
+    ASSERT_EQ(bound.size(), p.X);
+    for (double value : bound) near(value, .2);
+    const auto analytic = profile(generated, "Analytical_Zero_(umol)");
+    ASSERT_EQ(analytic.size(), exp.window_size);
+    for (int i = 0; i < exp.window_size; ++i) near(analytic[i], .125 * i);
+    const auto species = profile(generated, "Species:PS_40nm_(mg/ml)");
+    ASSERT_EQ(species.size(), p.X);
+    for (double value : species) near(value, 2);
+    const auto total = profile(generated, "Total_Beads_(wt%)");
+    ASSERT_EQ(total.size(), p.X);
+    for (double value : total) near(value, .3);
+    // Existing CLI/export contract stays unchanged, including the historical label.
+    const auto legacyPath = session.export_results(files.root / "legacy");
+    std::ifstream legacyFile(legacyPath);
+    const std::string legacy(std::istreambuf_iterator<char>(legacyFile), {});
+    EXPECT_EQ(profile(legacy, "Bound_Beads_(wt%)"), analytic);
+    EXPECT_EQ(legacy.find("Species:"), std::string::npos);
+    EXPECT_EQ(legacy.find("Analytical_Zero"), std::string::npos);
+}
+
 TEST(Workflow, BackgroundSuccessOutlivesRunner)
 {
     fixture files;

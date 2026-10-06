@@ -54,13 +54,8 @@ void execute_sql(parameters_t& p, sqlite3* db, const char* sql,
 }
 } // namespace
 
-void
-save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
+static void write_excel_report(parameters_t& p, std::ostream& fout, bool extended)
 {
-    add_report(p, 3, "Exporting results to " + file_name.string());
-    std::ofstream fout;
-    fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
-    fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
     auto write_header = [&](double width) {
         fout << "res_time"                  << "  "; //1
         fout << "bind_ratio(p1)"            << "  "; //2
@@ -98,6 +93,7 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
     std::vector<std::string> specie_name_vect = {"Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads_(wt%)", "Bound_Beads_(wt%)", "Total_Beads_(wt%)", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference", "Error"};
     
     for (int row = 0; row < p.row_count; row++) {
+        check_cancellation(p);
         exp_ptr = &p.experiments.at(row);
         run_ptr = exp_ptr->run;
         if (!header_width || *header_width != run_ptr->W) {
@@ -112,6 +108,17 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
         Bound_Dye_1_ptr = &run_ptr->species.at(Bound_Dye_1);
         ptrdiff_t FITC_Bead_1 = run_ptr->FITC_Bead_1;
         FITC_Bead_1_ptr = &run_ptr->reactions.at(FITC_Bead_1);
+        auto profile_names = specie_name_vect;
+        if (extended) {
+            // The legacy Bound_Beads row contains analytical_zero, not beads.
+            // Keep its sampled axis and give the true model-grid beads their own row.
+            profile_names[4] = "Analytical_Zero_(" + FITC_ptr->model_units + ")";
+            profile_names[3] = "Unbound_Beads_(" + PS_beads_ptr->input_units + ")";
+            profile_names[5] = "Total_Beads_(" + PS_beads_ptr->input_units + ")";
+            profile_names.push_back("Bound_Beads_(" + PS_beads_ptr->input_units + ")");
+            for (const auto& species : run_ptr->species)
+                profile_names.push_back("Species:" + species.name + "_(" + species.model_units + ")");
+        }
         std::vector<double> model = exp_ptr->model_profile;
         std::vector<double> experiment = exp_ptr->experimental_profile;
         const auto& out = exp_ptr->species_out;
@@ -125,10 +132,8 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
         fout << "deriv"                     << "  "; //8
         fout << "Channel_Width_(um)->"      << "  "; //9
         for (int x = 0; x < exp_ptr->window_size; x++) {
-            if (std::abs(exp_ptr->channel_position.at(x)) < 1e-307) {
-                exp_ptr->channel_position.at(x) = 0;
-            }
-            fout << exp_ptr->channel_position.at(x) << "  ";
+            const double position = exp_ptr->channel_position.at(x);
+            fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
         }
         fout << std::endl;
         double beads_sa = 0;
@@ -140,7 +145,7 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
         }
 
         int width;
-        for (int j = 0; j < specie_name_vect.size(); j++) {
+        for (int j = 0; j < profile_names.size(); j++) {
             fout << p.Z * run_ptr->dt                   << "  "; //1
             fout << variable_location("p1", run_ptr).value()    << "  "; //2
             fout << variable_location("kon1", run_ptr).value()  << "  "; //3
@@ -175,9 +180,9 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
             if (j == 8 || j == 9) {
                 fout << run_ptr->name << "_" << exp_ptr->second_name << "wt%_"; //9
             }
-            fout << specie_name_vect.at(j) << "  "; //9
+            fout << profile_names.at(j) << "  "; //9
             
-            if (j < 6 && j != 4) {
+            if ((j < 6 && j != 4) || j >= 13) {
                 width = p.X;
             } else {
                 width = exp_ptr->window_size;
@@ -200,8 +205,8 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
                     case 3: // Unbound_Beads_(wt%)
                         fout << out[PS_beads][x] * bead_unit;
                         break;
-                    case 4: // Bound_Beads_(wt%)
-                        fout << exp_ptr->analytical_zero.at(x);//out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value()) * bead_unit;
+                    case 4: // Analytical zero; legacy files retain the historical bead label.
+                        fout << exp_ptr->analytical_zero.at(x);
                         break;   
                     case 5: // Total_Beads_(wt%)
                         fout << (out[PS_beads][x] + out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value())) * bead_unit;
@@ -227,6 +232,16 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
                     case 12: // Error
                         fout << exp_ptr->error.at(x);
                         break;
+                    case 13: { // Bound beads: original stoichiometric conversion.
+                        const double coefficient = std::abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value());
+                        if (!std::isfinite(coefficient) || coefficient == 0)
+                            throw std::invalid_argument("Cannot report bound beads with a zero or nonfinite dye coefficient");
+                        fout << out.at(Bound_Dye_1).at(x) / coefficient * bead_unit;
+                        break;
+                    }
+                    default: // Additional species profiles stay in declared model units.
+                        fout << out.at(j - 14).at(x);
+                        break;
                 }
                 fout << "    ";
             }
@@ -234,7 +249,27 @@ save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
         }
         fout << std::endl;
     }
-    fout.close(); 
+}
+
+void save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
+{
+    add_report(p, 3, "Exporting results to " + file_name.string());
+    std::ofstream fout;
+    fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+    fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
+    write_excel_report(p, fout, false);
+    fout.close();
+}
+
+std::string generate_excel_report(parameters_t& p)
+{
+    // Preserve round-trip double precision for subsequent user-selected formatting.
+    // This is an in-memory snapshot: no report file or database writes occur.
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+    write_excel_report(p, output, true);
+    return output.str();
 }
 
 void 

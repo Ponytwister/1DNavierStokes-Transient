@@ -57,6 +57,9 @@ public:
     void load_inputs(const std::optional<control_values>& controls = std::nullopt);
     run_result run();
     std::filesystem::path export_results(const std::filesystem::path& directory);
+    // Completed-run snapshot, including analytical zero, true bound beads and
+    // every species in model units. No file/database writes.
+    std::string generate_report();
     void save_model_profiles();
     void save_fitted_parameters();
 

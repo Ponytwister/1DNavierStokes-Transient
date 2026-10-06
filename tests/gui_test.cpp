@@ -213,6 +213,52 @@ TEST(Gui, FileMenuContainsSetupAndPathControls)
     EXPECT_TRUE(widget<QAction>(window, "saveSetupAction")->isEnabled());
 }
 
+TEST(Gui, GeneratesSelectedReportFromRunBeforeAnyFileExport)
+{
+    Inputs input;
+    MainWindow window; input.choose(window);
+    auto* generate = widget<QPushButton>(window, "generateReportButton");
+    EXPECT_FALSE(generate->isEnabled());
+    widget<QComboBox>(window, "reportNumberFormat")->setCurrentIndex(2);
+    widget<QLineEdit>(window, "outputPath")->clear();
+    auto* run = widget<QPushButton>(window, "runButton");
+    run->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    ASSERT_TRUE(generate->isEnabled());
+    const auto solutions = input.execute("SELECT count(*) FROM solutions");
+    generate->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    EXPECT_FALSE(QFile::exists(input.directory.filePath("reports")));
+    EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), solutions);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    auto* types = widget<QListWidget>(window, "reportTypes");
+    QStringList available;
+    for (int i = 0; i < types->count(); ++i) {
+        available.push_back(types->item(i)->text());
+        types->item(i)->setCheckState(types->item(i)->text() == "Bound_Beads_(wt%)" ? Qt::Checked : Qt::Unchecked);
+    }
+    EXPECT_TRUE(available.contains("Bound_Beads_(wt%)"));
+    EXPECT_TRUE(available.contains("Analytical_Zero_(umol)"));
+    EXPECT_TRUE(available.contains("Species:FITC_(umol)"));
+    // Regeneration preserves report choices and still does not write a raw report.
+    generate->click(); ASSERT_TRUE(until([&] { return run->isEnabled(); }));
+    types = widget<QListWidget>(window, "reportTypes");
+    for (int i = 0; i < types->count(); ++i)
+        EXPECT_EQ(types->item(i)->checkState() == Qt::Checked, types->item(i)->text() == "Bound_Beads_(wt%)");
+    auto* tabs = widget<QTabWidget>(window, "mainTabs");
+    ASSERT_EQ(tabs->tabText(tabs->currentIndex()), "Report");
+    auto* report = static_cast<ReportTab*>(tabs->currentWidget());
+    const auto filename = input.directory.filePath("first-report.txt");
+    ASSERT_TRUE(report->saveFile(filename));
+    QFile output(filename); ASSERT_TRUE(output.open(QIODevice::ReadOnly));
+    const auto contents = output.readAll();
+    EXPECT_TRUE(contents.contains("Bound_Beads_(wt%)"));
+    EXPECT_TRUE(contents.contains("0.000000e+00"));
+    EXPECT_FALSE(contents.contains("Analytical_Zero"));
+    EXPECT_FALSE(contents.contains("Species:"));
+    widget<QLineEdit>(window, "databasePath")->clear();
+    EXPECT_FALSE(generate->isEnabled());
+    EXPECT_FALSE(widget<QPushButton>(window, "saveReportButton")->isEnabled());
+}
+
 TEST(Gui, ExperimentsTabReadsAllRowsWithoutModelWritesAndClearsStaleData)
 {
     Inputs input;

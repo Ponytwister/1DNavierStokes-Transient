@@ -21,6 +21,7 @@
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QSet>
+#include <QMap>
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
@@ -152,13 +153,15 @@ public:
 ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    auto* note = new QLabel("Choose the data and formatting for your report. The preview, exported file and Excel copy use the same selections. Open a source text report or export results from a run to begin.");
+    auto* note = new QLabel("Use current run to generate a report directly from completed results, or open an existing report. Choose data and formatting before exporting. The preview, exported file and Excel copy use the same selections.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* buttons = new QHBoxLayout;
     auto* open = new QPushButton("Open report..."); open->setObjectName("openReportButton");
+    generate_ = new QPushButton("Use current run"); generate_->setObjectName("generateReportButton"); generate_->setEnabled(false);
     copy_ = new QPushButton("Copy for Excel"); copy_->setObjectName("copyReportButton");
     save_ = new QPushButton("Export selected report..."); save_->setObjectName("saveReportButton");
-    buttons->addWidget(open); buttons->addWidget(copy_); buttons->addWidget(save_); buttons->addStretch();
+    buttons->addWidget(generate_); buttons->addWidget(open); buttons->addWidget(copy_); buttons->addWidget(save_); buttons->addStretch();
+    connect(generate_, &QPushButton::clicked, this, [this] { if (generateRequested) generateRequested(); });
     layout->addLayout(buttons);
     auto* choices = new QHBoxLayout;
     auto makeList = [&](const QString& title, const char* name, QListWidget*& list) {
@@ -200,7 +203,7 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     numeric->addWidget(decimals_); numeric->addStretch(); layout->addLayout(numeric);
     connect(numberFormat_, &QComboBox::currentIndexChanged, this, [this] { decimals_->setEnabled(numberFormat_->currentIndex() != 0); updatePreview(); });
     connect(decimals_, &QSpinBox::valueChanged, this, [this] { updatePreview(); });
-    status_ = new QLabel("Open a text report or use Export report after a run.");
+    status_ = new QLabel("Complete a run to generate a report, or open an existing text report.");
     status_->setObjectName("reportStatus"); status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true);
     layout->addWidget(status_);
     table_ = new QTableView; table_->setObjectName("reportTable");
@@ -215,7 +218,7 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     });
     connect(copy_, &QPushButton::clicked, this, [this] {
         QApplication::clipboard()->setText(report_format::tsv(selected_));
-        status_->setText("Copied selected report for Excel: " + filename_);
+        status_->setText("Copied selected report for Excel: " + sourceLabel_);
     });
     connect(save_, &QPushButton::clicked, this, [this] {
         const auto name = QFileDialog::getSaveFileName(this, "Export selected report", filename_ + ".selected.tsv", "Tab-separated files (*.tsv);;Text files (*.txt)");
@@ -226,10 +229,7 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
 
 bool ReportTab::loadFile(const QString& filename)
 {
-    rows_.clear(); selected_.clear(); copy_->setEnabled(false); save_->setEnabled(false);
-    const QSignalBlocker blockSignal(blocks_), typeSignal(types_), columnSignal(columns_);
-    blocks_->clear(); types_->clear(); columns_->clear();
-    auto* old = table_->model(); table_->setModel(nullptr); delete old;
+    clearSource();
     QFile file(filename);
     if (!file.open(QIODevice::ReadOnly)) {
         status_->setText("Cannot open report: " + file.errorString()); return false;
@@ -238,23 +238,57 @@ bool ReportTab::loadFile(const QString& filename)
     if (file.error() != QFileDevice::NoError) {
         status_->setText("Cannot read report: " + file.errorString()); return false;
     }
-    try { rows_ = report_format::parse(QString::fromUtf8(bytes)); }
-    catch (const std::exception& error) { status_->setText(QString::fromUtf8(error.what())); return false; }
-    filename_ = filename;
-    auto add = [](QListWidget* list, const QString& label) {
-        auto* item = new QListWidgetItem(label, list);
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(Qt::Checked);
+    filename_ = filename; sourceLabel_ = filename; generated_ = false;
+    return loadSource(QString::fromUtf8(bytes), false);
+}
+
+bool ReportTab::loadSource(const QString& text, bool preserveSelections)
+{
+    QMap<QString, Qt::CheckState> typeSelection, columnSelection, blockSelection;
+    auto remember = [](QListWidget* list, QMap<QString, Qt::CheckState>& saved) {
+        for (int i = 0; i < list->count(); ++i) saved.insert(list->item(i)->text(), list->item(i)->checkState());
     };
-    for (const auto& name : report_format::blockNames(rows_)) add(blocks_, name);
+    if (preserveSelections) { remember(types_, typeSelection); remember(columns_, columnSelection); remember(blocks_, blockSelection); }
+    clearSource();
+    const QSignalBlocker blockSignal(blocks_), typeSignal(types_), columnSignal(columns_);
+    blocks_->clear(); types_->clear(); columns_->clear();
+    try { rows_ = report_format::parse(text); }
+    catch (const std::exception& error) { status_->setText(QString::fromUtf8(error.what())); return false; }
+    auto add = [](QListWidget* list, const QString& label, Qt::CheckState state = Qt::Checked) {
+        auto* item = new QListWidgetItem(label, list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(state);
+    };
+    for (const auto& name : report_format::blockNames(rows_)) add(blocks_, name, blockSelection.value(name, Qt::Checked));
     QStringList types;
     for (const auto& row : rows_) if (!row.isEmpty() && row[0] != "res_time" && row[0] != "sec") {
         const auto type = report_format::profileType(row[8]);
         if (!types.contains(type)) types.push_back(type);
     }
-    for (const auto& type : types) add(types_, type);
-    for (int i = 0; i < 9; ++i) add(columns_, rows_.front()[i]);
+    for (const auto& type : types) add(types_, type, typeSelection.value(type, Qt::Checked));
+    for (int i = 0; i < 9; ++i) add(columns_, rows_.front()[i], columnSelection.value(rows_.front()[i], Qt::Checked));
     updatePreview();
     return true;
+}
+
+void ReportTab::clearSource()
+{
+    rows_.clear(); selected_.clear(); copy_->setEnabled(false); save_->setEnabled(false);
+    auto* old = table_->model(); table_->setModel(nullptr); delete old;
+}
+
+void ReportTab::clearGenerated()
+{
+    if (!generated_) return;
+    clearSource();
+    status_->setText("Complete a run, then use current run to regenerate with your report selections.");
+}
+
+void ReportTab::setRunAvailable(bool available) { generate_->setEnabled(available); }
+
+bool ReportTab::loadGenerated(const QString& text, const QString& source, const QString& suggestedFile)
+{
+    generated_ = true; sourceLabel_ = "Run results: " + source; filename_ = suggestedFile;
+    return loadSource(text, true);
 }
 
 void ReportTab::updatePreview()
@@ -273,7 +307,7 @@ void ReportTab::updatePreview()
     const auto profileColumn = options.columns.indexOf(8);
     if (profileColumn >= 0) table_->setColumnWidth(profileColumn, 300);
     copy_->setEnabled(!selected_.isEmpty()); save_->setEnabled(!selected_.isEmpty());
-    status_->setText(QString("Preview: %1 selected rows · Source: %2").arg(selected_.size()).arg(filename_));
+    status_->setText(QString("Preview: %1 selected rows · Source: %2").arg(selected_.size()).arg(sourceLabel_));
 }
 
 bool ReportTab::saveFile(const QString& filename)

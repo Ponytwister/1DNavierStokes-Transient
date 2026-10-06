@@ -286,6 +286,8 @@ void publish_event(parameters_t& p, tsensor_workflow::progress_event event);
 
 // Text FILE HANDLERS
 void save_excel_output(parameters_t& p, const std::filesystem::path& file_name);
+// Extended, full-precision in-memory source for customizable desktop reports.
+std::string generate_excel_report(parameters_t& p);
 
 // MODEL
 void normalize_profile(parameters_t& p);

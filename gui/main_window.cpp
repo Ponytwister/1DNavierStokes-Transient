@@ -7,6 +7,7 @@
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDir>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -52,6 +53,7 @@ MainWindow::MainWindow()
     rawProfilesPage_ = new DatabaseTableTab(DatabaseTableTab::Table::raw_profile);
     tabs_->addTab(rawProfilesPage_, "Raw profiles");
     reportPage_ = new ReportTab;
+    reportPage_->generateRequested = [this] { prepareReport(); };
     tabs_->addTab(reportPage_, "Report");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
@@ -116,10 +118,12 @@ MainWindow::MainWindow()
     values_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     layout->addWidget(values_, 1);
     auto* saves = new QHBoxLayout;
-    export_ = new QPushButton("Export report"); export_->setObjectName("exportButton");
+    auto* prepare = new QPushButton("Prepare report..."); prepare->setObjectName("prepareRunReportButton");
+    connect(prepare, &QPushButton::clicked, this, [this] { tabs_->setCurrentWidget(reportPage_); prepareReport(); });
+    export_ = new QPushButton("Export legacy report"); export_->setObjectName("exportButton");
     profiles_ = new QPushButton("Save profiles"); profiles_->setObjectName("profilesButton");
     inputs_ = new QPushButton("Save fitted inputs…"); inputs_->setObjectName("inputsButton");
-    saves->addWidget(export_); saves->addWidget(profiles_); saves->addWidget(inputs_);
+    saves->addWidget(prepare); saves->addWidget(export_); saves->addWidget(profiles_); saves->addWidget(inputs_);
     layout->addLayout(saves);
     log_ = new QPlainTextEdit; log_->setReadOnly(true); log_->setMaximumBlockCount(500);
     log_->setObjectName("progressLog"); layout->addWidget(log_, 1);
@@ -269,6 +273,7 @@ void MainWindow::openSetup() {
 
 void MainWindow::clearResult()
 {
+    reportPage_->clearGenerated();
     session_.reset(); activeDatabase_.clear(); values_->setRowCount(0); summary_->clear(); resultDatabase_->clear();
     latestResidualSum_.reset();
     status_->setText("Choose a database, then run the calculation.");
@@ -301,6 +306,8 @@ void MainWindow::updateControls()
     rawProfilesPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
+    reportPage_->setRunAvailable(idle && session_);
+    findChild<QPushButton*>("prepareRunReportButton")->setEnabled(idle && session_);
     profiles_->setEnabled(idle && session_);
     profiles_->setToolTip("Save result profiles to the run's database.");
     inputs_->setEnabled(idle && session_);
@@ -381,6 +388,22 @@ void MainWindow::save(operation requested)
     } catch (...) { reportFailure(std::current_exception()); }
 }
 
+void MainWindow::prepareReport()
+{
+    if (work_ != Work::idle || !session_ || closing_) return;
+    try {
+        action_ = std::async(std::launch::async, [session = session_.get()] {
+            ActionResult result;
+            try {
+                result.reportText = text(session->generate_report());
+                result.message = "Report prepared from run results. Choose data and formatting in Report, then export.";
+            } catch (...) { result.error = std::current_exception(); }
+            return result;
+        });
+        work_ = Work::save; setStatus("Preparing report from current results…"); updateControls();
+    } catch (...) { reportFailure(std::current_exception()); }
+}
+
 void MainWindow::showParameters(const std::vector<parameter_value>& parameters, bool completed)
 {
     values_->setRowCount(static_cast<int>(parameters.size()));
@@ -444,6 +467,10 @@ void MainWindow::poll()
             if (result.reloadTables) reloadTables();
             if (!result.reportFile.isEmpty()) {
                 reportPage_->loadFile(result.reportFile);
+                if (!closing_) tabs_->setCurrentWidget(reportPage_);
+            }
+            if (!result.reportText.isEmpty()) {
+                reportPage_->loadGenerated(result.reportText, activeDatabase_, QDir(output_->text()).filePath("report"));
                 if (!closing_) tabs_->setCurrentWidget(reportPage_);
             }
             setStatus(result.message);

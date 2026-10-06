@@ -116,6 +116,14 @@ void run_session::save_model_profiles()
     });
 }
 
+std::string run_session::generate_report()
+{
+    return perform(parameters_, operation::export_results, [&] {
+        require_state(session_state::completed, operation::export_results);
+        return generate_excel_report(parameters_);
+    });
+}
+
 void run_session::save_fitted_parameters()
 {
     perform(parameters_, operation::save_fitted_parameters, [&] {

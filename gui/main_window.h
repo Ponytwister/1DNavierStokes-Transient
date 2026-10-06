@@ -25,7 +25,8 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 private:
     enum class Work { idle, solve, save };
-    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; QString reportFile; };
+    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; QString reportFile; QString reportText; };
+    void prepareReport();
     void startRun();
     void saveSetup();
     void openSetup();
