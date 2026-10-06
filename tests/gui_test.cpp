@@ -83,6 +83,70 @@ TEST(Report, OptionalExternalSample)
     EXPECT_EQ(QApplication::clipboard()->text(), report_format::tsv(rows));
 }
 
+TEST(Report, SelectsBlocksTypesAndColumnsWithTheirOwnAxes)
+{
+    using namespace report_format;
+    const QString header = "res_time  b  k  eq  d  c  s  D-A  profile_type  0  10\n";
+    const QString units = "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n";
+    const auto rows = parse(header + units +
+        "1  2  3  4  5  6  7  -  first_Experimental_Profile  0.12345\n\n" + units +
+        "2  2  3  4  5  6  7  -  second_Experimental_Profile  9.87654\n"
+        "2  2  3  4  5  6  7  -  second_Numeric_Model_Profile  8.76543\n\n" +
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  0  20\n" + units +
+        "3  2  3  4  5  6  7  -  third_Experimental_Profile  7.65432\n\n");
+    Options options;
+    options.blocks = {1, 2}; options.types = {"Experimental_Profile"}; options.columns = {0, 8};
+    auto selected = select(rows, options);
+    ASSERT_EQ(selected.size(), 8);
+    EXPECT_EQ(selected[0], QStringList({"res_time", "profile_type", "0", "10"}));
+    EXPECT_EQ(selected[1], QStringList({"sec", "Channel_Width_(um)->", "1"}));
+    EXPECT_EQ(selected[2], QStringList({"2", "second_Experimental_Profile", "9.87654"}));
+    EXPECT_EQ(selected[4], QStringList({"res_time", "profile_type", "0", "20"}));
+    EXPECT_EQ(selected[6][1], "third_Experimental_Profile");
+    options.headers = options.units = options.blankRows = false;
+    options.numberFormat = 'f'; options.decimals = 2;
+    selected = select(rows, options);
+    ASSERT_EQ(selected.size(), 2);
+    EXPECT_EQ(selected[0], QStringList({"2.00", "second_Experimental_Profile", "9.88"}));
+    options.blocks.clear();
+    EXPECT_TRUE(select(rows, options).isEmpty());
+    EXPECT_EQ(rows[6].back(), "8.76543"); // Formatting never mutates source data.
+}
+
+TEST(Report, ExportAndClipboardUseSelectionsAndPreview)
+{
+    QTemporaryDir directory;
+    const auto filename = directory.filePath("source.txt");
+    const QByteArray source = "res_time  b  k  eq  d  c  s  D-A  profile_type  0\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n"
+        "1  2  3  4  5  6  7  -  sample_Experimental_Profile  1.23456\n"
+        "1  2  3  4  5  6  7  -  sample_Numeric_Model_Profile  9.87654\n\n";
+    QFile file(filename); ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    ASSERT_EQ(file.write(source), source.size()); file.close();
+    ReportTab tab; ASSERT_TRUE(tab.loadFile(filename));
+    auto* types = tab.findChild<QListWidget*>("reportTypes");
+    ASSERT_EQ(types->count(), 2); types->item(0)->setCheckState(Qt::Unchecked);
+    auto* columns = tab.findChild<QListWidget*>("reportColumns");
+    for (int i = 0; i < 8; ++i) columns->item(i)->setCheckState(Qt::Unchecked);
+    for (const auto* name : {"reportHeaders", "reportUnits", "reportBlankRows"})
+        tab.findChild<QCheckBox*>(name)->setChecked(false);
+    const QString expected = "sample_Numeric_Model_Profile\t9.87654\r\n";
+    auto* model = tab.findChild<QTableView*>("reportTable")->model();
+    ASSERT_EQ(model->rowCount(), 1); ASSERT_EQ(model->columnCount(), 2);
+    EXPECT_EQ(model->data(model->index(0, 1)).toString(), "9.87654");
+    tab.findChild<QPushButton*>("copyReportButton")->click();
+    EXPECT_EQ(QApplication::clipboard()->text(), expected);
+    const auto output = directory.filePath("selected.tsv");
+    ASSERT_TRUE(tab.saveFile(output));
+    QFile exported(output); ASSERT_TRUE(exported.open(QIODevice::ReadOnly));
+    EXPECT_EQ(exported.readAll(), expected.toUtf8());
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly)); EXPECT_EQ(file.readAll(), source);
+    types->item(1)->setCheckState(Qt::Unchecked);
+    EXPECT_FALSE(tab.findChild<QPushButton*>("saveReportButton")->isEnabled());
+    EXPECT_FALSE(tab.saveFile(directory.filePath("empty.tsv")));
+    EXPECT_FALSE(QFile::exists(directory.filePath("empty.tsv")));
+}
+
 template<class T> T* widget(QWidget& window, const char* name) {
     auto* result = window.findChild<T*>(name);
     if (!result) throw std::runtime_error(name);

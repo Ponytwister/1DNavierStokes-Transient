@@ -17,14 +17,19 @@ of your database: loading can create solution records. Report export, profile
 saving, and fitted-input saving are explicit actions. Cancellation is cooperative;
 closing waits for workers, and failed saves keep the window open for retry.
 
-The **Report** tab opens existing text exports and automatically displays newly
-exported reports. Header and units rows are highlighted. **Copy for Excel** copies
-all rows with tabs between cells; paste using Excel's **Paste Special > Text** to
-keep your sheet's formatting. **Save tab-separated file...** creates a UTF-8 TSV
-for tab-delimited import. Repeated headers, blank separators, unequal profile
-lengths and the original numeric text are retained. Excel may interpret numeric
-text using its own precision and locale settings. The preview is read-only and
-does not recalculate results or modify the source report or database.
+The **Report** tab lets you select experiment/profile blocks, profile types and
+metadata columns from an existing text export or newly exported run results.
+Toggle profile values, headers, units/axes and blank rows to control the layout.
+Choose original numeric text, fixed decimals or scientific notation; formatting
+rounds data values for presentation without recalculating results or axes.
+The preview shows exactly the selected output. **Copy for Excel** copies that
+output with tabs between cells; paste using Excel's **Paste Special > Text** to
+keep your sheet's formatting. **Export selected report...** writes the same data
+to a UTF-8 `.tsv` or `.txt` file for tab-delimited import. No data selection disables
+copy/export. The run's **Export report** still writes the full source report.
+Opening another source resets selections to All and keeps formatting choices.
+Report settings do not change the source data or database. Excel interprets
+imported numbers using its own precision and locale settings.
 
 ## Dependency and redistribution record
 

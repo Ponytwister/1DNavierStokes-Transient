@@ -13,6 +13,15 @@
 #include <QVBoxLayout>
 #include <QColor>
 #include <QFont>
+#include <QListWidget>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QGroupBox>
+#include <QSignalBlocker>
+#include <QSplitter>
+#include <QSet>
+#include <cmath>
 #include <algorithm>
 #include <stdexcept>
 
@@ -42,6 +51,76 @@ QString tsv(const Rows& rows)
     QString output;
     for (const auto& row : rows) output += row.join('\t') + "\r\n";
     return output;
+}
+
+QString profileType(const QString& label)
+{
+    for (const auto& type : {QString("Experimental_Profile"), QString("Numeric_Model_Profile")})
+        if (label == type || label.endsWith("_" + type)) return type;
+    return label;
+}
+
+QStringList blockNames(const Rows& rows)
+{
+    QStringList names;
+    for (const auto& row : rows) {
+        if (row.isEmpty()) continue;
+        if (row[0] == "sec") names.push_back(QString("Profile block %1").arg(names.size() + 1));
+        else if (!names.isEmpty() && row.size() >= 9 && profileType(row[8]) == "Experimental_Profile") {
+            auto name = row[8];
+            if (name.endsWith("_Experimental_Profile")) name.chop(QString("_Experimental_Profile").size());
+            names.back() = QString("%1: %2 · %3 sec").arg(names.size()).arg(name, row[0]);
+        }
+    }
+    return names;
+}
+
+Rows select(const Rows& rows, const Options& options)
+{
+    // Select whole experiment/profile blocks first so their axes and units stay
+    // attached even when the chosen profile type does not contain the run name.
+    QSet<int> keep, usedHeaders;
+    int block = -1, header = -1, unitsRow = -1;
+    bool blockHasData = false;
+    for (int i = 0; i < rows.size(); ++i) {
+        const auto& row = rows[i];
+        if (!row.isEmpty() && row[0] == "res_time") { header = i; blockHasData = false; continue; }
+        if (!row.isEmpty() && row[0] == "sec") { ++block; unitsRow = i; blockHasData = false; continue; }
+        if (row.isEmpty()) {
+            if (blockHasData && options.blankRows) keep.insert(i);
+        } else if (options.blocks.contains(block) && options.types.contains(profileType(row[8]))) {
+            keep.insert(i); blockHasData = true;
+            if (header >= 0 && options.headers) usedHeaders.insert(header);
+            if (unitsRow >= 0 && options.units) keep.insert(unitsRow);
+        }
+    }
+    if (block == -1 && options.headers)
+        for (int i = 0; i < rows.size(); ++i)
+            if (!rows[i].isEmpty() && rows[i][0] == "res_time") usedHeaders.insert(i);
+    keep.unite(usedHeaders);
+    Rows result;
+    if (options.columns.isEmpty() && !options.samples) return result;
+    for (int i = 0; i < rows.size(); ++i) {
+        if (!keep.contains(i)) continue;
+        const auto& row = rows[i];
+        if (row.isEmpty()) { result.push_back({}); continue; }
+        QStringList output;
+        auto append = [&](int column) {
+            auto value = row[column];
+            // Labels/units are never interpreted as numbers. Formatting is only
+            // a presentation choice; the original report remains in rows_.
+            if (options.numberFormat && column != 8 && column != 5 && row[0] != "res_time" && row[0] != "sec") {
+                bool ok = false;
+                const auto number = value.toDouble(&ok);
+                if (ok && std::isfinite(number)) value = QString::number(number, options.numberFormat, options.decimals);
+            }
+            output.push_back(value);
+        };
+        for (const int column : options.columns) if (column >= 0 && column < 9) append(column);
+        if (options.samples) for (int column = 9; column < row.size(); ++column) append(column);
+        result.push_back(output);
+    }
+    return result;
 }
 }
 
@@ -73,14 +152,54 @@ public:
 ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    auto* note = new QLabel("Open an exported text report, then copy into Excel using Paste Special > Text to keep your sheet formatting. Rows, units and numeric precision are preserved.");
+    auto* note = new QLabel("Choose the data and formatting for your report. The preview, exported file and Excel copy use the same selections. Open a source text report or export results from a run to begin.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* buttons = new QHBoxLayout;
     auto* open = new QPushButton("Open report..."); open->setObjectName("openReportButton");
     copy_ = new QPushButton("Copy for Excel"); copy_->setObjectName("copyReportButton");
-    save_ = new QPushButton("Save tab-separated file..."); save_->setObjectName("saveReportButton");
+    save_ = new QPushButton("Export selected report..."); save_->setObjectName("saveReportButton");
     buttons->addWidget(open); buttons->addWidget(copy_); buttons->addWidget(save_); buttons->addStretch();
     layout->addLayout(buttons);
+    auto* choices = new QHBoxLayout;
+    auto makeList = [&](const QString& title, const char* name, QListWidget*& list) {
+        auto* group = new QGroupBox(title); auto* box = new QVBoxLayout(group);
+        list = new QListWidget; list->setObjectName(name); list->setMaximumHeight(150);
+        box->addWidget(list);
+        auto* actions = new QHBoxLayout;
+        for (const bool checked : {true, false}) {
+            auto* button = new QPushButton(checked ? "All" : "None"); actions->addWidget(button);
+            connect(button, &QPushButton::clicked, this, [this, list, checked] {
+                { QSignalBlocker blocker(list);
+                  for (int i = 0; i < list->count(); ++i) list->item(i)->setCheckState(checked ? Qt::Checked : Qt::Unchecked); }
+                updatePreview();
+            });
+        }
+        box->addLayout(actions); choices->addWidget(group);
+        connect(list, &QListWidget::itemChanged, this, [this] { updatePreview(); });
+    };
+    makeList("Experiment / profile blocks", "reportBlocks", blocks_);
+    makeList("Profile types", "reportTypes", types_);
+    makeList("Metadata columns", "reportColumns", columns_);
+    layout->addLayout(choices);
+    auto* format = new QHBoxLayout;
+    auto makeCheck = [&](const QString& title, const char* name, QCheckBox*& check) {
+        check = new QCheckBox(title); check->setObjectName(name); check->setChecked(true);
+        format->addWidget(check); connect(check, &QCheckBox::toggled, this, [this] { updatePreview(); });
+    };
+    makeCheck("Profile values", "reportSamples", samples_);
+    makeCheck("Headers", "reportHeaders", headers_);
+    makeCheck("Units / axes", "reportUnits", units_);
+    makeCheck("Blank rows", "reportBlankRows", blankRows_);
+    layout->addLayout(format);
+    auto* numeric = new QHBoxLayout;
+    numeric->addWidget(new QLabel("Numbers:"));
+    numberFormat_ = new QComboBox; numberFormat_->setObjectName("reportNumberFormat");
+    numberFormat_->addItems({"Original text", "Fixed decimals", "Scientific"}); numeric->addWidget(numberFormat_);
+    numeric->addWidget(new QLabel("Decimal places:"));
+    decimals_ = new QSpinBox; decimals_->setObjectName("reportDecimals"); decimals_->setRange(0, 15); decimals_->setValue(6); decimals_->setEnabled(false);
+    numeric->addWidget(decimals_); numeric->addStretch(); layout->addLayout(numeric);
+    connect(numberFormat_, &QComboBox::currentIndexChanged, this, [this] { decimals_->setEnabled(numberFormat_->currentIndex() != 0); updatePreview(); });
+    connect(decimals_, &QSpinBox::valueChanged, this, [this] { updatePreview(); });
     status_ = new QLabel("Open a text report or use Export report after a run.");
     status_->setObjectName("reportStatus"); status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true);
     layout->addWidget(status_);
@@ -95,24 +214,21 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
         if (!name.isEmpty()) loadFile(name);
     });
     connect(copy_, &QPushButton::clicked, this, [this] {
-        QApplication::clipboard()->setText(report_format::tsv(rows_));
-        status_->setText("Copied all report rows for Excel: " + filename_);
+        QApplication::clipboard()->setText(report_format::tsv(selected_));
+        status_->setText("Copied selected report for Excel: " + filename_);
     });
     connect(save_, &QPushButton::clicked, this, [this] {
-        const auto name = QFileDialog::getSaveFileName(this, "Save tab-separated report", filename_ + ".tsv", "Tab-separated files (*.tsv)");
+        const auto name = QFileDialog::getSaveFileName(this, "Export selected report", filename_ + ".selected.tsv", "Tab-separated files (*.tsv);;Text files (*.txt)");
         if (name.isEmpty()) return;
-        QSaveFile file(name);
-        const auto bytes = report_format::tsv(rows_).toUtf8();
-        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-            status_->setText("Cannot save report: " + file.errorString()); return;
-        }
-        status_->setText("Saved: " + name);
+        saveFile(name);
     });
 }
 
 bool ReportTab::loadFile(const QString& filename)
 {
-    rows_.clear(); copy_->setEnabled(false); save_->setEnabled(false);
+    rows_.clear(); selected_.clear(); copy_->setEnabled(false); save_->setEnabled(false);
+    const QSignalBlocker blockSignal(blocks_), typeSignal(types_), columnSignal(columns_);
+    blocks_->clear(); types_->clear(); columns_->clear();
     auto* old = table_->model(); table_->setModel(nullptr); delete old;
     QFile file(filename);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -125,9 +241,48 @@ bool ReportTab::loadFile(const QString& filename)
     try { rows_ = report_format::parse(QString::fromUtf8(bytes)); }
     catch (const std::exception& error) { status_->setText(QString::fromUtf8(error.what())); return false; }
     filename_ = filename;
-    table_->setModel(new ReportModel(rows_, table_));
-    table_->setColumnWidth(8, 300);
-    copy_->setEnabled(true); save_->setEnabled(true);
-    status_->setText(QString("%1 rows · %2").arg(rows_.size()).arg(filename));
+    auto add = [](QListWidget* list, const QString& label) {
+        auto* item = new QListWidgetItem(label, list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(Qt::Checked);
+    };
+    for (const auto& name : report_format::blockNames(rows_)) add(blocks_, name);
+    QStringList types;
+    for (const auto& row : rows_) if (!row.isEmpty() && row[0] != "res_time" && row[0] != "sec") {
+        const auto type = report_format::profileType(row[8]);
+        if (!types.contains(type)) types.push_back(type);
+    }
+    for (const auto& type : types) add(types_, type);
+    for (int i = 0; i < 9; ++i) add(columns_, rows_.front()[i]);
+    updatePreview();
     return true;
+}
+
+void ReportTab::updatePreview()
+{
+    if (rows_.isEmpty()) return;
+    report_format::Options options;
+    for (int i = 0; i < blocks_->count(); ++i) if (blocks_->item(i)->checkState() == Qt::Checked) options.blocks.push_back(i);
+    for (int i = 0; i < types_->count(); ++i) if (types_->item(i)->checkState() == Qt::Checked) options.types.push_back(types_->item(i)->text());
+    for (int i = 0; i < columns_->count(); ++i) if (columns_->item(i)->checkState() == Qt::Checked) options.columns.push_back(i);
+    options.samples = samples_->isChecked(); options.headers = headers_->isChecked();
+    options.units = units_->isChecked(); options.blankRows = blankRows_->isChecked();
+    options.numberFormat = numberFormat_->currentIndex() == 1 ? 'f' : numberFormat_->currentIndex() == 2 ? 'e' : 0;
+    options.decimals = decimals_->value();
+    selected_ = report_format::select(rows_, options);
+    auto* old = table_->model(); table_->setModel(new ReportModel(selected_, table_)); delete old;
+    const auto profileColumn = options.columns.indexOf(8);
+    if (profileColumn >= 0) table_->setColumnWidth(profileColumn, 300);
+    copy_->setEnabled(!selected_.isEmpty()); save_->setEnabled(!selected_.isEmpty());
+    status_->setText(QString("Preview: %1 selected rows · Source: %2").arg(selected_.size()).arg(filename_));
+}
+
+bool ReportTab::saveFile(const QString& filename)
+{
+    if (selected_.isEmpty()) { status_->setText("Select data to export."); return false; }
+    QSaveFile file(filename);
+    const auto bytes = report_format::tsv(selected_).toUtf8();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+        status_->setText("Cannot save report: " + file.errorString()); return false;
+    }
+    status_->setText("Exported selected report: " + filename); return true;
 }
