@@ -13,6 +13,32 @@ a new run or invalidating results clears a generated preview but keeps the
 choices. Imported files remain independently usable. Settings are not persisted
 across application restarts.
 
+## D-A and integral metadata layout
+
+**D-A / integrals** switches between **Stacked in D-A** (the default, existing
+layout) and **Separate columns — all values per block**. Split mode replaces
+the D-A checkbox with six independently selectable metadata columns:
+
+| Column | Value carried by this source row |
+| --- | --- |
+| `exp_DA` | Experimental_Derivative |
+| `model_DA` | Numeric_Derivative |
+| `exp_integral` | Experimental_Profile |
+| `model_integral` | Numeric_Model_Profile |
+| `analytic_exp_integral` | Experimental_Difference |
+| `analytic_model_integral` | Numeric_Difference |
+
+Each selected profile row repeats the six values from its own profile block.
+Values are collected before profile filtering, so hiding a derivative or profile
+row does not remove its metadata. Missing source values remain `-`, never zero
+or values from another block. The units row uses `-` for the split fields because
+the legacy `deriv` label does not specify the units of all six quantities.
+Numeric formatting applies equally to split and stacked metadata. The preview,
+clipboard and exported file all use the chosen layout. Switching layouts retains
+each layout's column choices; regenerating a report retains the layout and choices.
+This works with current-run generation and original-format imported reports.
+It rearranges existing values without recalculating integrals or changing units.
+
 ## Additional profiles and units
 
 The new generation path separates two previously conflated rows:

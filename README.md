@@ -69,6 +69,11 @@ or **Report > Use current run**. This prepares data in memory without creating
 a source text file or writing to the database. Select
 experiment/profile blocks, profile types, and metadata columns. Choose whether
 to include profile values, headers, units/axes, and blank separator rows.
+**D-A / integrals** keeps the six metrics stacked in D-A or splits them into
+independently selectable `exp_DA`, `model_DA`, `exp_integral`, `model_integral`,
+`analytic_exp_integral`, and `analytic_model_integral` columns. Split mode repeats
+each block's values on all its selected profile rows, even if the original
+metadata-carrying rows are deselected. Missing values remain `-`.
 The preview, **Copy for Excel**, and **Export selected report...** all use those
 selections. The selected report is tab-separated (`.tsv` or `.txt`), ready to
 paste as text into your formatted sheet or import with the Tab delimiter.

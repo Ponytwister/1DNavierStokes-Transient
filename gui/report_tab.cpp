@@ -61,6 +61,19 @@ QString profileType(const QString& label)
     return label;
 }
 
+QStringList metricNames()
+{
+    return {"exp_DA", "model_DA", "exp_integral", "model_integral",
+            "analytic_exp_integral", "analytic_model_integral"};
+}
+
+static int metricIndex(const QString& label)
+{
+    const QStringList types = {"Experimental_Derivative", "Numeric_Derivative",
+        "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference"};
+    return types.indexOf(profileType(label));
+}
+
 QStringList blockNames(const Rows& rows)
 {
     QStringList names;
@@ -78,6 +91,22 @@ QStringList blockNames(const Rows& rows)
 
 Rows select(const Rows& rows, const Options& options)
 {
+    // Read metadata before filtering profiles: hiding the carrier row must not
+    // discard a block's metadata in the repeated-column layout.
+    QList<QStringList> blockMetrics;
+    QList<int> rowBlocks;
+    int sourceBlock = -1;
+    for (const auto& row : rows) {
+        if (!row.isEmpty() && row[0] == "sec") {
+            ++sourceBlock;
+            blockMetrics.push_back(QStringList{"-", "-", "-", "-", "-", "-"});
+        }
+        rowBlocks.push_back(sourceBlock);
+        if (sourceBlock >= 0 && row.size() >= 9 && row[0] != "res_time" && row[0] != "sec") {
+            const int metric = metricIndex(row[8]);
+            if (metric >= 0) blockMetrics[sourceBlock][metric] = row[7];
+        }
+    }
     // Select whole experiment/profile blocks first so their axes and units stay
     // attached even when the chosen profile type does not contain the run name.
     QSet<int> keep, usedHeaders;
@@ -106,19 +135,31 @@ Rows select(const Rows& rows, const Options& options)
         const auto& row = rows[i];
         if (row.isEmpty()) { result.push_back({}); continue; }
         QStringList output;
-        auto append = [&](int column) {
-            auto value = row[column];
+        auto appendValue = [&](QString value, bool numeric) {
             // Labels/units are never interpreted as numbers. Formatting is only
             // a presentation choice; the original report remains in rows_.
-            if (options.numberFormat && column != 8 && column != 5 && row[0] != "res_time" && row[0] != "sec") {
+            if (options.numberFormat && numeric && row[0] != "res_time" && row[0] != "sec") {
                 bool ok = false;
                 const auto number = value.toDouble(&ok);
                 if (ok && std::isfinite(number)) value = QString::number(number, options.numberFormat, options.decimals);
             }
             output.push_back(value);
         };
-        for (const int column : options.columns) if (column >= 0 && column < 9) append(column);
-        if (options.samples) for (int column = 9; column < row.size(); ++column) append(column);
+        for (const int column : options.columns) {
+            if (column < 0 || column >= 9) continue;
+            if (column == 7 && options.metadataLayout != MetadataLayout::stacked) {
+                for (const int metric : options.metrics) {
+                    if (metric < 0 || metric >= 6) continue;
+                    QString value = "-";
+                    if (row[0] == "res_time") value = metricNames()[metric];
+                    else if (row[0] == "sec") value = "-"; // No undocumented units inferred from "deriv".
+                    else if (options.metadataLayout == MetadataLayout::separateBlock && rowBlocks[i] >= 0)
+                        value = blockMetrics[rowBlocks[i]][metric];
+                    appendValue(value, true);
+                }
+            } else appendValue(row[column], column != 8 && column != 5);
+        }
+        if (options.samples) for (int column = 9; column < row.size(); ++column) appendValue(row[column], true);
         result.push_back(output);
     }
     return result;
@@ -194,6 +235,13 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     makeCheck("Units / axes", "reportUnits", units_);
     makeCheck("Blank rows", "reportBlankRows", blankRows_);
     layout->addLayout(format);
+    auto* metadata = new QHBoxLayout;
+    metadata->addWidget(new QLabel("D-A / integrals:"));
+    metadataLayout_ = new QComboBox; metadataLayout_->setObjectName("reportMetadataLayout");
+    metadataLayout_->addItems({"Stacked in D-A", "Separate columns — all values per block"});
+    metadataLayout_->setToolTip("Split the six D-A/integral fields into named columns. Missing source values remain '-'.");
+    metadata->addWidget(metadataLayout_); metadata->addStretch(); layout->addLayout(metadata);
+    connect(metadataLayout_, &QComboBox::currentIndexChanged, this, [this] { rebuildColumns(); updatePreview(); });
     auto* numeric = new QHBoxLayout;
     numeric->addWidget(new QLabel("Numbers:"));
     numberFormat_ = new QComboBox; numberFormat_->setObjectName("reportNumberFormat");
@@ -265,7 +313,14 @@ bool ReportTab::loadSource(const QString& text, bool preserveSelections)
         if (!types.contains(type)) types.push_back(type);
     }
     for (const auto& type : types) add(types_, type, typeSelection.value(type, Qt::Checked));
-    for (int i = 0; i < 9; ++i) add(columns_, rows_.front()[i], columnSelection.value(rows_.front()[i], Qt::Checked));
+    if (!preserveSelections) columnStates_.clear();
+    // Keep states by stable field ID when switching layouts or regenerating.
+    for (int i = 0; i < 9; ++i)
+        if (columnSelection.contains(rows_.front()[i])) columnStates_[i] = columnSelection[rows_.front()[i]];
+    const auto names = report_format::metricNames();
+    for (int i = 0; i < names.size(); ++i)
+        if (columnSelection.contains(names[i])) columnStates_[9 + i] = columnSelection[names[i]];
+    rebuildColumns();
     updatePreview();
     return true;
 }
@@ -297,17 +352,51 @@ void ReportTab::updatePreview()
     report_format::Options options;
     for (int i = 0; i < blocks_->count(); ++i) if (blocks_->item(i)->checkState() == Qt::Checked) options.blocks.push_back(i);
     for (int i = 0; i < types_->count(); ++i) if (types_->item(i)->checkState() == Qt::Checked) options.types.push_back(types_->item(i)->text());
-    for (int i = 0; i < columns_->count(); ++i) if (columns_->item(i)->checkState() == Qt::Checked) options.columns.push_back(i);
+    options.metadataLayout = static_cast<report_format::MetadataLayout>(metadataLayout_->currentIndex());
+    options.metrics.clear();
+    for (int i = 0; i < columns_->count(); ++i) {
+        const auto* item = columns_->item(i);
+        if (item->checkState() != Qt::Checked) continue;
+        const int field = item->data(Qt::UserRole).toInt();
+        if (field < 9) options.columns.push_back(field);
+        else {
+            if (!options.columns.contains(7)) options.columns.push_back(7);
+            options.metrics.push_back(field - 9);
+        }
+    }
     options.samples = samples_->isChecked(); options.headers = headers_->isChecked();
     options.units = units_->isChecked(); options.blankRows = blankRows_->isChecked();
     options.numberFormat = numberFormat_->currentIndex() == 1 ? 'f' : numberFormat_->currentIndex() == 2 ? 'e' : 0;
     options.decimals = decimals_->value();
     selected_ = report_format::select(rows_, options);
     auto* old = table_->model(); table_->setModel(new ReportModel(selected_, table_)); delete old;
-    const auto profileColumn = options.columns.indexOf(8);
+    auto profileColumn = options.columns.indexOf(8);
+    if (profileColumn >= 0 && options.columns.contains(7) && options.metadataLayout != report_format::MetadataLayout::stacked)
+        profileColumn += options.metrics.size() - 1;
     if (profileColumn >= 0) table_->setColumnWidth(profileColumn, 300);
     copy_->setEnabled(!selected_.isEmpty()); save_->setEnabled(!selected_.isEmpty());
     status_->setText(QString("Preview: %1 selected rows · Source: %2").arg(selected_.size()).arg(sourceLabel_));
+}
+
+void ReportTab::rebuildColumns()
+{
+    for (int i = 0; i < columns_->count(); ++i)
+        columnStates_[columns_->item(i)->data(Qt::UserRole).toInt()] = columns_->item(i)->checkState();
+    const QSignalBlocker blocker(columns_);
+    columns_->clear();
+    if (rows_.isEmpty()) return;
+    auto add = [&](int field, const QString& label) {
+        auto* item = new QListWidgetItem(label, columns_);
+        item->setData(Qt::UserRole, field);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(columnStates_.value(field, field >= 9 ? columnStates_.value(7, Qt::Checked) : Qt::Checked));
+    };
+    for (int field = 0; field < 9; ++field) {
+        if (field == 7 && metadataLayout_->currentIndex() != 0) {
+            const auto names = report_format::metricNames();
+            for (int i = 0; i < names.size(); ++i) add(9 + i, names[i]);
+        } else add(field, rows_.front()[field]);
+    }
 }
 
 bool ReportTab::saveFile(const QString& filename)

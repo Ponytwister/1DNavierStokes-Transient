@@ -24,6 +24,9 @@ text files can still be opened. Direct generation offers separate analytical-zer
 and true bound-bead rows plus every species' model-output profile in its declared
 model units. It retains full double precision until you choose a number format.
 Toggle profile values, headers, units/axes and blank rows to control the layout.
+**D-A / integrals** selects the original stacked D-A layout or six separate,
+individually selectable metadata columns. Split columns repeat the block's
+values on every selected profile row; missing source values remain `-`.
 Choose original numeric text, fixed decimals or scientific notation; formatting
 rounds data values for presentation without recalculating results or axes.
 The preview shows exactly the selected output. **Copy for Excel** copies that

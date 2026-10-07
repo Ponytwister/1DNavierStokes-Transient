@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QStringList>
 #include <functional>
+#include <QMap>
 
 class QLabel;
 class QPushButton;
@@ -17,6 +18,8 @@ using Rows = QList<QStringList>;
 Rows parse(const QString& text);
 QString tsv(const Rows& rows);
 QString profileType(const QString& label);
+QStringList metricNames();
+enum class MetadataLayout { stacked, separateBlock };
 struct Options {
     QList<int> blocks;
     QStringList types;
@@ -24,6 +27,8 @@ struct Options {
     bool samples = true, headers = true, units = true, blankRows = true;
     char numberFormat = 0; // zero preserves the source text
     int decimals = 6;
+    MetadataLayout metadataLayout = MetadataLayout::stacked;
+    QList<int> metrics = {0, 1, 2, 3, 4, 5};
 };
 QStringList blockNames(const Rows& rows);
 Rows select(const Rows& rows, const Options& options);
@@ -42,6 +47,7 @@ private:
     bool loadSource(const QString& text, bool preserveSelections);
     void clearSource();
     void updatePreview();
+    void rebuildColumns();
     QLabel* status_;
     QTableView* table_;
     QPushButton *copy_, *save_;
@@ -51,6 +57,8 @@ private:
     QListWidget *blocks_, *types_, *columns_;
     QCheckBox *samples_, *headers_, *units_, *blankRows_;
     QComboBox* numberFormat_;
+    QComboBox* metadataLayout_;
+    QMap<int, Qt::CheckState> columnStates_;
     QSpinBox* decimals_;
     QString filename_;
     QString sourceLabel_;

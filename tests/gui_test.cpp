@@ -147,6 +147,83 @@ TEST(Report, ExportAndClipboardUseSelectionsAndPreview)
     EXPECT_FALSE(QFile::exists(directory.filePath("empty.tsv")));
 }
 
+TEST(Report, SplitMetadataUsesAllSixValuesBeforeFilteringAndKeepsBlocksIndependent)
+{
+    using namespace report_format;
+    const QString header = "res_time  b  k  eq  d  c  s  D-A  profile_type  0  10\n";
+    const QString units = "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n";
+    const QString prefix = "1  2  3  4  5  6  7  ";
+    const QString block = units + prefix + "11.125  Experimental_Derivative  101\n" +
+        prefix + "22.25  Numeric_Derivative  102\n" +
+        prefix + "33.5  experiment_Experimental_Profile  103\n" +
+        prefix + "44.75  experiment_Numeric_Model_Profile  104\n" +
+        prefix + "55.875  Experimental_Difference  105\n" +
+        prefix + "66.126  Numeric_Difference  106\n" +
+        prefix + "-  Free_Dye  107  108\n\n";
+    const auto rows = parse(header + block + header + units +
+        prefix + "99  Experimental_Derivative  201\n" + prefix + "-  Free_Dye  207\n\n");
+    Options options; options.blocks = {0, 1}; options.types = {"Free_Dye"}; options.columns = {7, 8};
+    options.metadataLayout = MetadataLayout::separateBlock;
+    const auto selected = select(rows, options);
+    ASSERT_EQ(selected.size(), 8);
+    EXPECT_EQ(selected[0].mid(0, 6), metricNames());
+    EXPECT_EQ(selected[1].mid(0, 6), QStringList({"-", "-", "-", "-", "-", "-"}));
+    EXPECT_EQ(selected[2], QStringList({"11.125", "22.25", "33.5", "44.75", "55.875", "66.126", "Free_Dye", "107", "108"}));
+    EXPECT_EQ(selected[6], QStringList({"99", "-", "-", "-", "-", "-", "Free_Dye", "207"}));
+    options.metrics = {1, 5}; options.numberFormat = 'f'; options.decimals = 2;
+    EXPECT_EQ(select(rows, options)[2], QStringList({"22.25", "66.13", "Free_Dye", "107.00", "108.00"}));
+    options.metadataLayout = MetadataLayout::stacked; options.numberFormat = 0;
+    EXPECT_EQ(select(rows, options)[2], QStringList({"-", "Free_Dye", "107", "108"}));
+    EXPECT_EQ(rows[2][7], "11.125");
+}
+
+TEST(Report, SplitMetadataPreviewClipboardAndFileAgreeForImportedAndGeneratedSources)
+{
+    QTemporaryDir directory;
+    const QString source = "res_time  b  k  eq  d  c  s  D-A  profile_type  0\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n"
+        "1  2  3  4  5  6  7  12.5  Experimental_Derivative  1\n"
+        "1  2  3  4  5  6  7  25  example_Numeric_Model_Profile  2\n"
+        "1  2  3  4  5  6  7  -  Free_Dye  3\n\n";
+    const auto inputPath = directory.filePath("input.txt");
+    QFile input(inputPath); ASSERT_TRUE(input.open(QIODevice::WriteOnly));
+    input.write(source.toUtf8()); input.close();
+    for (bool generated : {false, true}) {
+        ReportTab tab;
+        ASSERT_TRUE(generated ? tab.loadGenerated(source, "test run", "report") : tab.loadFile(inputPath));
+        auto* layout = tab.findChild<QComboBox*>("reportMetadataLayout");
+        layout->setCurrentIndex(1);
+        auto* columns = tab.findChild<QListWidget*>("reportColumns");
+        ASSERT_EQ(columns->count(), 14);
+        for (int i = 0; i < columns->count(); ++i) {
+            const auto field = columns->item(i)->data(Qt::UserRole).toInt();
+            columns->item(i)->setCheckState(field == 9 || field == 12 || field == 8 ? Qt::Checked : Qt::Unchecked);
+        }
+        auto* types = tab.findChild<QListWidget*>("reportTypes");
+        for (int i = 0; i < types->count(); ++i)
+            types->item(i)->setCheckState(types->item(i)->text() == "Free_Dye" ? Qt::Checked : Qt::Unchecked);
+        for (const auto* name : {"reportUnits", "reportBlankRows"}) tab.findChild<QCheckBox*>(name)->setChecked(false);
+        const QString expected = "exp_DA\tmodel_integral\tprofile_type\t0\r\n12.5\t25\tFree_Dye\t3\r\n";
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        EXPECT_EQ(QApplication::clipboard()->text(), expected);
+        auto* model = tab.findChild<QTableView*>("reportTable")->model();
+        ASSERT_EQ(model->columnCount(), 4); ASSERT_EQ(model->rowCount(), 2);
+        EXPECT_EQ(model->data(model->index(1, 1)).toString(), "25");
+        const auto outputPath = directory.filePath(generated ? "generated.tsv" : "imported.tsv");
+        ASSERT_TRUE(tab.saveFile(outputPath));
+        QFile output(outputPath); ASSERT_TRUE(output.open(QIODevice::ReadOnly));
+        EXPECT_EQ(output.readAll(), expected.toUtf8());
+        layout->setCurrentIndex(0); layout->setCurrentIndex(1);
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        EXPECT_EQ(QApplication::clipboard()->text(), expected);
+        if (generated) {
+            ASSERT_TRUE(tab.loadGenerated(source, "same run", "report"));
+            tab.findChild<QPushButton*>("copyReportButton")->click();
+            EXPECT_EQ(QApplication::clipboard()->text(), expected);
+        }
+    }
+}
+
 template<class T> T* widget(QWidget& window, const char* name) {
     auto* result = window.findChild<T*>(name);
     if (!result) throw std::runtime_error(name);
