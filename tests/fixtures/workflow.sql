@@ -25,6 +25,10 @@ WITH ids(id) AS (VALUES(1),(2),(3),(4))
 INSERT INTO raw_profile SELECT 'uniform', printf('%d.0',id),0,9,
  '1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1',
  id,0,8,'false',NULL,NULL FROM ids;
+CREATE TABLE raw_profile_entrance_concentrations (
+ NAME TEXT NOT NULL, WT_PERCENT TEXT NOT NULL, SPECIES_NAME TEXT NOT NULL,
+ CONCENTRATION REAL NOT NULL, UNITS TEXT,
+ PRIMARY KEY(NAME,WT_PERCENT,SPECIES_NAME));
 CREATE TABLE inlet_conditions (INLET_COND_ID INTEGER, SPECIE_CONC REAL, ENTRANCE_NUMBER INTEGER, SPECIES_NAME TEXT);
 INSERT INTO inlet_conditions VALUES (1,0.002,1,'FITC'),(2,0.002,1,'FITC'),(3,0.002,1,'FITC'),(4,0.002,1,'FITC');
 CREATE TABLE alglib_input (VARIABLE TEXT PRIMARY KEY, "INITIAL VALUE" REAL, "LOWER BOUND" REAL, "UPPER BOUND" REAL, SCALE REAL);

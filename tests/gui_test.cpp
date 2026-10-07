@@ -520,13 +520,14 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QLineEdit>(editor, "WT_PERCENT")->setText("5");
         widget<QLineEdit>(editor, "CHANNEL_LEFT_EDGE")->setText("0");
         widget<QLineEdit>(editor, "CHANNEL_RIGHT_EDGE")->setText("3");
-        widget<QLineEdit>(editor, "ENTRANCE_CONC")->setText("0.25");
+        widget<QLineEdit>(editor, "entranceConcValue_0")->setText("0.25");
+        widget<QComboBox>(editor, "entranceConcSpecies_0")->setCurrentText("FITC");
         widget<QPlainTextEdit>(editor, "INTENSITY_ARRAY")->setPlainText("1  2 3");
     };
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
         fill(*editor);
-        EXPECT_EQ(widget<QComboBox>(*editor, "ENTRANCE_CONC_UNITS")->currentText(), "umol");
+        EXPECT_EQ(widget<QComboBox>(*editor, "entranceConcUnits_0")->currentText(), "umol");
         EXPECT_EQ(editor->findChild<QCheckBox*>("LEFT_EDGENull"), nullptr);
         EXPECT_EQ(editor->findChild<QCheckBox*>("WIDTHNull"), nullptr);
         EXPECT_EQ(editor->findChild<QCheckBox*>("ENTRANCE_CONCNull"), nullptr);
@@ -561,6 +562,7 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC=0.25 AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT CONCENTRATION=0.25 AND SPECIES_NAME='FITC' AND UNITS='umol' FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 1);
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr); fill(*editor);
         widget<QPushButton>(*editor, "saveRawProfileButton")->click();

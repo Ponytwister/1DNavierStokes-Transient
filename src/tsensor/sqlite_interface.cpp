@@ -913,8 +913,6 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
     int col_index;
     ptrdiff_t row = 0;
     double last_profile_point = 0;
-    bool saw_inlet_cond_id = false;
-    bool null_inlet_cond_id = false;
     for(int i = 0; i < count; i++) {
         criterion = columnNames[i];
         if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
@@ -986,8 +984,6 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             }
         } else if (criterion == "INLET_COND_ID") {
             add_report(p, 0, "Value=" + value);
-            saw_inlet_cond_id = true;
-            null_inlet_cond_id = value.empty();
             if (!value.empty()) {
                 exp_ptr->INLET_COND_ID = std::stoi(value);
                 exp_ptr->has_legacy_inlet_cond_id = true;
@@ -1048,8 +1044,6 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             // Already applied when the experiment was identified above.
         }
     };
-    if (saw_inlet_cond_id && null_inlet_cond_id && !exp_ptr->has_entrance_conc_override)
-        throw std::runtime_error("NULL in INLET_COND_ID");
     pop_report(p, 0); // clear final criterion
     pop_report(p, 0); // clear row count
     return 0;
@@ -1083,6 +1077,37 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     const char* sql = sqltext.c_str();
     execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
+
+    sqlite3_stmt* table_check_raw = nullptr;
+    int table_check_rc = sqlite3_prepare_v2(db,
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='raw_profile_entrance_concentrations'",
+        -1, &table_check_raw, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> table_check(table_check_raw, sqlite3_finalize);
+    if (table_check_rc != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
+    const int table_step = sqlite3_step(table_check.get());
+    if (table_step == SQLITE_ROW) {
+        for (auto& experiment : p.experiments) {
+            sqlite3_stmt* query_raw = nullptr;
+            const int prepared = sqlite3_prepare_v2(db,
+                "SELECT SPECIES_NAME, CONCENTRATION, UNITS FROM raw_profile_entrance_concentrations WHERE NAME IS ? AND WT_PERCENT IS ?",
+                -1, &query_raw, nullptr);
+            std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> query(query_raw, sqlite3_finalize);
+            if (prepared != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
+            if (sqlite3_bind_text(query.get(), 1, experiment.run->name.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_bind_text(query.get(), 2, experiment.second_name.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK)
+                throw std::runtime_error(sqlite3_errmsg(db));
+            int rc;
+            while ((rc = sqlite3_step(query.get())) == SQLITE_ROW) {
+                const auto* species = reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 0));
+                const auto* units = reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 2));
+                const double concentration = sqlite3_column_double(query.get(), 1);
+                if (!species || !std::isfinite(concentration) || concentration < 0.0)
+                    throw std::runtime_error("Invalid raw profile entrance concentration row.");
+                experiment.entrance_concentrations.push_back({species, concentration, units ? units : ""});
+            }
+            if (rc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+        }
+    } else if (table_step != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
     pop_and_add(p, 1, "setting experiments.entrances size and flowrates");
 
     for (int row = 0; row < p.row_count; row++) {
@@ -1207,7 +1232,19 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
         //initialize the concentration inlet arrays.
         experiment_struct* exp_ptr = &p.experiments.at(row);
         experiment_run_struct* run_ptr = exp_ptr->run;
-        if (exp_ptr->has_entrance_conc_override) {
+        if (!exp_ptr->entrance_concentrations.empty()) {
+            if (exp_ptr->entrances.empty()) throw std::runtime_error("Per-species ENTRANCE_CONC requires at least one entrance.");
+            for (const auto& override : exp_ptr->entrance_concentrations) {
+                const auto specie = specie_index(run_ptr, override.species_name);
+                const auto& inlet_species = run_ptr->species.at(specie);
+                const std::string source_units = override.units.empty() ? inlet_species.model_units : override.units;
+                const double input_concentration = override.concentration *
+                    unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
+                if (!std::isfinite(input_concentration))
+                    throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+                exp_ptr->entrances.front().CONC[&run_ptr->species.at(specie)] = input_concentration;
+            }
+        } else if (exp_ptr->has_entrance_conc_override) {
             if (run_ptr->FITC < 0 || run_ptr->FITC >= static_cast<ptrdiff_t>(run_ptr->species.size()))
                 throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
             if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");

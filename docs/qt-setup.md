@@ -343,15 +343,18 @@ The Add and Modify editors present the editable fields in this order. The
 deprecated `INLET_COND_ID` remains visible in the table but is not editable.
 This display order does not alter the database schema.
 
-`ENTRANCE_CONC_UNITS` is an optional per-profile override. The concentration
-unit selector defaults to the FITC entry in that experiment's
-`SPECIE_MODEL_CONC_UNITS` list. Apply
-`migrations/002_raw_profile_entrance_conc_units.sql` once to add the column;
-existing rows remain unchanged and continue to use the experiment default.
-New profiles use `ENTRANCE_CONC` as the FITC inlet concentration. The legacy
-`INLET_COND_ID` column remains visible for reference and stays in the database;
-profiles without an entrance concentration continue to use the existing
-`inlet_conditions` lookup. The raw profile editor no longer changes that ID.
+The editor represents `ENTRANCE_CONC` as one row per species, with a
+concentration value and species and units dropdowns. Add or remove rows as
+needed; each species can appear once. Units default to that species' entry in
+the selected experiment's `SPECIE_MODEL_CONC_UNITS` list and can be overridden
+per profile. Changing `NAME` refreshes the species and default unit choices.
+Apply `migrations/002_raw_profile_entrance_conc_units.sql` followed by
+`migrations/003_raw_profile_species_concentrations.sql` once. Migration 003
+creates the per-species table and copies existing scalar `ENTRANCE_CONC` values
+to FITC rows, preserving the old columns for compatibility. The legacy
+`INLET_COND_ID` column remains visible and stored for database compatibility,
+but `ENTRANCE_CONC` rows take precedence when present; profiles without them
+continue to use the existing `inlet_conditions` lookup.
 
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is

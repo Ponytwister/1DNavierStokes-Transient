@@ -204,6 +204,12 @@ struct experiment_struct {
     bool has_entrance_conc_override = false;
     double entrance_conc_override = 0.0;
     std::string entrance_conc_units;
+    struct entrance_concentration_override {
+        std::string species_name;
+        double concentration;
+        std::string units;
+    };
+    std::vector<entrance_concentration_override> entrance_concentrations;
     double exp_DA;
     double model_DA;
     double exp_integral;
