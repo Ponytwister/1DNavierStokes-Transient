@@ -1441,6 +1441,7 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     p.initial_values_alglib.resize(p.solvables.size());
     p.low_bound.resize(p.solvables.size());
     p.up_bound.resize(p.solvables.size());
+    if (p.solvables.empty()) return;
     
     sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'alglib_input' WHERE ";
@@ -2403,9 +2404,7 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
     if (!ptr) { throw std::invalid_argument("Missing solver state"); }
     auto& p = *static_cast<parameters_t*>(ptr);
     check_cancellation(p);
-    if (!p.run_solver) {
-        return;
-    } else {
+    {
         add_report(p, 1, "setting control parmeters");
         for (int i = 0; i < p.solvables.size(); i++) {
             auto& s = p.solvables.at(i);
@@ -2442,6 +2441,9 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
                     ", available samples=" + std::to_string(exp_ptr->raw_experimental_profile.size()) +
                     "). Adjust left_edge/width fit bounds or provide a larger raw profile window.");
             }
+            // Sampling needs the current width's scale on the first evaluation,
+            // before model() runs (a model-only run has no later evaluation).
+            exp_ptr->scale_factor = exp_ptr->run->W * 1.0e6 / width;
             int last_x = static_cast<int>(ceil(exp_ptr->left_edge.value()));
             for (int x = 0; x < exp_ptr->window_size; x++) {
                 int x_unshift = static_cast<int>(ceil(x + exp_ptr->left_edge.value()));

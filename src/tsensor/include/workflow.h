@@ -23,8 +23,8 @@ using control_values = std::vector<std::pair<std::string, std::optional<std::str
 // A supplied snapshot replaces database controls, including NULL/skip values.
 void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_values>& controls = std::nullopt);
 
-// Requires successfully loaded inputs. Retains the existing run_solver behavior
-// and optimizer settings; ALGLIB exceptions propagate to the caller.
+// Requires successfully loaded inputs. Evaluates once without optimization when
+// run_solver is false or no parameters are selected; otherwise runs ALGLIB.
 run_result run(parameters_t& p);
 
 // Export into an explicit directory (created if absent), retaining the existing

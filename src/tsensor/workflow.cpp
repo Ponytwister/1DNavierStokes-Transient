@@ -182,21 +182,22 @@ run_result run(parameters_t& p)
     const auto initial_values = p.initial_values_alglib;
     double DiffStep = 0.0001;
     alglib::real_1d_array control_parameters;
-    control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib.data());
-    alglib::real_1d_array s;
-    s.setcontent(p.solvables.size(), p.scale.data());
-    alglib::real_1d_array bndl;
-    bndl.setcontent(p.solvables.size(), p.low_bound.data());
-    alglib::real_1d_array bndu;
-    bndu.setcontent(p.solvables.size(), p.up_bound.data());
-    alglib::minlmstate state;
-    alglib::minlmreport rep;
-    alglib::minlmcreatev(p.solvables.size(), p.total_window_size, control_parameters, DiffStep, state);
-    alglib::minlmsetbc(state, bndl, bndu);
-    alglib::minlmsetcond(state, p.convergence_epsx, p.max_iterations);
-    alglib::minlmsetscale(state, s);
-    alglib::minlmsetnonmonotonicsteps(state, 2);
-    if (p.run_solver) {
+    if (!p.solvables.empty())
+        control_parameters.setcontent(p.solvables.size(), p.initial_values_alglib.data());
+    if (p.run_solver && !p.solvables.empty()) {
+        alglib::real_1d_array s;
+        s.setcontent(p.solvables.size(), p.scale.data());
+        alglib::real_1d_array bndl;
+        bndl.setcontent(p.solvables.size(), p.low_bound.data());
+        alglib::real_1d_array bndu;
+        bndu.setcontent(p.solvables.size(), p.up_bound.data());
+        alglib::minlmstate state;
+        alglib::minlmreport rep;
+        alglib::minlmcreatev(p.solvables.size(), p.total_window_size, control_parameters, DiffStep, state);
+        alglib::minlmsetbc(state, bndl, bndu);
+        alglib::minlmsetcond(state, p.convergence_epsx, p.max_iterations);
+        alglib::minlmsetscale(state, s);
+        alglib::minlmsetnonmonotonicsteps(state, 2);
         struct progress_context {
             parameters_t& parameters;
             run_result& result;
@@ -234,6 +235,7 @@ run_result run(parameters_t& p)
 
     } else {
         alglib::real_1d_array residuals;
+        residuals.setlength(p.total_window_size);
         alglib_solver(control_parameters, residuals, &p);
         double objective = 0;
         for (alglib::ae_int_t i = 0; i < residuals.length(); ++i)

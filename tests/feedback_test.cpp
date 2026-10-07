@@ -84,9 +84,9 @@ TEST(Feedback, NoObserverMeansSilentCoreAndSavingRemainsExplicit)
         auto& p = session.parameters();
         read_model_parameters_from_db(p, session.database());
         read_alglib_values_from_db(p, session.database());
-        // Exercise the established optimizer-disabled branch, not a full solve.
+        // Exercise model-only dispatch without experiment rows, not a full solve.
         p.run_solver = false;
-        p.total_window_size = 1;
+        p.total_window_size = 0;
         p.initial_values_alglib[0] = 3.0;
         result = run(p);
         EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT \"INITIAL VALUE\" FROM alglib_input;"), 2.0);
@@ -99,7 +99,7 @@ TEST(Feedback, NoObserverMeansSilentCoreAndSavingRemainsExplicit)
     EXPECT_FALSE(result.optimizer_ran);
     EXPECT_FALSE(result.termination_type.has_value());
     EXPECT_FALSE(result.optimizer_iterations.has_value());
-    EXPECT_EQ(result.residual_evaluations, 0);
+    EXPECT_EQ(result.residual_evaluations, 1);
     ASSERT_EQ(result.parameters.size(), 1u);
     EXPECT_EQ(result.parameters[0].source, "global");
     EXPECT_EQ(result.parameters[0].name, "width");

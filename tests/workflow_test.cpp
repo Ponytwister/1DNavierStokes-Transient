@@ -56,6 +56,48 @@ void migrate_channels(sqlite3* db) {
     sql(db, std::string(std::istreambuf_iterator<char>(file), {}));
 }
 
+TEST(Workflow, NoSelectedParametersEvaluatesAndGeneratesReport) {
+    for (const char* selection : {"NULL", "''"}) {
+        for (const char* optimize : {"true", "false"}) {
+            SCOPED_TRACE(std::string(selection) + " run_solver=" + optimize);
+            fixture files;
+            int optimizer_events = 0;
+            run_session session(files.database, [&](const progress_event& event) {
+                if (event.kind == event_kind::optimizer_progress) ++optimizer_events;
+            });
+            sql(session.database(), std::string("UPDATE model_controls SET value=") + selection +
+                " WHERE criterion='universal_solve_for';"
+                "INSERT INTO model_controls VALUES('run_solver','" + optimize + "');"
+                "DROP TABLE alglib_input;"); // No optimizer inputs are needed.
+            session.load_inputs();
+            ASSERT_TRUE(session.parameters().solvables.empty());
+            const auto result = session.run();
+            EXPECT_EQ(session.state(), session_state::completed);
+            EXPECT_FALSE(result.optimizer_ran);
+            EXPECT_FALSE(result.optimizer_iterations.has_value());
+            EXPECT_FALSE(result.termination_type.has_value());
+            EXPECT_TRUE(result.parameters.empty());
+            EXPECT_EQ(result.residual_evaluations, 1);
+            EXPECT_EQ(optimizer_events, 0);
+            ASSERT_TRUE(result.sum_squared_residuals.has_value());
+            near(*result.sum_squared_residuals, 0);
+            // Uniform dye, no reaction and no-flux walls preserve concentration.
+            for (const auto& experiment : session.parameters().experiments) {
+                ASSERT_FALSE(experiment.model_profile.empty());
+                for (double value : experiment.model_profile) near(value, 20);
+                for (int x = 0; x < experiment.window_size; ++x)
+                    near(experiment.channel_position[x], x * experiment.run->W * 1e6 / 8);
+            }
+            EXPECT_NE(session.generate_report().find("Species:FITC"), std::string::npos);
+            EXPECT_GT(std::filesystem::file_size(session.export_results(files.root / "reports")), 0u);
+            session.save_model_profiles();
+            near(scalar(session.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 36);
+            near(scalar(session.database(), "SELECT max(abs(Numeric-0.002)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+            near(scalar(session.database(), "SELECT count(*) FROM parameter_solutions WHERE SOLVE_SETTING_ID<>99"), 0);
+        }
+    }
+}
+
 TEST(Workflow, OmittedProfileParametersNeverReachGuiEventsOrSolver) {
     for (bool omit_first : {false, true}) {
         SCOPED_TRACE(omit_first);
@@ -366,6 +408,10 @@ TEST(Workflow, InitialParameterSnapshotPrecedesSolveAndOwnsStartingValues)
         }));
         const auto result = session.run();
         ASSERT_EQ(result.parameters.size(), 1u);
+        EXPECT_EQ(result.optimizer_ran, optimize);
+        if (!optimize) EXPECT_EQ(result.residual_evaluations, 1);
+        for (const auto& experiment : session.parameters().experiments)
+            for (double value : experiment.model_profile) near(value, 20);
         near(result.parameters[0].initial_value, 1);
         near(result.parameters[0].value, 1);
         ASSERT_TRUE(result.sum_squared_residuals.has_value());

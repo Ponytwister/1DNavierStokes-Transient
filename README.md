@@ -42,6 +42,14 @@ discrepancies. Normalization, omission, units, boundary conditions, parameter li
 and convergence settings are unchanged. Model
 evaluation counts are distinct from optimizer iterations; a run without optimization
 reports the residual sum returned by the callback.
+Leaving all solve-for selections empty runs the model once using the configured
+input values, without starting ALGLIB optimization. Clear selections in Model
+controls, experiments, and individual raw profiles to use this mode. Reports and
+profile exports remain available. Setting `run_solver=false` also evaluates the
+model once (using initial values for any selected parameters); it no longer skips
+model evaluation. Profile coordinates now use the current width's scale before
+sampling, including on the first evaluation. Equations, units, boundary conditions,
+and parameter links are unchanged.
 The **File** menu contains setup actions and database/output path selection.
 The Experiments, Reactions, Species, Variables (`alglib_input`), and Raw profiles
 (`raw_profile`) tables load into memory when a database is selected and remain
