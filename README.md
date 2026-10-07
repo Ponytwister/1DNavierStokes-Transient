@@ -78,6 +78,12 @@ The Variables tab defaults to **Only used by selected experiments**. It shows th
 union of `universal_solve_for` in the active Model controls, `PARAMETERS_TO_SOLVE_FOR`
 in selected experiments, and `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` in their
 non-omitted raw profiles. Uncheck the toggle to view all variables.
+For reaction parameters, either space-separated entry in `reactions.Ks` may be a
+number or an alias written as `#variable_name` (for example, `#kon1`). The alias
+must be selected by `universal_solve_for` or the experiment's
+`PARAMETERS_TO_SOLVE_FOR`, and it must have a row in the Variables table
+(`alglib_input`). The solver then uses that variable for the corresponding reaction
+rate slot.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.
