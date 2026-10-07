@@ -44,7 +44,8 @@ public:
         }
         int nameColumn = -1;
         for (int col = 0; col < table_->columnCount(); ++col)
-            if (table_->horizontalHeaderItem(col)->text() == nameColumn_) nameColumn = col;
+            if (table_->horizontalHeaderItem(col)->text() == nameColumn_
+                || table_->horizontalHeaderItem(col)->data(Qt::UserRole).toString() == nameColumn_) nameColumn = col;
         for (int row = 0; row < table_->rowCount(); ++row) {
             const auto* item = nameColumn < 0 ? nullptr : table_->item(row, nameColumn);
             const bool selected = item && !item->data(Qt::UserRole + 1).toBool() && names.contains(item->text());

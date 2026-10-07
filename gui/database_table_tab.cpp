@@ -1,4 +1,5 @@
 #include "database_table_tab.h"
+#include "experiment_fields.h"
 #include "raw_profile_editor.h"
 #include <channel_dimensions.h>
 #include <QHeaderView>
@@ -96,18 +97,18 @@ void DatabaseTableTab::load(QString database) {
             headers << QString::fromUtf8(sqlite3_column_name(query, col));
         columns_ = headers;
         if (tableKind_ == Table::experiments) {
-            const QStringList dimensions{"CHANNEL_WIDTH", "CHANNEL_HEIGHT", "CHANNEL_LENGTH"};
-            const QStringList labels{"Channel Width (m)", "Channel Height (m)", "Channel Length (m)"};
-            int position = 1;
-            for (int i = 0; i < dimensions.size(); ++i) {
-                const int col = columns_.indexOf(dimensions[i]);
+            for (auto& header : headers) header = experimentFieldLabel(header);
+            int position = 0;
+            for (const auto& field : experimentFieldOrder()) {
+                const int col = columns_.indexOf(field);
                 if (col >= 0) {
-                    headers[col] = labels[i];
                     table_->horizontalHeader()->moveSection(table_->horizontalHeader()->visualIndex(col), position++);
                 }
             }
         }
         table_->setHorizontalHeaderLabels(headers);
+        for (int col = 0; col < columns_.size(); ++col)
+            table_->horizontalHeaderItem(col)->setData(Qt::UserRole, columns_[col]);
         if (tableKind_ == Table::raw_profile) {
             const QStringList displayOrder = {"NAME", "WT_PERCENT", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR",
                 "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "INLET_COND_ID",

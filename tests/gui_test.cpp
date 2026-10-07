@@ -24,6 +24,7 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QTableWidget>
+#include <QHeaderView>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -981,6 +982,12 @@ TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
     MainWindow window; input.choose(window); window.show();
     auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(2);
     auto* table = widget<QTableWidget>(window, "experimentsTable");
+    const QStringList expectedHeaders{"Name", "Reactions", "Species", "Specie inlet conc units",
+        "Specie model conc units", "Edges", "Width", "Normalization", "Low ref left", "Low ref right",
+        "High ref left", "High ref right", "Channel width (m)", "Channel height (m)",
+        "Channel length (m)", "Entrance flowrate"};
+    for (int i = 0; i < expectedHeaders.size(); ++i)
+        EXPECT_EQ(table->horizontalHeaderItem(table->horizontalHeader()->logicalIndex(i))->text(), expectedHeaders[i]);
     EXPECT_EQ(window.findChild<QPushButton*>("saveDimensionsButton"), nullptr);
     auto* modify = widget<QPushButton>(window, "experimentsModifyButton");
     EXPECT_FALSE(modify->isEnabled());
