@@ -766,14 +766,37 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
         } else if (criterion == "COEFFICIENTS") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                specie_ptr = run_ptr->reactions.at(react_index).specie_vect.at(iter);
-                if (run_ptr->reactions.at(react_index).coef.contains(specie_ptr)) {
-                    run_ptr->reactions.at(react_index).coef.at(specie_ptr).value() = std::stod(s);
+                auto& reaction = run_ptr->reactions.at(react_index);
+                specie_ptr = reaction.specie_vect.at(iter);
+                std::string alias;
+                double sign = 1.0;
+                const bool is_alias = (!s.empty() && s.front() == '#') ||
+                    (s.size() > 1 && s[0] == '-' && s[1] == '#');
+                if (is_alias) {
+                    if (s.front() == '-') {
+                        alias = s.substr(2);
+                        sign = -1.0;
+                    } else {
+                        alias = s.substr(1);
+                    }
+                    if (alias.empty()) {
+                        throw std::runtime_error("Reaction coefficient alias must include a variable name in reaction '" + reaction.name + "'");
+                    }
+                    run_ptr->reaction_variables.try_emplace(alias);
+                    reaction.coef_alias[specie_ptr] = {alias, sign};
+                    auto& coefficient = reaction.coef.try_emplace(specie_ptr).first->second;
+                    coefficient.value() = 0.0;
                 } else {
-                    run_ptr->reactions.at(react_index).coef.emplace(specie_ptr, std::stod(s));
+                    reaction.coef_alias.erase(specie_ptr);
+                    const double value = std::stod(s);
+                    if (reaction.coef.contains(specie_ptr)) {
+                        reaction.coef.at(specie_ptr).value() = value;
+                    } else {
+                        reaction.coef.emplace(specie_ptr, value);
+                    }
                 }
-                run_ptr->reactions.at(react_index).coef.at(specie_ptr).param_init = true;
-                run_ptr->reactions.at(react_index).coef.at(specie_ptr).source_name = run_ptr->name;
+                reaction.coef.at(specie_ptr).param_init = true;
+                reaction.coef.at(specie_ptr).source_name = run_ptr->name;
                 iter++;
             }
         } else if (criterion == "Ks") {
@@ -786,6 +809,7 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
                         throw std::runtime_error("Reaction Ks alias must include a variable name in reaction '" + reaction.name + "'");
                     }
                     reaction.k_alias[iter] = alias;
+                    run_ptr->reaction_variables.try_emplace(alias);
                 } else {
                     reaction.k_alias[iter].clear();
                     reaction.k[iter].value() = std::stod(s);
@@ -797,19 +821,60 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
         } else if (criterion == "EXPONENTS") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                specie_ptr = run_ptr->reactions.at(react_index).specie_vect.at(iter);
-                if (run_ptr->reactions.at(react_index).exp.contains(specie_ptr)) {
-                    run_ptr->reactions.at(react_index).exp.at(specie_ptr).value() = std::stod(s);
+                auto& reaction = run_ptr->reactions.at(react_index);
+                specie_ptr = reaction.specie_vect.at(iter);
+                std::string alias;
+                double sign = 1.0;
+                const bool is_alias = (!s.empty() && s.front() == '#') ||
+                    (s.size() > 1 && s[0] == '-' && s[1] == '#');
+                if (is_alias) {
+                    if (s.front() == '-') {
+                        alias = s.substr(2);
+                        sign = -1.0;
+                    } else {
+                        alias = s.substr(1);
+                    }
+                    if (alias.empty()) {
+                        throw std::runtime_error("Reaction exponent alias must include a variable name in reaction '" + reaction.name + "'");
+                    }
+                    run_ptr->reaction_variables.try_emplace(alias);
+                    reaction.exp_alias[specie_ptr] = {alias, sign};
+                    auto& exponent = reaction.exp.try_emplace(specie_ptr).first->second;
+                    exponent.value() = 0.0;
                 } else {
-                    run_ptr->reactions.at(react_index).exp.emplace(specie_ptr, std::stod(s));
+                    reaction.exp_alias.erase(specie_ptr);
+                    const double value = std::stod(s);
+                    if (reaction.exp.contains(specie_ptr)) {
+                        reaction.exp.at(specie_ptr).value() = value;
+                    } else {
+                        reaction.exp.emplace(specie_ptr, value);
+                    }
                 }
-                run_ptr->reactions.at(react_index).exp.at(specie_ptr).param_init = true;
-                run_ptr->reactions.at(react_index).exp.at(specie_ptr).source_name = run_ptr->name;
+                reaction.exp.at(specie_ptr).param_init = true;
+                reaction.exp.at(specie_ptr).source_name = run_ptr->name;
                 iter++;
             }
         }
     }
     return 0;
+}
+
+static void
+synchronize_reaction_aliases(experiment_run_struct& run)
+{
+    for (auto& reaction : run.reactions) {
+        for (std::size_t parameter = 0; parameter < std::size(reaction.k_alias); ++parameter) {
+            if (!reaction.k_alias[parameter].empty()) {
+                reaction.k[parameter].value() = run.reaction_variables.at(reaction.k_alias[parameter]).value();
+            }
+        }
+        for (const auto& [species, alias] : reaction.coef_alias) {
+            reaction.coef.at(species).value() = alias.sign * run.reaction_variables.at(alias.name).value();
+        }
+        for (const auto& [species, alias] : reaction.exp_alias) {
+            reaction.exp.at(species).value() = alias.sign * run.reaction_variables.at(alias.name).value();
+        }
+    }
 }
 
 void 
@@ -843,21 +908,14 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
         }
         execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
 
-        for (const auto& reaction : run_ptr->reactions) {
-            for (const auto& alias : reaction.k_alias) {
-                if (alias.empty()) continue;
-                const bool globally_solved = std::find(p.global_solve_for.begin(), p.global_solve_for.end(), alias) != p.global_solve_for.end();
-                const bool locally_solved = std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), alias) != run_ptr->solve_for.end();
-                if (!globally_solved && !locally_solved) {
-                    throw std::runtime_error("Reaction Ks alias '" + alias + "' must be listed in a global or experiment solve-for section");
-                }
-                std::size_t occurrences = 0;
-                for (const auto& candidate_reaction : run_ptr->reactions) {
-                    occurrences += static_cast<std::size_t>(std::count(std::begin(candidate_reaction.k_alias), std::end(candidate_reaction.k_alias), alias));
-                }
-                if (occurrences > 1) {
-                    throw std::runtime_error("Reaction Ks alias '" + alias + "' is assigned to more than one reaction parameter");
-                }
+        for (const auto& [alias, variable] : run_ptr->reaction_variables) {
+            if (alias == "left_edge" || alias == "width") {
+                throw std::runtime_error("Reaction alias '" + alias + "' conflicts with a reserved geometry variable");
+            }
+            const bool globally_solved = std::find(p.global_solve_for.begin(), p.global_solve_for.end(), alias) != p.global_solve_for.end();
+            const bool locally_solved = std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), alias) != run_ptr->solve_for.end();
+            if (!globally_solved && !locally_solved) {
+                throw std::runtime_error("Reaction alias '" + alias + "' must be listed in a global or experiment solve-for section");
             }
         }
 
@@ -1541,12 +1599,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     p.up_bound.resize(p.solvables.size());
     if (p.solvables.empty()) {
         for (const auto& run : p.experiment_runs) {
-            for (const auto& reaction : run.reactions) {
-                for (const auto& alias : reaction.k_alias) {
-                    if (!alias.empty()) {
-                        throw std::runtime_error("Reaction Ks alias '" + alias + "' must be listed in a solve-for section");
-                    }
-                }
+            if (!run.reaction_variables.empty()) {
+                throw std::runtime_error("Reaction alias '" + run.reaction_variables.begin()->first + "' must be listed in a solve-for section");
             }
         }
         return;
@@ -1567,12 +1621,9 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
 
     for (const auto& run : p.experiment_runs) {
-        for (const auto& reaction : run.reactions) {
-            for (const auto& alias : reaction.k_alias) {
-                if (alias.empty()) continue;
-                if (!p.initial_values_alglib_map.contains(alias)) {
-                    throw std::runtime_error("Reaction Ks alias '" + alias + "' is missing from the Variables table or has no solve-for bounds");
-                }
+        for (const auto& [alias, variable] : run.reaction_variables) {
+            if (!p.initial_values_alglib_map.contains(alias)) {
+                throw std::runtime_error("Reaction alias '" + alias + "' is missing from the Variables table or has no solve-for bounds");
             }
         }
     }
@@ -1581,9 +1632,7 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     for (int i = 0; i < p.solvables.size(); i++) {
         auto& s = p.solvables.at(i);
         const bool reaction_alias = std::any_of(p.experiment_runs.begin(), p.experiment_runs.end(), [&](const auto& run) {
-            return std::any_of(run.reactions.begin(), run.reactions.end(), [&](const auto& reaction) {
-                return std::find(std::begin(reaction.k_alias), std::end(reaction.k_alias), s.name) != std::end(reaction.k_alias);
-            });
+            return run.reaction_variables.contains(s.name);
         });
         if (reaction_alias) {
             p.initial_values_alglib[i] = p.initial_values_alglib_map.at(s.name);
@@ -1599,6 +1648,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         p.scale[i] = p.scale_map.at(s.name);
 
     }
+
+    for (auto& run : p.experiment_runs) synchronize_reaction_aliases(run);
 }
 
 void 
@@ -1947,19 +1998,7 @@ solvable&
 variable_location(const std::string& variable_name, experiment_run_struct* run_ptr) {
     if (variable_name == "left_edge") {return run_ptr->left_edge;}
     if (variable_name == "width") {return run_ptr->width;}
-    for (auto& reaction : run_ptr->reactions) {
-        for (std::size_t parameter = 0; parameter < std::size(reaction.k_alias); ++parameter) {
-            if (reaction.k_alias[parameter] == variable_name) {
-                const auto matches = std::count_if(run_ptr->reactions.begin(), run_ptr->reactions.end(), [&](const auto& candidate) {
-                    return std::count(std::begin(candidate.k_alias), std::end(candidate.k_alias), variable_name) != 0;
-                });
-                if (matches > 1) {
-                    throw std::runtime_error("Reaction Ks alias '" + variable_name + "' is assigned to more than one reaction");
-                }
-                return reaction.k[parameter];
-            }
-        }
-    }
+    if (run_ptr->reaction_variables.contains(variable_name)) return run_ptr->reaction_variables.at(variable_name);
     if (variable_name == "FITC_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "FITC")));}
     if (variable_name == "bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "PS_40nm", "PS_20nm")));}
     if (variable_name == "bound_bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "40nm_Bound_Dye_1", "20nm_Bound_Dye_1")));}
@@ -2551,14 +2590,17 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             auto& s = p.solvables.at(i);
             s.value() = control_parameters[i];
         }
+        for (auto& run : p.experiment_runs) synchronize_reaction_aliases(run);
         for (int run = 0; run < p.experiment_runs.size(); run++) {
             experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
             for (int i = 0; i < run_ptr->reactions.size(); i++) {
-                auto reaction = run_ptr->reactions.at(i);
-                if (reaction.name == "FITC_40nm_1" || reaction.name == "FITC_20nm_1") {
+                const auto& reaction = run_ptr->reactions.at(i);
+                if (reaction.coef_alias.empty() &&
+                    (reaction.name == "FITC_40nm_1" || reaction.name == "FITC_20nm_1")) {
                     variable_location("ND1", run_ptr).value() = abs(variable_location("p1", run_ptr).value());
                 }
-                if (reaction.name == "FITC_40nm_2" || reaction.name == "FITC_20nm_2") {
+                if (reaction.coef_alias.empty() &&
+                    (reaction.name == "FITC_40nm_2" || reaction.name == "FITC_20nm_2")) {
                     variable_location("NDD2", run_ptr).value() = abs(variable_location("p2", run_ptr).value()) + abs(variable_location("ND2", run_ptr).value());
                 }
             }

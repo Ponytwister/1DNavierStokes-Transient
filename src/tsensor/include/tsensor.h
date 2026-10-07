@@ -150,12 +150,19 @@ struct specie_struct {
     std::string name;
 };
 
+struct parameter_alias {
+    std::string name;
+    double sign = 1.0;
+};
+
 struct reaction_struct {
     solvable k[2];
     std::string k_alias[2];
     std::string name;
     std::map<specie_struct*, solvable> coef;
+    std::map<specie_struct*, parameter_alias> coef_alias;
     std::map<specie_struct*, solvable> exp;
+    std::map<specie_struct*, parameter_alias> exp_alias;
     std::vector<specie_struct*> specie_vect;
 };
 
@@ -190,6 +197,7 @@ struct experiment_run_struct : channel_dimensions {
     std::vector<double> ENTRANCE_FLOWRATE;
     std::vector<specie_struct> species;
     std::vector<reaction_struct> reactions;
+    std::map<std::string, solvable> reaction_variables;
     std::vector<std::string> solve_for;
 };
 

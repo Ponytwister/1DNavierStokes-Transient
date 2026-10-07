@@ -113,9 +113,41 @@ TEST(Workflow, ReactionKsAliasesResolveThroughSolveForVariables) {
     near(p.initial_values_alglib.front(), 0.75);
     auto& reaction = p.experiment_runs.front().reactions.front();
     EXPECT_EQ(reaction.k_alias[0], "association_rate");
-    EXPECT_EQ(reaction.k[0].source, &p.solvables.front());
-    p.solvables.front().value() = p.initial_values_alglib.front();
+    EXPECT_EQ(p.experiment_runs.front().reaction_variables.at("association_rate").source, &p.solvables.front());
     near(reaction.k[0].value(), 0.75);
+}
+
+TEST(Workflow, ReactionCoefficientAndExponentAliasesSupportSigns) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE model_controls SET value='p1' WHERE criterion='universal_solve_for';"
+        "INSERT INTO alglib_input VALUES('p1',0.75,0.5,2,1);"
+        "UPDATE reactions SET COEFFICIENTS='#p1 -1 -#p1', EXPONENTS='#p1 2 -#p1' "
+        "WHERE REACTION_NAME='FITC_40nm_1'");
+    session.load_inputs();
+
+    auto& p = session.parameters();
+    auto& run = p.experiment_runs.front();
+    auto& reaction = run.reactions.front();
+    auto* fitc = &run.species.at(specie_index(&run, "FITC"));
+    auto* bound = &run.species.at(specie_index(&run, "40nm_Bound_Dye_1"));
+    ASSERT_EQ(p.solvables.size(), 1u);
+    ASSERT_EQ(p.initial_values_alglib.size(), 1u);
+    near(reaction.coef.at(fitc).value(), 0.75);
+    near(reaction.coef.at(bound).value(), -0.75);
+    near(reaction.exp.at(fitc).value(), 0.75);
+    near(reaction.exp.at(bound).value(), -0.75);
+
+    p.row_count = 0; // Exercise the solver's parameter-update step without a transient solve.
+    alglib::real_1d_array control_parameters, residuals;
+    control_parameters.setlength(1);
+    control_parameters[0] = 0.625;
+    alglib_solver(control_parameters, residuals, &p);
+    near(reaction.coef.at(fitc).value(), 0.625);
+    near(reaction.coef.at(bound).value(), -0.625);
+    near(reaction.exp.at(fitc).value(), 0.625);
+    near(reaction.exp.at(bound).value(), -0.625);
 }
 
 TEST(Workflow, ReactionKsAliasesRequireVariablesTableEntry) {
