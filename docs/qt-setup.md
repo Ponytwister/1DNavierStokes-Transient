@@ -350,8 +350,9 @@ the selected experiment's `SPECIE_MODEL_CONC_UNITS` list and can be overridden
 per profile. Changing `NAME` refreshes the species and default unit choices.
 Apply `migrations/002_raw_profile_entrance_conc_units.sql` followed by
 `migrations/003_raw_profile_species_concentrations.sql` once. Migration 003
-creates the per-species table and copies existing scalar `ENTRANCE_CONC` values
-to FITC rows, preserving the old columns for compatibility. The legacy
+creates the per-species table and copies existing numeric scalar
+`ENTRANCE_CONC` values to FITC rows. Older non-scalar values stay intact in the
+legacy column. The old columns remain for compatibility. The legacy
 `INLET_COND_ID` column remains visible and stored for database compatibility,
 but `ENTRANCE_CONC` rows take precedence when present; profiles without them
 continue to use the existing `inlet_conditions` lookup.

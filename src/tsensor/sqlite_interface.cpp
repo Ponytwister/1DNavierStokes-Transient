@@ -916,6 +916,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
     for(int i = 0; i < count; i++) {
         criterion = columnNames[i];
         if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
+        const std::string raw_value = value;
         removeSpaces(value);
         std::stringstream ss(value); // constructing stream from the string
         pop_and_add(p, 0, criterion);
@@ -991,11 +992,14 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             pop_report(p, 0);
         } else if (criterion == "ENTRANCE_CONC") {
             if (!value.empty()) {
-                const double concentration = std::stod(value);
-                if (!std::isfinite(concentration) || concentration < 0.0)
-                    throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
-                exp_ptr->entrance_conc_override = concentration;
-                exp_ptr->has_entrance_conc_override = true;
+                std::size_t parsed = 0;
+                const double concentration = std::stod(raw_value, &parsed);
+                if (raw_value.find_first_not_of(" \t\r\n", parsed) == std::string::npos) {
+                    if (!std::isfinite(concentration) || concentration < 0.0)
+                        throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+                    exp_ptr->entrance_conc_override = concentration;
+                    exp_ptr->has_entrance_conc_override = true;
+                }
             }
         } else if (criterion == "ENTRANCE_CONC_UNITS") {
             if (!value.empty()) exp_ptr->entrance_conc_units = value;

@@ -19,6 +19,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <optional>
 
 namespace {
 using Database = std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)>;
@@ -49,6 +50,13 @@ void bind(sqlite3* db, sqlite3_stmt* query, int index, const QVariant& value) {
 struct SpeciesInfo { QString type; QString modelUnits; };
 using SpeciesCatalog = QMap<QString, SpeciesInfo>;
 struct ConcentrationValue { QString species; double value; QString units; };
+std::optional<double> scalarConcentration(const QVariant& value) {
+    if (!value.isValid() || value.isNull()) return std::nullopt;
+    bool ok = false;
+    const double number = value.toDouble(&ok);
+    if (!ok || !std::isfinite(number) || number < 0.0) return std::nullopt;
+    return number;
+}
 SpeciesCatalog speciesCatalog(sqlite3* db, const QString& experiment) {
     SpeciesCatalog catalog;
     auto row = prepare(db, "SELECT SPECIES, SPECIE_MODEL_CONC_UNITS FROM experiments WHERE NAME COLLATE BINARY=?");
@@ -133,10 +141,10 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     std::vector<ConcentrationValue> originalConcentrations;
     if (!adding) {
         originalConcentrations = readConcentrations(catalogDb.get(), old("NAME"), old("WT_PERCENT"));
-        if (originalConcentrations.empty() && old("ENTRANCE_CONC").isValid()) {
+        if (originalConcentrations.empty() && scalarConcentration(old("ENTRANCE_CONC"))) {
             const QString defaultUnits = catalog.value("FITC").modelUnits;
             const QString savedUnits = old("ENTRANCE_CONC_UNITS").toString();
-            originalConcentrations.push_back({"FITC", old("ENTRANCE_CONC").toDouble(), savedUnits.isEmpty() ? defaultUnits : savedUnits});
+            originalConcentrations.push_back({"FITC", *scalarConcentration(old("ENTRANCE_CONC")), savedUnits.isEmpty() ? defaultUnits : savedUnits});
         }
     } else readConcentrations(catalogDb.get(), QVariant{}, QVariant{});
     auto addField = [&](const QString& field) {
@@ -328,8 +336,12 @@ bool editRawProfile(const QString& database, const QStringList& columns,
                 return nullptr;
             };
             const auto fitc = findSpeciesConcentration(editedConcentrations, "FITC");
-            if (columns.contains("ENTRANCE_CONC")) values["ENTRANCE_CONC"] = fitc ? QVariant(fitc->value) : QVariant{};
-            if (columns.contains("ENTRANCE_CONC_UNITS")) values["ENTRANCE_CONC_UNITS"] = fitc ? QVariant(fitc->units) : QVariant{};
+            const bool preserveLegacyEntranceValue = !adding && old("ENTRANCE_CONC").isValid() &&
+                !scalarConcentration(old("ENTRANCE_CONC")).has_value();
+            if (columns.contains("ENTRANCE_CONC")) values["ENTRANCE_CONC"] = preserveLegacyEntranceValue
+                ? old("ENTRANCE_CONC") : (fitc ? QVariant(fitc->value) : QVariant{});
+            if (columns.contains("ENTRANCE_CONC_UNITS")) values["ENTRANCE_CONC_UNITS"] = preserveLegacyEntranceValue
+                ? old("ENTRANCE_CONC_UNITS") : (fitc ? QVariant(fitc->units) : QVariant{});
             QMap<QString, ConcentrationValue> originalBySpecies;
             for (const auto& entry : originalConcentrations) originalBySpecies[entry.species] = entry;
             const auto editedBySpecies = concentrationBySpecies;

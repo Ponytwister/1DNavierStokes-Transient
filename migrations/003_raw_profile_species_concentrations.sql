@@ -13,5 +13,7 @@ CREATE TABLE raw_profile_entrance_concentrations (
 INSERT INTO raw_profile_entrance_concentrations(NAME, WT_PERCENT, SPECIES_NAME, CONCENTRATION, UNITS)
 SELECT NAME, WT_PERCENT, 'FITC', ENTRANCE_CONC, ENTRANCE_CONC_UNITS
 FROM raw_profile
-WHERE ENTRANCE_CONC IS NOT NULL;
+-- Older databases may store a multiline entrance concentration matrix in this
+-- column. Migrate numeric scalar values only; keep other legacy values intact.
+WHERE typeof(ENTRANCE_CONC) IN ('integer', 'real');
 COMMIT;
