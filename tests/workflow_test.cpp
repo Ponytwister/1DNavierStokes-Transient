@@ -98,6 +98,24 @@ TEST(Workflow, NoSelectedParametersEvaluatesAndGeneratesReport) {
     }
 }
 
+TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(), "UPDATE raw_profile SET ENTRANCE_CONC=5, ENTRANCE_CONC_UNITS='umol' WHERE WT_PERCENT='1.0'");
+    migrate_channels(session.database());
+    session.load_inputs();
+    auto& parameters = session.parameters();
+    const auto profile = std::find_if(parameters.experiments.begin(), parameters.experiments.end(),
+        [](const experiment_struct& item) { return item.second_name == "1.0"; });
+    ASSERT_NE(profile, parameters.experiments.end());
+    auto* fitc = &profile->run->species.at(profile->run->FITC);
+    ASSERT_FALSE(profile->entrances.empty());
+    ASSERT_TRUE(profile->entrances.front().CONC.contains(fitc));
+    // 5 umol of a 100 g/mol molecule is 0.0005 mg/ml; this replaces ID 1's 0.002 mg/ml.
+    EXPECT_NEAR(profile->entrances.front().CONC.at(fitc), 0.0005,
+                1e-12 + 1e-10 * 0.0005);
+}
+
 TEST(Workflow, OmittedProfileParametersNeverReachGuiEventsOrSolver) {
     for (bool omit_first : {false, true}) {
         SCOPED_TRACE(omit_first);

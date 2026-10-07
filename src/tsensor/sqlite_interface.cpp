@@ -913,6 +913,8 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
     int col_index;
     ptrdiff_t row = 0;
     double last_profile_point = 0;
+    bool saw_inlet_cond_id = false;
+    bool null_inlet_cond_id = false;
     for(int i = 0; i < count; i++) {
         criterion = columnNames[i];
         if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
@@ -984,13 +986,23 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             }
         } else if (criterion == "INLET_COND_ID") {
             add_report(p, 0, "Value=" + value);
+            saw_inlet_cond_id = true;
+            null_inlet_cond_id = value.empty();
             if (!value.empty()) {
-                int entrance = 0;
                 exp_ptr->INLET_COND_ID = std::stoi(value);
-            } else {
-                throw std::runtime_error("NULL in INLET_COND_ID");
+                exp_ptr->has_legacy_inlet_cond_id = true;
             }
             pop_report(p, 0);
+        } else if (criterion == "ENTRANCE_CONC") {
+            if (!value.empty()) {
+                const double concentration = std::stod(value);
+                if (!std::isfinite(concentration) || concentration < 0.0)
+                    throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+                exp_ptr->entrance_conc_override = concentration;
+                exp_ptr->has_entrance_conc_override = true;
+            }
+        } else if (criterion == "ENTRANCE_CONC_UNITS") {
+            if (!value.empty()) exp_ptr->entrance_conc_units = value;
         } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
             add_report(p, 0, "Value=" + value);
             if (!omit && !value.empty()) {
@@ -1036,6 +1048,8 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             // Already applied when the experiment was identified above.
         }
     };
+    if (saw_inlet_cond_id && null_inlet_cond_id && !exp_ptr->has_entrance_conc_override)
+        throw std::runtime_error("NULL in INLET_COND_ID");
     pop_report(p, 0); // clear final criterion
     pop_report(p, 0); // clear row count
     return 0;
@@ -1167,6 +1181,7 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
     std::vector<int> IDS;
     for (int row = 0; row < p.row_count; row++) {
         experiment_struct* exp_ptr = &p.experiments.at(row);
+        if (!exp_ptr->has_legacy_inlet_cond_id) continue;
         bool insert_ID = true;
         for (int ID = 0; ID < IDS.size(); ID++) {
             if (exp_ptr->INLET_COND_ID == IDS.at(ID)) {
@@ -1180,20 +1195,31 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
     }
     for (int ID = 0; ID < IDS.size(); ID++) {
         sqltext.append("INLET_COND_ID = '" + std::to_string(IDS.at(ID)) + "'");
-        if (ID != IDS.size() - 1) {
-            sqltext.append(" OR ");
-        } else {
-            sqltext.append(";");
-        }
+        if (ID != IDS.size() - 1) sqltext.append(" OR ");
     }
-    const char* sql = sqltext.c_str();
-    execute_sql(p, db, sql, inlet_cond_db_callback, errMsg.out());
+    if (!IDS.empty()) {
+        sqltext.append(";");
+        execute_sql(p, db, sqltext.c_str(), inlet_cond_db_callback, errMsg.out());
+    }
     pop_and_add(p, 1, "post_db:");
 
     for (int row = 0; row < p.row_count; row++) {
         //initialize the concentration inlet arrays.
         experiment_struct* exp_ptr = &p.experiments.at(row);
         experiment_run_struct* run_ptr = exp_ptr->run;
+        if (exp_ptr->has_entrance_conc_override) {
+            if (run_ptr->FITC < 0 || run_ptr->FITC >= static_cast<ptrdiff_t>(run_ptr->species.size()))
+                throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
+            if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
+            specie_struct* inlet_species = &run_ptr->species.at(run_ptr->FITC);
+            const std::string source_units = exp_ptr->entrance_conc_units.empty()
+                ? inlet_species->model_units : exp_ptr->entrance_conc_units;
+            const double input_concentration = exp_ptr->entrance_conc_override *
+                unit_conversion(run_ptr, run_ptr->FITC, source_units, inlet_species->input_units);
+            if (!std::isfinite(input_concentration))
+                throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+            exp_ptr->entrances.front().CONC[inlet_species] = input_concentration;
+        }
         // The inlet and outlet Concentration Arrays.
         exp_ptr->species_out.assign(run_ptr->number_of_species, std::vector<double>(p.X, 0.0));
         pop_and_add(p, 1, "intit row:" + std::to_string(row));

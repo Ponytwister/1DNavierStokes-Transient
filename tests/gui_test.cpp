@@ -502,9 +502,10 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     input.execute("CREATE TABLE edited_profiles(NAME TEXT NOT NULL, WT_PERCENT DOUBLE NOT NULL, "
                   "CHANNEL_LEFT_EDGE INT, CHANNEL_RIGHT_EDGE INT, INTENSITY_ARRAY TEXT, ENTRANCE_CONC ANY, "
                   "INLET_COND_ID INTEGER, OMIT ANY, INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT, "
+                  "ENTRANCE_CONC_UNITS TEXT, "
                   "LEFT_EDGE NUMERIC, WIDTH NUMERIC, EXTRA_DATA BLOB, PRIMARY KEY(NAME,WT_PERCENT)); "
-                  "INSERT INTO edited_profiles(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT) "
-                  "SELECT NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT FROM raw_profile; "
+                  "INSERT INTO edited_profiles(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,ENTRANCE_CONC_UNITS) "
+                  "SELECT NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,NULL FROM raw_profile; "
                   "DROP TABLE raw_profile; ALTER TABLE edited_profiles RENAME TO raw_profile; "
                   "INSERT INTO experiments(NAME) VALUES('second')");
     MainWindow window; input.choose(window); window.show();
@@ -519,12 +520,17 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QLineEdit>(editor, "WT_PERCENT")->setText("5");
         widget<QLineEdit>(editor, "CHANNEL_LEFT_EDGE")->setText("0");
         widget<QLineEdit>(editor, "CHANNEL_RIGHT_EDGE")->setText("3");
+        widget<QLineEdit>(editor, "ENTRANCE_CONC")->setText("0.25");
         widget<QPlainTextEdit>(editor, "INTENSITY_ARRAY")->setPlainText("1  2 3");
-        widget<QLineEdit>(editor, "INLET_COND_ID")->setText("1");
     };
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
         fill(*editor);
+        EXPECT_EQ(widget<QComboBox>(*editor, "ENTRANCE_CONC_UNITS")->currentText(), "umol");
+        EXPECT_EQ(editor->findChild<QCheckBox*>("LEFT_EDGENull"), nullptr);
+        EXPECT_EQ(editor->findChild<QCheckBox*>("WIDTHNull"), nullptr);
+        EXPECT_EQ(editor->findChild<QCheckBox*>("ENTRANCE_CONCNull"), nullptr);
+        EXPECT_EQ(editor->findChild<QLineEdit*>("INLET_COND_ID"), nullptr);
         EXPECT_EQ(widget<QComboBox>(*editor, "OMIT")->currentText(), "NULL");
         auto* save = widget<QPushButton>(*editor, "saveRawProfileButton");
         auto* error = widget<QLabel>(*editor, "rawProfileEditorStatus");
@@ -554,6 +560,7 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     EXPECT_EQ(input.execute("SELECT OMIT IS NULL FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC=0.25 AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr); fill(*editor);
         widget<QPushButton>(*editor, "saveRawProfileButton")->click();

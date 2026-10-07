@@ -112,13 +112,15 @@ void DatabaseTableTab::load(QString database) {
         for (int col = 0; col < columns_.size(); ++col)
             table_->horizontalHeaderItem(col)->setData(Qt::UserRole, columns_[col]);
         if (tableKind_ == Table::raw_profile) {
+            const int legacyId = headers.indexOf("INLET_COND_ID");
+            if (legacyId >= 0) table_->horizontalHeaderItem(legacyId)->setText("INLET_COND_ID (deprecated)");
             const QStringList displayOrder = {"NAME", "WT_PERCENT", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR",
-                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "INLET_COND_ID",
+                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "ENTRANCE_CONC_UNITS", "INLET_COND_ID",
                 "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY"};
             int position = 0;
             // Move visual sections only; preserve logical columns for editing and filtering.
             for (const auto& name : displayOrder) {
-                const int column = headers.indexOf(name);
+                const int column = columns_.indexOf(name);
                 if (column >= 0)
                     table_->horizontalHeader()->moveSection(table_->horizontalHeader()->visualIndex(column), position++);
             }
@@ -172,7 +174,7 @@ QStringList editableColumns(DatabaseTableTab::Table table) {
     if (table == DatabaseTableTab::Table::experiments)
         return {"NAME", "CHANNEL_WIDTH", "CHANNEL_HEIGHT", "CHANNEL_LENGTH"};
     if (table == DatabaseTableTab::Table::raw_profile)
-        return {"NAME", "WT_PERCENT", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY", "INLET_COND_ID", "OMIT"};
+        return {"NAME", "WT_PERCENT", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY", "OMIT"};
     if (table == DatabaseTableTab::Table::alglib)
         return {"VARIABLE", "INITIAL VALUE", "LOWER BOUND", "UPPER BOUND", "SCALE"};
     return table == DatabaseTableTab::Table::reactions ? QStringList{"REACTION_NAME", "SPECIES", "COEFFICIENTS", "Ks", "EXPONENTS"}

@@ -12,6 +12,7 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QCheckBox>
+#include <QHBoxLayout>
 #include <sqlite3.h>
 #include <cmath>
 #include <map>
@@ -43,6 +44,21 @@ void bind(sqlite3* db, sqlite3_stmt* query, int index, const QVariant& value) {
     }
     check(db, rc);
 }
+QString modelDefaultUnits(const QString& database, const QString& experiment) {
+    if (experiment.isEmpty()) return "mg/ml";
+    try {
+        sqlite3* raw = nullptr;
+        const int opened = sqlite3_open_v2(database.toUtf8().constData(), &raw, SQLITE_OPEN_READONLY, nullptr);
+        Database db(raw, sqlite3_close_v2); check(db.get(), opened);
+        auto query = prepare(db.get(), "SELECT SPECIES, SPECIE_MODEL_CONC_UNITS FROM experiments WHERE NAME COLLATE BINARY=?");
+        bind(db.get(), query.get(), 1, experiment);
+        if (sqlite3_step(query.get()) != SQLITE_ROW) return "mg/ml";
+        const auto species = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 0))).split(' ', Qt::SkipEmptyParts);
+        const auto units = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 1))).split(' ', Qt::SkipEmptyParts);
+        const auto unit = units.value(species.indexOf("FITC"));
+        return unit.isEmpty() ? "mg/ml" : unit;
+    } catch (...) { return "mg/ml"; }
+}
 }
 
 bool editRawProfile(const QString& database, const QStringList& columns,
@@ -68,18 +84,34 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     name->setCurrentIndex(adding ? (experiments.isEmpty() ? -1 : 0) : name->findText(old("NAME").toString(), Qt::MatchExactly));
     form->addRow("NAME", name);
     std::map<QString, QLineEdit*> edits;
-    std::map<QString, QCheckBox*> nulls;
+    QComboBox* entranceUnits = nullptr;
+    QString defaultEntranceUnits;
+    if (columns.contains("ENTRANCE_CONC_UNITS"))
+        defaultEntranceUnits = modelDefaultUnits(database, adding ? name->currentText() : old("NAME").toString());
     auto addField = [&](const QString& field) {
         if (!columns.contains(field)) return;
         auto* line = new QLineEdit(old(field).toString()); line->setObjectName(field);
         if (adding && field == "CHANNEL_LEFT_EDGE") line->setText("0");
         edits[field] = line;
-        if (field == "ENTRANCE_CONC" || field == "LEFT_EDGE" || field == "WIDTH") {
-            auto* null = new QCheckBox("NULL"); null->setObjectName(field + "Null");
-            null->setChecked(!old(field).isValid()); line->setEnabled(!null->isChecked());
-            QObject::connect(null, &QCheckBox::toggled, line, [line](bool value) { line->setEnabled(!value); });
-            nulls[field] = null;
-            auto* row = new QHBoxLayout; row->addWidget(line); row->addWidget(null); form->addRow(field, row);
+        if (field == "ENTRANCE_CONC" && columns.contains("ENTRANCE_CONC_UNITS")) {
+            auto* row = new QHBoxLayout; row->addWidget(line);
+            entranceUnits = new QComboBox; entranceUnits->setObjectName("ENTRANCE_CONC_UNITS");
+            const QStringList supported{"umol", "mg/ml", "wt%", "g/ml"};
+            for (const auto& unit : supported) entranceUnits->addItem(unit, unit);
+            const auto savedUnits = old("ENTRANCE_CONC_UNITS").toString();
+            const auto selectedUnits = savedUnits.isEmpty() ? defaultEntranceUnits : savedUnits;
+            int index = entranceUnits->findData(selectedUnits);
+            if (index < 0) { entranceUnits->addItem(selectedUnits + " (unsupported)", selectedUnits); index = entranceUnits->count() - 1; }
+            entranceUnits->setCurrentIndex(index);
+            row->addWidget(entranceUnits); form->addRow(field, row);
+            if (!old("ENTRANCE_CONC_UNITS").isValid() || old("ENTRANCE_CONC_UNITS").toString().isEmpty()) {
+                QObject::connect(name, &QComboBox::currentTextChanged, entranceUnits, [database, entranceUnits](const QString& experiment) {
+                    const auto unit = modelDefaultUnits(database, experiment);
+                    int index = entranceUnits->findData(unit);
+                    if (index < 0) { entranceUnits->addItem(unit + " (unsupported)", unit); index = entranceUnits->count() - 1; }
+                    entranceUnits->setCurrentIndex(index);
+                });
+            }
         } else form->addRow(field, line);
     };
     addField("WT_PERCENT");
@@ -97,7 +129,7 @@ bool editRawProfile(const QString& database, const QStringList& columns,
         omit->setCurrentIndex(index);
     }
     const int initialOmit = omit->currentIndex(); form->addRow("OMIT", omit);
-    for (const auto& field : QStringList{"LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "INLET_COND_ID", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE"})
+    for (const auto& field : QStringList{"LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE"})
         addField(field);
     const auto initialIntensity = old("INTENSITY_ARRAY").toString().replace('\t', ' ');
     auto* intensity = new QPlainTextEdit(initialIntensity); intensity->setObjectName("INTENSITY_ARRAY");
@@ -117,22 +149,26 @@ bool editRawProfile(const QString& database, const QStringList& columns,
             std::map<QString, QVariant> values;
             values["NAME"] = name->currentText();
             for (const auto& [field, line] : edits) {
-                if (nulls.contains(field) && nulls.at(field)->isChecked()) { values[field] = QVariant{}; continue; }
                 const auto text = line->text();
+                if (text.trimmed().isEmpty()) { values[field] = QVariant{}; continue; }
                 QVariant value = text;
                 bool ok = false;
-                if (field == "CHANNEL_LEFT_EDGE" || field == "CHANNEL_RIGHT_EDGE" || field == "INLET_COND_ID") {
+                if (field == "CHANNEL_LEFT_EDGE" || field == "CHANNEL_RIGHT_EDGE") {
                     const int number = text.toInt(&ok);
-                    if (!ok || (field != "INLET_COND_ID" && number < 0))
-                        throw std::runtime_error((field + ": enter " + (field == "INLET_COND_ID" ? "an integer." : "a non-negative integer.")).toStdString());
+                    if (!ok || number < 0)
+                        throw std::runtime_error((field + ": enter a non-negative integer.").toStdString());
                     value = QVariant::fromValue<qlonglong>(number);
-                } else if (field != "ENTRANCE_CONC") {
+                } else {
                     const double number = text.toDouble(&ok);
                     if (!ok || !std::isfinite(number)) throw std::runtime_error((field + ": enter a finite number.").toStdString());
+                    if (field == "ENTRANCE_CONC" && number < 0)
+                        throw std::runtime_error("ENTRANCE_CONC: enter a non-negative concentration.");
                     value = number;
                 }
                 values[field] = !adding && old(field).isValid() && text == old(field).toString() ? old(field) : value;
             }
+            if (adding && columns.contains("ENTRANCE_CONC") && !values.at("ENTRANCE_CONC").isValid())
+                throw std::runtime_error("ENTRANCE_CONC: enter a concentration for a new profile.");
             const auto samples = intensity->toPlainText().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
             if (samples.isEmpty()) throw std::runtime_error("INTENSITY_ARRAY: enter at least one numeric sample.");
             for (const auto& sample : samples) {
@@ -147,6 +183,13 @@ bool editRawProfile(const QString& database, const QStringList& columns,
             values["INTENSITY_ARRAY"] = !adding && intensity->toPlainText() == initialIntensity
                 ? old("INTENSITY_ARRAY") : QVariant(samples.join('\t'));
             values["OMIT"] = !adding && omit->currentIndex() == initialOmit ? old("OMIT") : omit->currentData();
+            if (entranceUnits) {
+                if (values.at("ENTRANCE_CONC").isValid()) {
+                    const auto selected = entranceUnits->currentData().toString();
+                    values["ENTRANCE_CONC_UNITS"] = !adding && selected == old("ENTRANCE_CONC_UNITS").toString()
+                        ? old("ENTRANCE_CONC_UNITS") : QVariant(selected);
+                } else values["ENTRANCE_CONC_UNITS"] = old("ENTRANCE_CONC_UNITS");
+            }
             if (picker) {
                 const auto selected = picker->value();
                 values[solveField] = selected.isEmpty() ? QVariant{} : QVariant(selected);

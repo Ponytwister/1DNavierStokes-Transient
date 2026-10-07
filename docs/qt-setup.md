@@ -337,10 +337,20 @@ Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
 Columns appear in this order: `NAME`, `WT_PERCENT`,
 `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`, `ENTRANCE_CONC`,
-`INLET_COND_ID`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
+`ENTRANCE_CONC_UNITS`, `INLET_COND_ID (deprecated)`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
 Absent optional columns are skipped; additional database columns follow at the end.
 The Add and Modify editors use the same field order. This display order does not
 alter the database schema.
+
+`ENTRANCE_CONC_UNITS` is an optional per-profile override. The concentration
+unit selector defaults to the FITC entry in that experiment's
+`SPECIE_MODEL_CONC_UNITS` list. Apply
+`migrations/002_raw_profile_entrance_conc_units.sql` once to add the column;
+existing rows remain unchanged and continue to use the experiment default.
+New profiles use `ENTRANCE_CONC` as the FITC inlet concentration. The legacy
+`INLET_COND_ID` column remains visible for reference and stays in the database;
+profiles without an entrance concentration continue to use the existing
+`inlet_conditions` lookup. The raw profile editor no longer changes that ID.
 
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is

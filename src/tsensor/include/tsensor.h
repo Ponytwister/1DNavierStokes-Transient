@@ -200,6 +200,10 @@ struct experiment_struct {
     int window_start;
     int SOLUTION_ID = 0;
     int INLET_COND_ID = 0;
+    bool has_legacy_inlet_cond_id = false;
+    bool has_entrance_conc_override = false;
+    double entrance_conc_override = 0.0;
+    std::string entrance_conc_units;
     double exp_DA;
     double model_DA;
     double exp_integral;
