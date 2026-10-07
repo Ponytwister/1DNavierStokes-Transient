@@ -94,6 +94,10 @@ or **Report > Use current run**. This prepares data in memory without creating
 a source text file or writing to the database. Select
 experiment/profile blocks, profile types, and metadata columns. Choose whether
 to include profile values, headers, units/axes, and blank separator rows.
+Drag items in the experiment/profile block and profile type lists, or select an
+item and use **Move up** / **Move down**, to reorder report rows. Block axes and
+metadata stay with their data. Preview, Excel copy, and export use this order;
+regenerating preserves it for matching items, while opening a file resets it.
 **D-A / integrals** keeps the six metrics stacked in D-A or splits them into
 independently selectable `exp_DA`, `model_DA`, `exp_integral`, `model_integral`,
 `analytic_exp_integral`, and `analytic_model_integral` columns. Split mode repeats

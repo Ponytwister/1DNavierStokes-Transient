@@ -151,6 +151,93 @@ TEST(Report, ExportAndClipboardUseSelectionsAndPreview)
     EXPECT_FALSE(QFile::exists(directory.filePath("empty.tsv")));
 }
 
+TEST(Report, ReordersBlocksAndTypesWithAxesAndPreservesOrderOnRegeneration)
+{
+    const QString header = "res_time  b  k  eq  d  c  s  D-A  profile_type  0  ";
+    const QString units = "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  ";
+    const QString source = header + "10\n" + units + "1\n"
+        "1  2  3  4  5  6  7  11  first_Experimental_Profile  101\n"
+        "1  2  3  4  5  6  7  12  first_Numeric_Model_Profile  102\n\n" +
+        header + "20\n" + units + "2\n"
+        "2  2  3  4  5  6  7  21  second_Experimental_Profile  201\n"
+        "2  2  3  4  5  6  7  22  second_Numeric_Model_Profile  202\n\n";
+    QTemporaryDir directory;
+    QFile input(directory.filePath("source.txt"));
+    ASSERT_TRUE(input.open(QIODevice::WriteOnly)); input.write(source.toUtf8()); input.close();
+    for (bool generated : {false, true}) {
+        ReportTab tab;
+        ASSERT_TRUE(generated ? tab.loadGenerated(source, "run", "report") : tab.loadFile(input.fileName()));
+        auto* blocks = tab.findChild<QListWidget*>("reportBlocks");
+        auto* types = tab.findChild<QListWidget*>("reportTypes");
+        blocks->setCurrentRow(1);
+        tab.findChild<QPushButton*>("reportBlocksUp")->click();
+        EXPECT_FALSE(tab.findChild<QPushButton*>("reportBlocksUp")->isEnabled());
+        EXPECT_EQ(blocks->item(0)->data(Qt::UserRole).toInt(), 1);
+        types->setCurrentRow(0);
+        tab.findChild<QPushButton*>("reportTypesDown")->click();
+        EXPECT_FALSE(tab.findChild<QPushButton*>("reportTypesDown")->isEnabled());
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        const auto copied = QApplication::clipboard()->text();
+        const auto selected = report_format::parse(copied);
+        ASSERT_EQ(selected.size(), 10);
+        EXPECT_EQ(selected[0].back(), "20");
+        EXPECT_EQ(selected[1].back(), "2");
+        EXPECT_EQ(selected[2][8], "second_Numeric_Model_Profile");
+        EXPECT_EQ(selected[2][7], "22");
+        EXPECT_EQ(selected[3].back(), "201");
+        EXPECT_TRUE(selected[4].isEmpty());
+        EXPECT_EQ(selected[5].back(), "10");
+        EXPECT_EQ(selected[6].back(), "1");
+        EXPECT_EQ(selected[7][8], "first_Numeric_Model_Profile");
+        auto* model = tab.findChild<QTableView*>("reportTable")->model();
+        for (int row = 0; row < selected.size(); ++row)
+            for (int column = 0; column < selected[row].size(); ++column)
+                EXPECT_EQ(model->data(model->index(row, column)).toString(), selected[row][column]);
+        const auto path = directory.filePath("ordered.tsv");
+        ASSERT_TRUE(tab.saveFile(path));
+        QFile exported(path); ASSERT_TRUE(exported.open(QIODevice::ReadOnly));
+        EXPECT_EQ(exported.readAll(), copied.toUtf8()); exported.close();
+        ASSERT_TRUE(tab.loadGenerated(source, "regenerated", "report"));
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        EXPECT_EQ(QApplication::clipboard()->text(), copied);
+        // Filtering after moving uses the original block identity.
+        blocks->item(0)->setCheckState(Qt::Unchecked);
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        EXPECT_FALSE(QApplication::clipboard()->text().contains("second_"));
+        EXPECT_TRUE(QApplication::clipboard()->text().contains("first_"));
+        // Exercise the model move used by internal drag and drop.
+        ASSERT_TRUE(types->model()->moveRow({}, 0, {}, 2));
+        EXPECT_EQ(tab.findChild<QTableView*>("reportTable")->model()->data(
+            tab.findChild<QTableView*>("reportTable")->model()->index(2, 8)).toString(), "first_Experimental_Profile");
+        ASSERT_TRUE(tab.loadFile(input.fileName()));
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        EXPECT_EQ(QApplication::clipboard()->text(), report_format::tsv(report_format::parse(source)));
+    }
+}
+
+TEST(Report, ReorderedSharedHeadersKeepHiddenCarrierMetadata)
+{
+    using namespace report_format;
+    const QString header = "res_time  b  k  eq  d  c  s  D-A  profile_type  0  10\n";
+    const QString units = "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n";
+    const auto source = parse(header + units +
+        "1  2  3  4  5  6  7  11  first_Experimental_Profile  101\n"
+        "1  2  3  4  5  6  7  12  first_Numeric_Model_Profile  102\n\n" + units +
+        "2  2  3  4  5  6  7  21  second_Experimental_Profile  201\n"
+        "2  2  3  4  5  6  7  22  second_Numeric_Model_Profile  202\n\n");
+    Options options;
+    options.reorderRows = true; options.blocks = {1, 0};
+    options.types = {"Numeric_Model_Profile"}; options.columns = {8, 7};
+    options.metadataLayout = MetadataLayout::separateBlock; options.metrics = {2, 3};
+    const auto result = select(source, options);
+    ASSERT_EQ(result.size(), 7);
+    EXPECT_EQ(result[0], QStringList({"profile_type", "exp_integral", "model_integral", "0", "10"}));
+    EXPECT_EQ(result[2], QStringList({"second_Numeric_Model_Profile", "21", "22", "202"}));
+    EXPECT_EQ(result[5], QStringList({"first_Numeric_Model_Profile", "11", "12", "102"}));
+    options.blocks.clear(); EXPECT_TRUE(select(source, options).isEmpty());
+    options.blocks = {1, 0}; options.types.clear(); EXPECT_TRUE(select(source, options).isEmpty());
+}
+
 TEST(Report, SplitMetadataUsesAllSixValuesBeforeFilteringAndKeepsBlocksIndependent)
 {
     using namespace report_format;

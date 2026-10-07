@@ -91,6 +91,49 @@ QStringList blockNames(const Rows& rows)
 
 Rows select(const Rows& rows, const Options& options)
 {
+    if (options.reorderRows) {
+        Rows ordered;
+        QList<Rows> blocks;
+        QList<QStringList> headers;
+        QStringList header;
+        for (const auto& row : rows) {
+            if (!row.isEmpty() && row[0] == "res_time") header = row;
+            else if (!row.isEmpty() && row[0] == "sec") {
+                blocks.push_back(Rows{row}); headers.push_back(header);
+            } else if (!blocks.isEmpty()) blocks.back().push_back(row);
+        }
+        if (blocks.isEmpty()) {
+            auto original = options; original.reorderRows = false;
+            return select(rows, original);
+        }
+        auto reordered = options;
+        reordered.reorderRows = false;
+        reordered.blocks.clear();
+        QStringList previousHeader;
+        for (const int block : options.blocks) {
+            if (block < 0 || block >= blocks.size()) continue;
+            auto data = blocks[block];
+            const bool hasData = std::any_of(data.begin() + 1, data.end(), [&](const QStringList& row) {
+                return !row.isEmpty() && options.types.contains(profileType(row[8]));
+            });
+            if (!hasData) continue;
+            if (headers[block] != previousHeader) {
+                if (!headers[block].isEmpty()) ordered.push_back(headers[block]);
+                previousHeader = headers[block];
+            }
+            // Keep all metric carrier rows until metadata has been collected.
+            std::stable_sort(data.begin() + 1, data.end(), [&](const QStringList& a, const QStringList& b) {
+                auto rank = [&](const QStringList& row) {
+                    return row.isEmpty() ? options.types.size() + 1 :
+                        options.types.indexOf(profileType(row[8]));
+                };
+                return rank(a) < rank(b);
+            });
+            reordered.blocks.push_back(reordered.blocks.size());
+            ordered.append(data);
+        }
+        return select(ordered, reordered);
+    }
     // Read metadata before filtering profiles: hiding the carrier row must not
     // discard a block's metadata in the repeated-column layout.
     QList<QStringList> blockMetrics;
@@ -223,6 +266,35 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     };
     makeList("Experiment / profile blocks", "reportBlocks", blocks_);
     makeList("Profile types", "reportTypes", types_);
+    for (auto* list : {blocks_, types_}) {
+        list->setDragDropMode(QAbstractItemView::InternalMove);
+        list->setDefaultDropAction(Qt::MoveAction);
+        list->setToolTip("Drag items to reorder report rows, or select an item and use Move up / Move down.");
+        auto* actions = new QHBoxLayout;
+        for (const int direction : {-1, 1}) {
+            auto* button = new QPushButton(direction < 0 ? "Move up" : "Move down");
+            button->setObjectName(list->objectName() + (direction < 0 ? "Up" : "Down"));
+            actions->addWidget(button);
+            auto enabled = [list, button, direction] {
+                const int row = list->currentRow();
+                button->setEnabled(row >= 0 && row + direction >= 0 && row + direction < list->count());
+            };
+            connect(list, &QListWidget::currentRowChanged, this, enabled);
+            connect(list->model(), &QAbstractItemModel::rowsMoved, this, enabled);
+            enabled();
+            connect(button, &QPushButton::clicked, this, [this, list, direction, enabled] {
+                const int row = list->currentRow(), target = row + direction;
+                if (row < 0 || target < 0 || target >= list->count()) return;
+                auto* item = list->takeItem(row);
+                list->insertItem(target, item); list->setCurrentItem(item);
+                rowsReordered_ = true; updatePreview(); enabled();
+            });
+        }
+        static_cast<QVBoxLayout*>(list->parentWidget()->layout())->addLayout(actions);
+        connect(list->model(), &QAbstractItemModel::rowsMoved, this, [this] {
+            rowsReordered_ = true; updatePreview();
+        });
+    }
     makeList("Metadata columns", "reportColumns", columns_);
     layout->addLayout(choices);
     auto* format = new QHBoxLayout;
@@ -292,6 +364,11 @@ bool ReportTab::loadFile(const QString& filename)
 
 bool ReportTab::loadSource(const QString& text, bool preserveSelections)
 {
+    QStringList blockOrder, typeOrder;
+    if (preserveSelections) {
+        for (int i = 0; i < blocks_->count(); ++i) blockOrder.push_back(blocks_->item(i)->text());
+        for (int i = 0; i < types_->count(); ++i) typeOrder.push_back(types_->item(i)->text());
+    } else rowsReordered_ = false;
     QMap<QString, Qt::CheckState> typeSelection, columnSelection, blockSelection;
     auto remember = [](QListWidget* list, QMap<QString, Qt::CheckState>& saved) {
         for (int i = 0; i < list->count(); ++i) saved.insert(list->item(i)->text(), list->item(i)->checkState());
@@ -307,12 +384,23 @@ bool ReportTab::loadSource(const QString& text, bool preserveSelections)
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(state);
     };
     for (const auto& name : report_format::blockNames(rows_)) add(blocks_, name, blockSelection.value(name, Qt::Checked));
+    for (int i = 0; i < blocks_->count(); ++i) blocks_->item(i)->setData(Qt::UserRole, i);
     QStringList types;
     for (const auto& row : rows_) if (!row.isEmpty() && row[0] != "res_time" && row[0] != "sec") {
         const auto type = report_format::profileType(row[8]);
         if (!types.contains(type)) types.push_back(type);
     }
     for (const auto& type : types) add(types_, type, typeSelection.value(type, Qt::Checked));
+    auto restoreOrder = [](QListWidget* list, const QStringList& order) {
+        int target = 0;
+        for (const auto& label : order) {
+            for (int i = target; i < list->count(); ++i) {
+                if (list->item(i)->text() != label) continue;
+                list->insertItem(target++, list->takeItem(i)); break;
+            }
+        }
+    };
+    restoreOrder(blocks_, blockOrder); restoreOrder(types_, typeOrder);
     if (!preserveSelections) columnStates_.clear();
     // Keep states by stable field ID when switching layouts or regenerating.
     for (int i = 0; i < 9; ++i)
@@ -350,7 +438,8 @@ void ReportTab::updatePreview()
 {
     if (rows_.isEmpty()) return;
     report_format::Options options;
-    for (int i = 0; i < blocks_->count(); ++i) if (blocks_->item(i)->checkState() == Qt::Checked) options.blocks.push_back(i);
+    options.reorderRows = rowsReordered_;
+    for (int i = 0; i < blocks_->count(); ++i) if (blocks_->item(i)->checkState() == Qt::Checked) options.blocks.push_back(blocks_->item(i)->data(Qt::UserRole).toInt());
     for (int i = 0; i < types_->count(); ++i) if (types_->item(i)->checkState() == Qt::Checked) options.types.push_back(types_->item(i)->text());
     options.metadataLayout = static_cast<report_format::MetadataLayout>(metadataLayout_->currentIndex());
     options.metrics.clear();

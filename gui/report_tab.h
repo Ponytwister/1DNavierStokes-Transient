@@ -24,6 +24,7 @@ struct Options {
     QList<int> blocks;
     QStringList types;
     QList<int> columns;
+    bool reorderRows = false; // Use block/type list order, retaining each block's axes.
     bool samples = true, headers = true, units = true, blankRows = true;
     char numberFormat = 0; // zero preserves the source text
     int decimals = 6;
@@ -63,4 +64,5 @@ private:
     QString filename_;
     QString sourceLabel_;
     bool generated_ = false;
+    bool rowsReordered_ = false;
 };
