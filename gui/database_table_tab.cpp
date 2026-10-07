@@ -99,7 +99,7 @@ void DatabaseTableTab::load(QString database) {
             headers << QString::fromUtf8(sqlite3_column_name(query, col));
         columns_ = headers;
         if (tableKind_ == Table::experiments) {
-            for (auto& header : headers) header = experimentFieldLabel(header);
+            for (auto& header : headers) header = experimentFieldLabel(header, true);
             int position = 0;
             for (const auto& field : experimentFieldOrder()) {
                 const int col = columns_.indexOf(field);
@@ -250,6 +250,8 @@ void DatabaseTableTab::editRow(bool adding) {
     std::vector<QLineEdit*> edits;
     std::vector<QCheckBox*> nulls;
     QMap<QString, QComboBox*> quantities;
+    QMap<QString, QLineEdit*> normalizationReferences;
+    QComboBox* normalization = nullptr;
     ExperimentSelections* selections = nullptr;
     if (experiments) {
         QMap<QString, QVariant> initial;
@@ -269,14 +271,35 @@ void DatabaseTableTab::editRow(bool adding) {
             form->addRow(experimentFieldLabel(field), selections->field(field));
             edits.push_back(nullptr); nulls.push_back(nullptr); continue;
         }
+        if (experiments && field == "DEFAULT_NORMALIZATION") {
+            normalization = new QComboBox(&dialog);
+            normalization->setObjectName(field);
+            normalization->addItem("None", "");
+            normalization->addItem("ridge linear scaling", "ridge linear scaling");
+            normalization->addItem("peak linear scaling", "peak linear scaling");
+            const QString saved = value.toString();
+            int index = normalization->findData(saved);
+            if (index < 0 && value.isValid()) {
+                normalization->addItem(saved + " (unsupported)", saved);
+                index = normalization->count() - 1;
+            }
+            normalization->setCurrentIndex(index < 0 ? 0 : index);
+            form->addRow(experimentFieldLabel(field), normalization);
+            edits.push_back(nullptr); nulls.push_back(nullptr); continue;
+        }
         auto* line = new QLineEdit(value.toString()); line->setObjectName(field);
         if (experiments) {
             if (!adding && field == "NAME") line->setReadOnly(true);
-            auto* fieldRow = new QHBoxLayout; fieldRow->addWidget(line);
             if (field.startsWith("CHANNEL_") || field == "ENTRANCE_FLOWRATE") {
+                auto* fieldRow = new QHBoxLayout; fieldRow->addWidget(line);
                 quantities[field] = quantityUnits(field, line); fieldRow->addWidget(quantities[field]);
+                form->addRow(experimentFieldLabel(field), fieldRow);
+            } else {
+                form->addRow(experimentFieldLabel(field), line);
+                if (field == "LOW_REF_LEFT" || field == "LOW_REF_RIGHT"
+                    || field == "HIGH_REF_LEFT" || field == "HIGH_REF_RIGHT")
+                    normalizationReferences[field] = line;
             }
-            form->addRow(experimentFieldLabel(field), fieldRow);
             edits.push_back(line); nulls.push_back(nullptr); continue;
         }
         auto* null = new QCheckBox("NULL"); null->setObjectName(field + "Null");
@@ -290,6 +313,17 @@ void DatabaseTableTab::editRow(bool adding) {
         if (!adding && field == fields.front()) line->setReadOnly(true);
         auto* fieldRow = new QHBoxLayout; fieldRow->addWidget(line); fieldRow->addWidget(null);
         form->addRow(field, fieldRow); edits.push_back(line); nulls.push_back(null);
+    }
+    if (normalization) {
+        auto updateNormalizationReferences = [form, normalization, normalizationReferences] {
+            const bool visible = !normalization->currentData().toString().isEmpty();
+            for (auto it = normalizationReferences.cbegin(); it != normalizationReferences.cend(); ++it) {
+                it.value()->setVisible(visible);
+                if (auto* label = form->labelForField(it.value())) label->setVisible(visible);
+            }
+        };
+        connect(normalization, &QComboBox::currentIndexChanged, &dialog, updateNormalizationReferences);
+        updateNormalizationReferences();
     }
     auto* error = new QLabel; error->setObjectName("referenceEditorStatus");
     error->setTextFormat(Qt::PlainText); error->setWordWrap(true); layout->addWidget(error);
@@ -305,7 +339,9 @@ void DatabaseTableTab::editRow(bool adding) {
             std::vector<QVariant> values;
             for (int i = 0; i < fields.size(); ++i) {
                 const auto& field = fields[i];
-                const QString text = edits[i] ? edits[i]->text() : selections->value(field);
+                const QString text = edits[i] ? edits[i]->text()
+                    : field == "DEFAULT_NORMALIZATION" ? normalization->currentData().toString()
+                    : selections->value(field);
                 const bool null = experiments ? (text.trimmed().isEmpty() && field != "NAME" && !field.startsWith("CHANNEL_")) : nulls[i]->isChecked();
                 QVariant value = null ? QVariant{} : QVariant(text);
                 if (value.isValid() && quantities.contains(field)) {

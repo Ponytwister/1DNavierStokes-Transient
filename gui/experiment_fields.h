@@ -8,10 +8,10 @@ inline QStringList experimentFieldOrder() {
         "HIGH_REF_RIGHT", "CHANNEL_WIDTH", "CHANNEL_HEIGHT", "CHANNEL_LENGTH", "ENTRANCE_FLOWRATE"};
 }
 
-inline QString experimentFieldLabel(QString name) {
+inline QString experimentFieldLabel(QString name, bool includeDimensionUnit = false) {
     if (name == "DEFAULT_NORMALIZATION") return "Normalization";
     const bool dimension = name.startsWith("CHANNEL_");
     name = name.toLower().replace('_', ' ');
     if (!name.isEmpty()) name[0] = name[0].toUpper();
-    return name + (dimension ? " (m)" : "");
+    return name + (dimension && includeDimensionUnit ? " (m)" : "");
 }
