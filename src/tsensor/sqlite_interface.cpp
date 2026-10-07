@@ -779,9 +779,19 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
         } else if (criterion == "Ks") {
             while (getline(ss, s, ' ')) {
                 removeSpaces(s);
-                run_ptr->reactions.at(react_index).k[iter].value() = std::stod(s);
-                run_ptr->reactions.at(react_index).k[iter].param_init = true;
-                run_ptr->reactions.at(react_index).k[iter].source_name = run_ptr->name;
+                auto& reaction = run_ptr->reactions.at(react_index);
+                if (!s.empty() && s.front() == '#') {
+                    const std::string alias = s.substr(1);
+                    if (alias.empty()) {
+                        throw std::runtime_error("Reaction Ks alias must include a variable name in reaction '" + reaction.name + "'");
+                    }
+                    reaction.k_alias[iter] = alias;
+                } else {
+                    reaction.k_alias[iter].clear();
+                    reaction.k[iter].value() = std::stod(s);
+                    reaction.k[iter].param_init = true;
+                    reaction.k[iter].source_name = run_ptr->name;
+                }
                 iter++;
             }
         } else if (criterion == "EXPONENTS") {
@@ -832,6 +842,24 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
             }
         }
         execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
+
+        for (const auto& reaction : run_ptr->reactions) {
+            for (const auto& alias : reaction.k_alias) {
+                if (alias.empty()) continue;
+                const bool globally_solved = std::find(p.global_solve_for.begin(), p.global_solve_for.end(), alias) != p.global_solve_for.end();
+                const bool locally_solved = std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), alias) != run_ptr->solve_for.end();
+                if (!globally_solved && !locally_solved) {
+                    throw std::runtime_error("Reaction Ks alias '" + alias + "' must be listed in a global or experiment solve-for section");
+                }
+                std::size_t occurrences = 0;
+                for (const auto& candidate_reaction : run_ptr->reactions) {
+                    occurrences += static_cast<std::size_t>(std::count(std::begin(candidate_reaction.k_alias), std::end(candidate_reaction.k_alias), alias));
+                }
+                if (occurrences > 1) {
+                    throw std::runtime_error("Reaction Ks alias '" + alias + "' is assigned to more than one reaction parameter");
+                }
+            }
+        }
 
         for (int item = 0; item < p.solvables.size(); item++) {
             auto& s = p.solvables.at(item);
@@ -1511,7 +1539,18 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     p.initial_values_alglib.resize(p.solvables.size());
     p.low_bound.resize(p.solvables.size());
     p.up_bound.resize(p.solvables.size());
-    if (p.solvables.empty()) return;
+    if (p.solvables.empty()) {
+        for (const auto& run : p.experiment_runs) {
+            for (const auto& reaction : run.reactions) {
+                for (const auto& alias : reaction.k_alias) {
+                    if (!alias.empty()) {
+                        throw std::runtime_error("Reaction Ks alias '" + alias + "' must be listed in a solve-for section");
+                    }
+                }
+            }
+        }
+        return;
+    }
     
     sqlite_error_message errMsg;
     std::string sqltext = "SELECT * FROM 'alglib_input' WHERE ";
@@ -1527,10 +1566,29 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     
     execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
 
+    for (const auto& run : p.experiment_runs) {
+        for (const auto& reaction : run.reactions) {
+            for (const auto& alias : reaction.k_alias) {
+                if (alias.empty()) continue;
+                if (!p.initial_values_alglib_map.contains(alias)) {
+                    throw std::runtime_error("Reaction Ks alias '" + alias + "' is missing from the Variables table or has no solve-for bounds");
+                }
+            }
+        }
+    }
+
     
     for (int i = 0; i < p.solvables.size(); i++) {
         auto& s = p.solvables.at(i);
-        if ((p.use_alglib_init_values || s.source_name == "global") && !s.param_init) {
+        const bool reaction_alias = std::any_of(p.experiment_runs.begin(), p.experiment_runs.end(), [&](const auto& run) {
+            return std::any_of(run.reactions.begin(), run.reactions.end(), [&](const auto& reaction) {
+                return std::find(std::begin(reaction.k_alias), std::end(reaction.k_alias), s.name) != std::end(reaction.k_alias);
+            });
+        });
+        if (reaction_alias) {
+            p.initial_values_alglib[i] = p.initial_values_alglib_map.at(s.name);
+            s.value() = p.initial_values_alglib[i];
+        } else if ((p.use_alglib_init_values || s.source_name == "global") && !s.param_init) {
             p.initial_values_alglib[i] = p.initial_values_alglib_map.at(s.name);
         } else {
             p.initial_values_alglib[i] = s.value();
@@ -1889,6 +1947,19 @@ solvable&
 variable_location(const std::string& variable_name, experiment_run_struct* run_ptr) {
     if (variable_name == "left_edge") {return run_ptr->left_edge;}
     if (variable_name == "width") {return run_ptr->width;}
+    for (auto& reaction : run_ptr->reactions) {
+        for (std::size_t parameter = 0; parameter < std::size(reaction.k_alias); ++parameter) {
+            if (reaction.k_alias[parameter] == variable_name) {
+                const auto matches = std::count_if(run_ptr->reactions.begin(), run_ptr->reactions.end(), [&](const auto& candidate) {
+                    return std::count(std::begin(candidate.k_alias), std::end(candidate.k_alias), variable_name) != 0;
+                });
+                if (matches > 1) {
+                    throw std::runtime_error("Reaction Ks alias '" + variable_name + "' is assigned to more than one reaction");
+                }
+                return reaction.k[parameter];
+            }
+        }
+    }
     if (variable_name == "FITC_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "FITC")));}
     if (variable_name == "bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "PS_40nm", "PS_20nm")));}
     if (variable_name == "bound_bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "40nm_Bound_Dye_1", "20nm_Bound_Dye_1")));}

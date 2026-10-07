@@ -152,6 +152,7 @@ struct specie_struct {
 
 struct reaction_struct {
     solvable k[2];
+    std::string k_alias[2];
     std::string name;
     std::map<specie_struct*, solvable> coef;
     std::map<specie_struct*, solvable> exp;

@@ -98,6 +98,45 @@ TEST(Workflow, NoSelectedParametersEvaluatesAndGeneratesReport) {
     }
 }
 
+TEST(Workflow, ReactionKsAliasesResolveThroughSolveForVariables) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE model_controls SET value='association_rate' WHERE criterion='universal_solve_for';"
+        "INSERT INTO alglib_input VALUES('association_rate',0.75,0.5,2,1);"
+        "UPDATE reactions SET Ks='#association_rate 1' WHERE REACTION_NAME='FITC_40nm_1'");
+    session.load_inputs();
+
+    auto& p = session.parameters();
+    ASSERT_EQ(p.solvables.size(), 1u);
+    ASSERT_EQ(p.initial_values_alglib.size(), 1u);
+    near(p.initial_values_alglib.front(), 0.75);
+    auto& reaction = p.experiment_runs.front().reactions.front();
+    EXPECT_EQ(reaction.k_alias[0], "association_rate");
+    EXPECT_EQ(reaction.k[0].source, &p.solvables.front());
+    p.solvables.front().value() = p.initial_values_alglib.front();
+    near(reaction.k[0].value(), 0.75);
+}
+
+TEST(Workflow, ReactionKsAliasesRequireVariablesTableEntry) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE model_controls SET value='association_rate' WHERE criterion='universal_solve_for';"
+        "UPDATE reactions SET Ks='#association_rate 1' WHERE REACTION_NAME='FITC_40nm_1'");
+
+    EXPECT_THROW(session.load_inputs(), std::runtime_error);
+}
+
+TEST(Workflow, ReactionKsAliasesMustBeSelectedForSolving) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE reactions SET Ks='#association_rate 1' WHERE REACTION_NAME='FITC_40nm_1'");
+
+    EXPECT_THROW(session.load_inputs(), std::runtime_error);
+}
+
 TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
     fixture files;
     run_session session(files.database);
