@@ -339,8 +339,9 @@ Columns appear in this order: `NAME`, `WT_PERCENT`,
 `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`, `ENTRANCE_CONC`,
 `ENTRANCE_CONC_UNITS`, `INLET_COND_ID (deprecated)`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
 Absent optional columns are skipped; additional database columns follow at the end.
-The Add and Modify editors use the same field order. This display order does not
-alter the database schema.
+The Add and Modify editors present the editable fields in this order. The
+deprecated `INLET_COND_ID` remains visible in the table but is not editable.
+This display order does not alter the database schema.
 
 `ENTRANCE_CONC_UNITS` is an optional per-profile override. The concentration
 unit selector defaults to the FITC entry in that experiment's
