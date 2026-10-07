@@ -194,6 +194,13 @@ MainWindow::MainWindow()
     updateControls();
 }
 
+bool MainWindow::openReportFile(const QString& filename) {
+    const auto suffix = QFileInfo(filename).suffix().toLower();
+    if (suffix != "txt" && suffix != "csv" && suffix != "tsv") return false;
+    tabs_->setCurrentWidget(reportPage_);
+    return reportPage_->loadFile(filename);
+}
+
 void MainWindow::reloadTables() {
     const auto database = database_->text().trimmed();
     experimentsPage_->load(database);

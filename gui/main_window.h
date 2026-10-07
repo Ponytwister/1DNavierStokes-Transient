@@ -21,6 +21,7 @@ class QTabWidget;
 class MainWindow : public QMainWindow {
 public:
     MainWindow();
+    bool openReportFile(const QString& filename);
 protected:
     void closeEvent(QCloseEvent* event) override;
 private:

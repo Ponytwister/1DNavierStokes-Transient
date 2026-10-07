@@ -27,16 +27,52 @@
 #include <stdexcept>
 
 namespace report_format {
+namespace {
+QStringList splitCsvLine(const QString& line)
+{
+    QStringList fields;
+    QString field;
+    bool quoted = false;
+    for (int i = 0; i < line.size(); ++i) {
+        const auto character = line[i];
+        if (quoted && character == '"') {
+            if (i + 1 < line.size() && line[i + 1] == '"') {
+                field += '"';
+                ++i;
+            } else {
+                quoted = false;
+            }
+        } else if (character == '"' && field.isEmpty() && !quoted) {
+            quoted = true;
+        } else if (character == ',' && !quoted) {
+            fields.push_back(field.trimmed());
+            field.clear();
+        } else {
+            field += character;
+        }
+    }
+    if (quoted) throw std::runtime_error("The CSV report contains an unterminated quoted field.");
+    fields.push_back(field.trimmed());
+    return fields;
+}
+}
+
 Rows parse(const QString& text)
 {
     Rows rows;
     auto lines = text.split('\n');
     if (!lines.isEmpty() && lines.back().isEmpty()) lines.removeLast();
     const QRegularExpression separator("(?: {2,}|\\t+)");
+    const auto firstLine = lines.isEmpty() ? QString{} : lines.front();
+    const bool csv = firstLine.contains(',');
+    const bool tsv = !csv && firstLine.contains('\t');
     for (auto line : lines) {
-        line = line.trimmed();
+        if (line.endsWith('\r')) line.chop(1);
         if (rows.isEmpty() && line.startsWith(QChar(0xfeff))) line.remove(0, 1);
-        rows.push_back(line.isEmpty() ? QStringList{} : line.split(separator));
+        if (line.trimmed().isEmpty()) rows.push_back({});
+        else if (csv) rows.push_back(splitCsvLine(line));
+        else if (tsv) rows.push_back(line.split('\t', Qt::KeepEmptyParts));
+        else rows.push_back(line.trimmed().split(separator));
     }
     if (rows.isEmpty() || rows.front().size() < 10 || rows.front()[0] != "res_time" ||
         rows.front()[8] != "profile_type")
@@ -333,7 +369,7 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     layout->addWidget(table_, 1);
     copy_->setEnabled(false); save_->setEnabled(false);
     connect(open, &QPushButton::clicked, this, [this] {
-        const auto name = QFileDialog::getOpenFileName(this, "Open text report", filename_, "Text reports (*.txt);;All files (*)");
+        const auto name = QFileDialog::getOpenFileName(this, "Open report", filename_, "Reports (*.txt *.csv *.tsv);;Text files (*.txt);;CSV files (*.csv);;TSV files (*.tsv);;All files (*)");
         if (!name.isEmpty()) loadFile(name);
     });
     connect(copy_, &QPushButton::clicked, this, [this] {

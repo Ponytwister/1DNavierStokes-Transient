@@ -52,6 +52,27 @@ TEST(Report, PreservesUnitsNamesPrecisionAndUnequalProfileLengths)
     EXPECT_THROW(report_format::parse(header + "1  2\n"), std::runtime_error);
 }
 
+TEST(Report, OpensCommaAndTabDelimitedReports)
+{
+    using namespace report_format;
+    const QString csv = "res_time,b,k,eq,d,c,s,D-A,profile_type,0\r\n"
+        "sec,b,k,eq,d,c,s,deriv,Channel_Width_(um)->,1\r\n"
+        "1,2,3,4,5,6,7,-,\"sample, one_Experimental_Profile\",0.125\r\n";
+    const auto csvRows = parse(csv);
+    ASSERT_EQ(csvRows.size(), 3);
+    EXPECT_EQ(csvRows[0].size(), 10);
+    EXPECT_EQ(csvRows[2][8], "sample, one_Experimental_Profile");
+    EXPECT_EQ(csvRows[2][9], "0.125");
+
+    const QString tsv = "res_time\tb\tk\teq\td\tc\ts\tD-A\tprofile_type\t0\r\n"
+        "sec\tb\tk\teq\td\tc\ts\tderiv\tChannel_Width_(um)->\t1\r\n"
+        "1\t2\t3\t4\t5\t6\t7\t-\tsample_Experimental_Profile\t0.125\r\n";
+    const auto tsvRows = parse(tsv);
+    ASSERT_EQ(tsvRows.size(), 3);
+    EXPECT_EQ(tsvRows[2].size(), 10);
+    EXPECT_EQ(tsvRows[2][9], "0.125");
+}
+
 TEST(Report, CopiesImportedReportAndClearsStaleDataOnFailure)
 {
     QTemporaryDir directory;

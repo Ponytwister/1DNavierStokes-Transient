@@ -7,6 +7,11 @@ Windows 10 (1809+) / Windows 11 with Qt 6.10.3 and MinGW GCC 13.1.0.
 
 Choose an existing experiment database and an output directory from the **File**
 menu, then Run.
+Open a `.txt`, `.csv`, or `.tsv` report with NavierGui from File Explorer to
+load it directly in the **Report** tab. The Report tab's **Open report...**
+button accepts the same formats. CSV and TSV delimiters are detected from the
+header; existing space-delimited reports remain supported.
+
 Open the **Model controls** tab to edit settings. Navigation, closing, and Run
 remain available while editing. Run asks you to accept changed controls; unchanged
 controls run without a prompt. **Update preset** saves to the loaded setup file;
