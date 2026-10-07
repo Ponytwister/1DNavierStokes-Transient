@@ -13,7 +13,9 @@
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QHBoxLayout>
+#include <QGroupBox>
 #include <QMap>
+#include <QRegularExpression>
 #include <sqlite3.h>
 #include <algorithm>
 #include <cmath>
@@ -47,9 +49,9 @@ void bind(sqlite3* db, sqlite3_stmt* query, int index, const QVariant& value) {
     }
     check(db, rc);
 }
-struct SpeciesInfo { QString type; QString modelUnits; };
-using SpeciesCatalog = QMap<QString, SpeciesInfo>;
-struct ConcentrationValue { QString species; double value; QString units; };
+struct SpeciesInfo { QString name; QString type; QString modelUnits; };
+struct ExperimentCatalog { std::vector<SpeciesInfo> species; int entranceCount = 0; };
+struct ConcentrationValue { int entranceNumber; QString species; double value; QString units; };
 std::optional<double> scalarConcentration(const QVariant& value) {
     if (!value.isValid() || value.isNull()) return std::nullopt;
     bool ok = false;
@@ -57,17 +59,20 @@ std::optional<double> scalarConcentration(const QVariant& value) {
     if (!ok || !std::isfinite(number) || number < 0.0) return std::nullopt;
     return number;
 }
-SpeciesCatalog speciesCatalog(sqlite3* db, const QString& experiment) {
-    SpeciesCatalog catalog;
-    auto row = prepare(db, "SELECT SPECIES, SPECIE_MODEL_CONC_UNITS FROM experiments WHERE NAME COLLATE BINARY=?");
+ExperimentCatalog speciesCatalog(sqlite3* db, const QString& experiment) {
+    ExperimentCatalog catalog;
+    auto row = prepare(db, "SELECT SPECIES, SPECIE_MODEL_CONC_UNITS, ENTRANCE_FLOWRATE FROM experiments WHERE NAME COLLATE BINARY=?");
     bind(db, row.get(), 1, experiment);
     if (sqlite3_step(row.get()) != SQLITE_ROW) throw std::runtime_error("Cannot load species for the selected experiment.");
     const auto speciesText = sqlite3_column_type(row.get(), 0) == SQLITE_NULL ? QString{}
         : QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(row.get(), 0)));
     const auto unitsText = sqlite3_column_type(row.get(), 1) == SQLITE_NULL ? QString{}
         : QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(row.get(), 1)));
+    const auto flowrateText = sqlite3_column_type(row.get(), 2) == SQLITE_NULL ? QString{}
+        : QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(row.get(), 2)));
     const auto names = speciesText.split(' ', Qt::SkipEmptyParts);
     const auto units = unitsText.split(' ', Qt::SkipEmptyParts);
+    catalog.entranceCount = flowrateText.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).size();
     auto types = prepare(db, "SELECT SPECIES_NAME, SPECIES_TYPE FROM species");
     QMap<QString, QString> typeByName;
     int rc;
@@ -77,8 +82,21 @@ SpeciesCatalog speciesCatalog(sqlite3* db, const QString& experiment) {
         typeByName[name] = type;
     }
     if (rc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
-    for (int i = 0; i < names.size(); ++i) catalog[names[i]] = {typeByName.value(names[i]), units.value(i)};
+    for (int i = 0; i < names.size(); ++i)
+        catalog.species.push_back({names[i], typeByName.value(names[i]), units.value(i)});
     return catalog;
+}
+const SpeciesInfo* speciesInfo(const ExperimentCatalog& catalog, const QString& species) {
+    for (const auto& item : catalog.species) if (item.name == species) return &item;
+    return nullptr;
+}
+QString defaultSpecies(const ExperimentCatalog& catalog) {
+    if (speciesInfo(catalog, "FITC")) return "FITC";
+    return catalog.species.empty() ? QString{} : catalog.species.front().name;
+}
+QString modelUnits(const ExperimentCatalog& catalog, const QString& species) {
+    const auto* info = speciesInfo(catalog, species);
+    return info ? info->modelUnits : QString{};
 }
 QStringList supportedUnits(const QString& type) {
     QStringList units{"umol", "mg/ml", "wt%", "g/ml"};
@@ -94,17 +112,26 @@ std::vector<ConcentrationValue> readConcentrations(sqlite3* db, const QVariant& 
     const int found = sqlite3_step(table.get());
     if (found != SQLITE_ROW) {
         if (found != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
-        throw std::runtime_error("Apply migration 003_raw_profile_species_concentrations.sql to edit per-species entrance concentrations.");
+        throw std::runtime_error("Apply migrations 003 and 004 to edit per-species inlet concentrations.");
     }
-    auto query = prepare(db, "SELECT SPECIES_NAME, CONCENTRATION, UNITS FROM raw_profile_entrance_concentrations WHERE NAME IS ? AND WT_PERCENT IS ? ORDER BY SPECIES_NAME");
+    auto columns = prepare(db, "PRAGMA table_info(raw_profile_entrance_concentrations)");
+    bool hasEntranceNumber = false;
+    int columnRc;
+    while ((columnRc = sqlite3_step(columns.get())) == SQLITE_ROW) {
+        const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(columns.get(), 1));
+        if (name && QString::fromUtf8(name) == "ENTRANCE_NUMBER") hasEntranceNumber = true;
+    }
+    if (columnRc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+    if (!hasEntranceNumber) throw std::runtime_error("Apply migration 004_raw_profile_entrance_numbers.sql to edit per-inlet concentrations.");
+    auto query = prepare(db, "SELECT ENTRANCE_NUMBER, SPECIES_NAME, CONCENTRATION, UNITS FROM raw_profile_entrance_concentrations WHERE NAME IS ? AND WT_PERCENT IS ? ORDER BY ENTRANCE_NUMBER, SPECIES_NAME");
     bind(db, query.get(), 1, name); bind(db, query.get(), 2, weight);
     std::vector<ConcentrationValue> result;
     int rc;
     while ((rc = sqlite3_step(query.get())) == SQLITE_ROW) {
-        const auto species = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 0)));
-        const auto units = sqlite3_column_type(query.get(), 2) == SQLITE_NULL ? QString{}
-            : QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 2)));
-        result.push_back({species, sqlite3_column_double(query.get(), 1), units});
+        const auto species = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 1)));
+        const auto units = sqlite3_column_type(query.get(), 3) == SQLITE_NULL ? QString{}
+            : QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 3)));
+        result.push_back({sqlite3_column_int(query.get(), 0), species, sqlite3_column_double(query.get(), 2), units});
     }
     if (rc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
     return result;
@@ -141,10 +168,13 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     std::vector<ConcentrationValue> originalConcentrations;
     if (!adding) {
         originalConcentrations = readConcentrations(catalogDb.get(), old("NAME"), old("WT_PERCENT"));
+        for (const auto& concentration : originalConcentrations)
+            if (concentration.entranceNumber > catalog.entranceCount)
+                throw std::runtime_error("ENTRANCE_FLOWRATE has fewer inlets than this profile's saved concentration rows.");
         if (originalConcentrations.empty() && scalarConcentration(old("ENTRANCE_CONC"))) {
-            const QString defaultUnits = catalog.value("FITC").modelUnits;
+            const QString defaultUnits = modelUnits(catalog, "FITC");
             const QString savedUnits = old("ENTRANCE_CONC_UNITS").toString();
-            originalConcentrations.push_back({"FITC", *scalarConcentration(old("ENTRANCE_CONC")), savedUnits.isEmpty() ? defaultUnits : savedUnits});
+            originalConcentrations.push_back({1, "FITC", *scalarConcentration(old("ENTRANCE_CONC")), savedUnits.isEmpty() ? defaultUnits : savedUnits});
         }
     } else readConcentrations(catalogDb.get(), QVariant{}, QVariant{});
     auto addField = [&](const QString& field) {
@@ -171,78 +201,62 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     const int initialOmit = omit->currentIndex(); form->addRow("OMIT", omit);
     for (const auto& field : QStringList{"LEFT_EDGE", "WIDTH", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE"})
         addField(field);
-    struct ConcentrationWidgets { QWidget* row; QLineEdit* value; QComboBox* species; QComboBox* units; };
+    struct ConcentrationWidgets { int entranceNumber; QString species; QLineEdit* value; QComboBox* units; };
     std::vector<ConcentrationWidgets> concentrationWidgets;
     auto* concentrationPanel = new QWidget;
     auto* concentrationLayout = new QVBoxLayout(concentrationPanel);
     concentrationLayout->setContentsMargins(0, 0, 0, 0);
-    auto* concentrationHeader = new QWidget(concentrationPanel);
-    auto* concentrationHeaderLayout = new QHBoxLayout(concentrationHeader);
-    concentrationHeaderLayout->setContentsMargins(0, 0, 0, 0);
-    concentrationHeaderLayout->addWidget(new QLabel("Species", concentrationHeader));
-    concentrationHeaderLayout->addWidget(new QLabel("Concentration", concentrationHeader));
-    concentrationHeaderLayout->addWidget(new QLabel("Units", concentrationHeader));
-    concentrationLayout->addWidget(concentrationHeader);
-    auto* addConcentration = new QPushButton("Add species concentration");
-    addConcentration->setObjectName("addEntranceConcentrationButton");
     form->addRow("ENTRANCE_CONC", concentrationPanel);
-    form->addRow(QString{}, addConcentration);
-    int concentrationRowId = 0;
-    auto addConcentrationRow = [&](const QString& initialSpecies, const QString& initialValue, const QString& initialUnits) {
-        auto* row = new QWidget(concentrationPanel);
-        auto* rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(0, 0, 0, 0);
-        auto* species = new QComboBox(row);
-        species->setObjectName("entranceConcSpecies_" + QString::number(concentrationRowId));
-        for (auto it = catalog.cbegin(); it != catalog.cend(); ++it) species->addItem(it.key(), it.key());
-        int speciesIndex = species->findData(initialSpecies);
-        if (speciesIndex < 0 && !initialSpecies.isEmpty()) {
-            species->addItem(initialSpecies + " (not in experiment)", initialSpecies);
-            speciesIndex = species->count() - 1;
+    auto rebuildConcentrationRows = [&] {
+        while (auto* item = concentrationLayout->takeAt(0)) {
+            if (item->widget()) item->widget()->deleteLater();
+            delete item;
         }
-        if (speciesIndex < 0 && species->count() > 0) speciesIndex = 0;
-        species->setCurrentIndex(speciesIndex);
-        auto* value = new QLineEdit(initialValue, row);
-        value->setObjectName("entranceConcValue_" + QString::number(concentrationRowId));
-        auto* units = new QComboBox(row);
-        units->setObjectName("entranceConcUnits_" + QString::number(concentrationRowId));
-        const auto fillUnits = [units, &catalog](const QString& specie, const QString& preferred) {
-            units->clear();
-            const auto options = supportedUnits(catalog.value(specie).type);
-            for (const auto& unit : options) units->addItem(unit, unit);
-            int index = units->findData(preferred);
-            if (index < 0 && !preferred.isEmpty()) {
-                units->addItem(preferred + " (unsupported)", preferred);
-                index = units->count() - 1;
+        concentrationWidgets.clear();
+        if (catalog.entranceCount < 1 || catalog.species.empty()) {
+            concentrationLayout->addWidget(new QLabel("Select an experiment with species and one flowrate value per inlet.", concentrationPanel));
+            return;
+        }
+        for (int entrance = 1; entrance <= catalog.entranceCount; ++entrance) {
+            auto* group = new QGroupBox(QString("Entrance / inlet %1").arg(entrance), concentrationPanel);
+            auto* groupLayout = new QFormLayout(group);
+            auto* headings = new QWidget(group);
+            auto* headingLayout = new QHBoxLayout(headings);
+            headingLayout->setContentsMargins(0, 0, 0, 0);
+            headingLayout->addWidget(new QLabel("Concentration", headings));
+            headingLayout->addWidget(new QLabel("Units", headings));
+            groupLayout->addRow(QString{}, headings);
+            for (int speciesIndex = 0; speciesIndex < static_cast<int>(catalog.species.size()); ++speciesIndex) {
+                const auto& specie = catalog.species.at(speciesIndex);
+                const auto saved = std::find_if(originalConcentrations.cbegin(), originalConcentrations.cend(),
+                    [&](const ConcentrationValue& value) { return value.entranceNumber == entrance && value.species == specie.name; });
+                const QString initialValue = saved == originalConcentrations.cend()
+                    ? QString{} : QString::number(saved->value, 'g', 17);
+                const QString initialUnits = saved == originalConcentrations.cend() ? specie.modelUnits : saved->units;
+                auto* row = new QWidget(group);
+                auto* rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(0, 0, 0, 0);
+                auto* value = new QLineEdit(initialValue, row);
+                value->setObjectName(QString("entranceConcValue_%1_%2").arg(entrance).arg(speciesIndex));
+                auto* units = new QComboBox(row);
+                units->setObjectName(QString("entranceConcUnits_%1_%2").arg(entrance).arg(speciesIndex));
+                for (const auto& unit : supportedUnits(specie.type)) units->addItem(unit, unit);
+                int unitIndex = units->findData(initialUnits);
+                if (unitIndex < 0 && !initialUnits.isEmpty()) {
+                    units->addItem(initialUnits + " (unsupported)", initialUnits);
+                    unitIndex = units->count() - 1;
+                }
+                if (unitIndex < 0 && units->count() > 0) unitIndex = 0;
+                units->setCurrentIndex(unitIndex);
+                rowLayout->addWidget(value); rowLayout->addWidget(units);
+                auto* speciesLabel = new QLabel(specie.name, group);
+                speciesLabel->setObjectName(QString("entranceConcSpecies_%1_%2").arg(entrance).arg(speciesIndex));
+                groupLayout->addRow(speciesLabel, row);
+                concentrationWidgets.push_back({entrance, specie.name, value, units});
             }
-            if (index < 0) index = units->findData(catalog.value(specie).modelUnits);
-            if (index < 0 && units->count() > 0) index = 0;
-            units->setCurrentIndex(index);
-        };
-        const auto selectedSpecies = species->currentData().toString();
-        const auto preferredUnits = initialUnits.isEmpty() ? catalog.value(selectedSpecies).modelUnits : initialUnits;
-        fillUnits(selectedSpecies, preferredUnits);
-        QObject::connect(species, &QComboBox::currentIndexChanged, units, [species, fillUnits, &catalog](int) {
-            const auto selected = species->currentData().toString();
-            fillUnits(selected, catalog.value(selected).modelUnits);
-        });
-        auto* remove = new QPushButton("Remove", row);
-        remove->setObjectName("removeEntranceConcentration_" + QString::number(concentrationRowId++));
-        rowLayout->addWidget(species); rowLayout->addWidget(value); rowLayout->addWidget(units); rowLayout->addWidget(remove);
-        concentrationLayout->addWidget(row);
-        concentrationWidgets.push_back({row, value, species, units});
-        QObject::connect(remove, &QPushButton::clicked, row, [row, &concentrationWidgets, &concentrationLayout] {
-            concentrationWidgets.erase(std::remove_if(concentrationWidgets.begin(), concentrationWidgets.end(),
-                [row](const ConcentrationWidgets& item) { return item.row == row; }), concentrationWidgets.end());
-            concentrationLayout->removeWidget(row); row->deleteLater();
-        });
+            concentrationLayout->addWidget(group);
+        }
     };
-    for (const auto& concentration : originalConcentrations)
-        addConcentrationRow(concentration.species, QString::number(concentration.value, 'g', 17), concentration.units);
-    if (adding && concentrationWidgets.empty())
-        addConcentrationRow(catalog.contains("FITC") ? "FITC" : catalog.firstKey(), {}, {});
-    QObject::connect(addConcentration, &QPushButton::clicked, &dialog, [&] {
-        addConcentrationRow(catalog.contains("FITC") ? "FITC" : (catalog.isEmpty() ? QString{} : catalog.firstKey()), {}, {});
-    });
+    rebuildConcentrationRows();
     const auto initialIntensity = old("INTENSITY_ARRAY").toString().replace('\t', ' ');
     auto* intensity = new QPlainTextEdit(initialIntensity); intensity->setObjectName("INTENSITY_ARRAY");
     intensity->setMinimumHeight(130); form->addRow("INTENSITY_ARRAY", intensity);
@@ -252,26 +266,7 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     QObject::connect(name, &QComboBox::currentTextChanged, &dialog, [&](const QString& experiment) {
         try {
             catalog = speciesCatalog(catalogDb.get(), experiment);
-            for (const auto& entry : concentrationWidgets) {
-                const auto selected = entry.species->currentData().toString();
-                entry.species->blockSignals(true);
-                entry.species->clear();
-                for (auto it = catalog.cbegin(); it != catalog.cend(); ++it) entry.species->addItem(it.key(), it.key());
-                int index = entry.species->findData(selected);
-                if (index < 0 && !selected.isEmpty()) {
-                    entry.species->addItem(selected + " (not in experiment)", selected);
-                    index = entry.species->count() - 1;
-                }
-                if (index < 0 && entry.species->count() > 0) index = 0;
-                entry.species->setCurrentIndex(index);
-                entry.species->blockSignals(false);
-                entry.units->clear();
-                const auto specie = entry.species->currentData().toString();
-                for (const auto& unit : supportedUnits(catalog.value(specie).type)) entry.units->addItem(unit, unit);
-                int unitIndex = entry.units->findData(catalog.value(specie).modelUnits);
-                if (unitIndex < 0 && entry.units->count() > 0) unitIndex = 0;
-                entry.units->setCurrentIndex(unitIndex);
-            }
+            rebuildConcentrationRows();
         } catch (const std::exception& failure) {
             error->setText(QString::fromUtf8(failure.what()));
         }
@@ -308,49 +303,48 @@ bool editRawProfile(const QString& database, const QStringList& columns,
                 values[field] = !adding && old(field).isValid() && text == old(field).toString() ? old(field) : value;
             }
             std::vector<ConcentrationValue> editedConcentrations;
-            QMap<QString, ConcentrationValue> concentrationBySpecies;
+            QMap<QString, ConcentrationValue> concentrationByKey;
+            bool allConcentrationsEntered = true;
             for (const auto& entry : concentrationWidgets) {
                 const auto text = entry.value->text().trimmed();
-                if (text.isEmpty()) continue;
+                if (text.isEmpty()) { allConcentrationsEntered = false; continue; }
                 bool ok = false;
                 const double concentration = text.toDouble(&ok);
                 if (!ok || !std::isfinite(concentration) || concentration < 0)
                     throw std::runtime_error("ENTRANCE_CONC: each value must be a finite, non-negative number.");
-                const auto species = entry.species->currentData().toString();
-                if (species.isEmpty()) throw std::runtime_error("ENTRANCE_CONC: choose a species for each value.");
-                if (concentrationBySpecies.contains(species))
-                    throw std::runtime_error(("ENTRANCE_CONC: duplicate species " + species).toStdString());
                 const auto units = entry.units->currentData().toString();
-                if (units.isEmpty()) throw std::runtime_error(("ENTRANCE_CONC: choose units for " + species).toStdString());
-                const ConcentrationValue value{species, concentration, units};
-                concentrationBySpecies.insert(species, value);
+                if (units.isEmpty()) throw std::runtime_error(("ENTRANCE_CONC: choose units for " + entry.species).toStdString());
+                const ConcentrationValue value{entry.entranceNumber, entry.species, concentration, units};
+                const QString key = QString::number(entry.entranceNumber) + QChar(0x1f) + entry.species;
+                concentrationByKey.insert(key, value);
+                editedConcentrations.push_back(value);
             }
-            for (auto it = concentrationBySpecies.cbegin(); it != concentrationBySpecies.cend(); ++it)
-                editedConcentrations.push_back(it.value());
-            if (adding && editedConcentrations.empty())
-                throw std::runtime_error("ENTRANCE_CONC: enter at least one species concentration.");
-            if (!adding && editedConcentrations.empty() && !old("INLET_COND_ID").isValid())
-                throw std::runtime_error("ENTRANCE_CONC: keep at least one concentration when no legacy inlet ID exists.");
-            auto findSpeciesConcentration = [](const std::vector<ConcentrationValue>& entries, const QString& species) -> const ConcentrationValue* {
-                for (const auto& entry : entries) if (entry.species == species) return &entry;
+            if ((adding || !old("INLET_COND_ID").isValid()) && !allConcentrationsEntered)
+                throw std::runtime_error("ENTRANCE_CONC: enter a concentration for every species at every inlet.");
+            if ((adding || !old("INLET_COND_ID").isValid()) && concentrationWidgets.empty())
+                throw std::runtime_error("ENTRANCE_CONC: the selected experiment needs species and a flowrate value for every inlet.");
+            auto findSpeciesConcentration = [](const std::vector<ConcentrationValue>& entries, int entrance, const QString& species) -> const ConcentrationValue* {
+                for (const auto& entry : entries) if (entry.entranceNumber == entrance && entry.species == species) return &entry;
                 return nullptr;
             };
-            const auto fitc = findSpeciesConcentration(editedConcentrations, "FITC");
+            const auto fitc = findSpeciesConcentration(editedConcentrations, 1, "FITC");
             const bool preserveLegacyEntranceValue = !adding && old("ENTRANCE_CONC").isValid() &&
                 !scalarConcentration(old("ENTRANCE_CONC")).has_value();
             if (columns.contains("ENTRANCE_CONC")) values["ENTRANCE_CONC"] = preserveLegacyEntranceValue
                 ? old("ENTRANCE_CONC") : (fitc ? QVariant(fitc->value) : QVariant{});
             if (columns.contains("ENTRANCE_CONC_UNITS")) values["ENTRANCE_CONC_UNITS"] = preserveLegacyEntranceValue
                 ? old("ENTRANCE_CONC_UNITS") : (fitc ? QVariant(fitc->units) : QVariant{});
-            QMap<QString, ConcentrationValue> originalBySpecies;
-            for (const auto& entry : originalConcentrations) originalBySpecies[entry.species] = entry;
-            const auto editedBySpecies = concentrationBySpecies;
-            bool concentrationsChanged = originalBySpecies.size() != editedBySpecies.size();
+            auto concentrationKey = [](int entrance, const QString& species) {
+                return QString::number(entrance) + QChar(0x1f) + species;
+            };
+            QMap<QString, ConcentrationValue> originalByKey;
+            for (const auto& entry : originalConcentrations) originalByKey[concentrationKey(entry.entranceNumber, entry.species)] = entry;
+            bool concentrationsChanged = originalByKey.size() != concentrationByKey.size();
             if (!concentrationsChanged) {
-                for (auto it = originalBySpecies.cbegin(); it != originalBySpecies.cend(); ++it) {
-                    if (!editedBySpecies.contains(it.key()) ||
-                        editedBySpecies.value(it.key()).value != it.value().value ||
-                        editedBySpecies.value(it.key()).units != it.value().units) {
+                for (auto it = originalByKey.cbegin(); it != originalByKey.cend(); ++it) {
+                    if (!concentrationByKey.contains(it.key()) ||
+                        concentrationByKey.value(it.key()).value != it.value().value ||
+                        concentrationByKey.value(it.key()).units != it.value().units) {
                         concentrationsChanged = true; break;
                     }
                 }
@@ -421,14 +415,15 @@ bool editRawProfile(const QString& database, const QStringList& columns,
                 bind(db.get(), removeOldConcentrations.get(), 2, adding ? values.at("WT_PERCENT") : old("WT_PERCENT"));
                 check(db.get(), sqlite3_step(removeOldConcentrations.get()), SQLITE_DONE);
                 removeOldConcentrations.reset();
-                auto insertConcentration = prepare(db.get(), "INSERT INTO raw_profile_entrance_concentrations(NAME, WT_PERCENT, SPECIES_NAME, CONCENTRATION, UNITS) VALUES(?, ?, ?, ?, ?)");
+                auto insertConcentration = prepare(db.get(), "INSERT INTO raw_profile_entrance_concentrations(NAME, WT_PERCENT, ENTRANCE_NUMBER, SPECIES_NAME, CONCENTRATION, UNITS) VALUES(?, ?, ?, ?, ?, ?)");
                 for (const auto& concentration : editedConcentrations) {
                     sqlite3_reset(insertConcentration.get()); sqlite3_clear_bindings(insertConcentration.get());
                     bind(db.get(), insertConcentration.get(), 1, values.at("NAME"));
                     bind(db.get(), insertConcentration.get(), 2, values.at("WT_PERCENT"));
-                    bind(db.get(), insertConcentration.get(), 3, concentration.species);
-                    bind(db.get(), insertConcentration.get(), 4, concentration.value);
-                    bind(db.get(), insertConcentration.get(), 5, concentration.units);
+                    bind(db.get(), insertConcentration.get(), 3, static_cast<qlonglong>(concentration.entranceNumber));
+                    bind(db.get(), insertConcentration.get(), 4, concentration.species);
+                    bind(db.get(), insertConcentration.get(), 5, concentration.value);
+                    bind(db.get(), insertConcentration.get(), 6, concentration.units);
                     check(db.get(), sqlite3_step(insertConcentration.get()), SQLITE_DONE);
                 }
                 insertConcentration.reset();

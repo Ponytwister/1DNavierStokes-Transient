@@ -507,7 +507,8 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
                   "INSERT INTO edited_profiles(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,ENTRANCE_CONC_UNITS) "
                   "SELECT NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,NULL FROM raw_profile; "
                   "DROP TABLE raw_profile; ALTER TABLE edited_profiles RENAME TO raw_profile; "
-                  "INSERT INTO experiments(NAME) VALUES('second')");
+                  "INSERT INTO experiments(NAME,SPECIES,SPECIE_MODEL_CONC_UNITS,ENTRANCE_FLOWRATE) "
+                  "VALUES('second','FITC PS_40nm 40nm_Bound_Dye_1','umol umol umol','0.0000000005')");
     MainWindow window; input.choose(window); window.show();
     auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(6);
     auto* table = widget<QTableWidget>(window, "raw_profileTable");
@@ -520,14 +521,18 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QLineEdit>(editor, "WT_PERCENT")->setText("5");
         widget<QLineEdit>(editor, "CHANNEL_LEFT_EDGE")->setText("0");
         widget<QLineEdit>(editor, "CHANNEL_RIGHT_EDGE")->setText("3");
-        widget<QLineEdit>(editor, "entranceConcValue_0")->setText("0.25");
-        widget<QComboBox>(editor, "entranceConcSpecies_0")->setCurrentText("FITC");
+        widget<QLineEdit>(editor, "entranceConcValue_1_0")->setText("0.25");
+        widget<QLineEdit>(editor, "entranceConcValue_1_1")->setText("0.1");
+        widget<QLineEdit>(editor, "entranceConcValue_1_2")->setText("0.05");
         widget<QPlainTextEdit>(editor, "INTENSITY_ARRAY")->setPlainText("1  2 3");
     };
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
         fill(*editor);
-        EXPECT_EQ(widget<QComboBox>(*editor, "entranceConcUnits_0")->currentText(), "umol");
+        EXPECT_EQ(widget<QComboBox>(*editor, "entranceConcUnits_1_0")->currentText(), "umol");
+        EXPECT_EQ(widget<QLabel>(*editor, "entranceConcSpecies_1_0")->text(), "FITC");
+        EXPECT_EQ(widget<QLabel>(*editor, "entranceConcSpecies_1_1")->text(), "PS_40nm");
+        EXPECT_EQ(widget<QLabel>(*editor, "entranceConcSpecies_1_2")->text(), "40nm_Bound_Dye_1");
         EXPECT_EQ(editor->findChild<QCheckBox*>("LEFT_EDGENull"), nullptr);
         EXPECT_EQ(editor->findChild<QCheckBox*>("WIDTHNull"), nullptr);
         EXPECT_EQ(editor->findChild<QCheckBox*>("ENTRANCE_CONCNull"), nullptr);
@@ -562,7 +567,8 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC=0.25 AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
-    EXPECT_EQ(input.execute("SELECT CONCENTRATION=0.25 AND SPECIES_NAME='FITC' AND UNITS='umol' FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT CONCENTRATION=0.25 AND SPECIES_NAME='FITC' AND UNITS='umol' AND ENTRANCE_NUMBER=1 FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 3);
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr); fill(*editor);
         widget<QPushButton>(*editor, "saveRawProfileButton")->click();

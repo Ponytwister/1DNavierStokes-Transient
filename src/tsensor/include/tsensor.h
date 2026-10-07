@@ -205,6 +205,7 @@ struct experiment_struct {
     double entrance_conc_override = 0.0;
     std::string entrance_conc_units;
     struct entrance_concentration_override {
+        int entrance_number;
         std::string species_name;
         double concentration;
         std::string units;

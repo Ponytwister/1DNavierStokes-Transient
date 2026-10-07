@@ -343,16 +343,20 @@ The Add and Modify editors present the editable fields in this order. The
 deprecated `INLET_COND_ID` remains visible in the table but is not editable.
 This display order does not alter the database schema.
 
-The editor represents `ENTRANCE_CONC` as one row per species, with a
-concentration value and species and units dropdowns. Add or remove rows as
-needed; each species can appear once. Units default to that species' entry in
-the selected experiment's `SPECIE_MODEL_CONC_UNITS` list and can be overridden
-per profile. Changing `NAME` refreshes the species and default unit choices.
-Apply `migrations/002_raw_profile_entrance_conc_units.sql` followed by
-`migrations/003_raw_profile_species_concentrations.sql` once. Migration 003
+The editor lists species in the selected experiment's declared order. It repeats
+that list in a separate **Entrance / inlet** block for each `ENTRANCE_FLOWRATE`
+value. Experiments therefore need one flowrate value per inlet; existing inlet
+references cannot be left without a matching flowrate. Each species row has a
+concentration value and units selector. Units default to that species' entry in
+`SPECIE_MODEL_CONC_UNITS` and can be overridden per profile and inlet. Changing
+`NAME` refreshes the species order, inlet blocks, and default units.
+Apply migrations `002_raw_profile_entrance_conc_units.sql`,
+`003_raw_profile_species_concentrations.sql`, and
+`004_raw_profile_entrance_numbers.sql` in order, once each. Migration 003
 creates the per-species table and copies existing numeric scalar
-`ENTRANCE_CONC` values to FITC rows. Older non-scalar values stay intact in the
-legacy column. The old columns remain for compatibility. The legacy
+`ENTRANCE_CONC` values to FITC rows. Migration 004 adds the inlet number and
+moves existing concentration rows to inlet 1. Older non-scalar values stay
+intact in the legacy column. The old columns remain for compatibility. The legacy
 `INLET_COND_ID` column remains visible and stored for database compatibility,
 but `ENTRANCE_CONC` rows take precedence when present; profiles without them
 continue to use the existing `inlet_conditions` lookup.

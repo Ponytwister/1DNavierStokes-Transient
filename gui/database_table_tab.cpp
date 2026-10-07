@@ -21,8 +21,35 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <sqlite3.h>
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
+
+namespace {
+int maxConfiguredEntranceNumber(sqlite3* db, const QString& experimentName) {
+    int maximum = 0;
+    auto readMaximum = [&](const char* sql) {
+        sqlite3_stmt* raw = nullptr;
+        const int prepared = sqlite3_prepare_v2(db, sql, -1, &raw, nullptr);
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> query(raw, sqlite3_finalize);
+        if (prepared != SQLITE_OK) {
+            if (sqlite3_errcode(db) == SQLITE_ERROR) return;
+            throw std::runtime_error(sqlite3_errmsg(db));
+        }
+        const auto name = experimentName.toUtf8();
+        if (sqlite3_bind_text(query.get(), 1, name.constData(), name.size(), SQLITE_TRANSIENT) != SQLITE_OK ||
+            sqlite3_step(query.get()) != SQLITE_ROW)
+            throw std::runtime_error(sqlite3_errmsg(db));
+        maximum = std::max(maximum, sqlite3_column_int(query.get(), 0));
+    };
+    readMaximum("SELECT COALESCE(MAX(i.ENTRANCE_NUMBER),0) FROM raw_profile r "
+                "JOIN inlet_conditions i ON i.INLET_COND_ID=r.INLET_COND_ID "
+                "WHERE r.NAME COLLATE BINARY=?");
+    readMaximum("SELECT COALESCE(MAX(ENTRANCE_NUMBER),0) FROM raw_profile_entrance_concentrations "
+                "WHERE NAME COLLATE BINARY=?");
+    return maximum;
+}
+}
 
 DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     : QWidget(parent), tableKind_(table), tableName_(table == Table::reactions ? "reactions" : table == Table::species ? "species" : table == Table::alglib ? "alglib_input" : table == Table::experiments ? "experiments" : "raw_profile") {
@@ -243,7 +270,7 @@ void DatabaseTableTab::editRow(bool adding) {
     dialog.resize(experiments ? 800 : 660, experiments ? 720 : 440);
     auto* layout = new QVBoxLayout(&dialog);
     auto* note = new QLabel(experiments
-        ? "Choose concentration units for each species. Channel dimensions are stored in meters and entrance flowrates in m³/s; unit selectors convert the displayed values. Blank optional fields clear their values. Names cannot be changed when modifying a row."
+        ? "Choose concentration units for each species. Enter one flowrate per inlet; the number of values determines the inlet blocks shown in raw profiles. Channel dimensions are stored in meters and flowrates in m³/s; unit selectors convert displayed values. Blank optional fields clear their values. Names cannot be changed when modifying a row."
         : "Values use the database's existing units. Names cannot be changed when modifying a row, to preserve references.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* scroll = new QScrollArea; scroll->setWidgetResizable(true);
@@ -369,6 +396,7 @@ void DatabaseTableTab::editRow(bool adding) {
             if (name.isEmpty() || name.contains(QRegularExpression("[\\s']")))
                 throw std::invalid_argument("Names must be nonempty and contain no whitespace or apostrophes.");
             QStringList species;
+            int flowrateCount = 0;
             if (reactions) {
                 species = values[1].toString().split(' ', Qt::SkipEmptyParts);
                 if (species.isEmpty()) throw std::invalid_argument("SPECIES must contain at least one species name.");
@@ -386,6 +414,18 @@ void DatabaseTableTab::editRow(bool adding) {
             } else if (experiments) {
                 const channel_dimensions valid(values[fields.indexOf("CHANNEL_WIDTH")].toDouble(),
                     values[fields.indexOf("CHANNEL_HEIGHT")].toDouble(), values[fields.indexOf("CHANNEL_LENGTH")].toDouble());
+                const int flowrateIndex = fields.indexOf("ENTRANCE_FLOWRATE");
+                if (flowrateIndex >= 0) {
+                    const auto flowrates = values[flowrateIndex].toString().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                    if (flowrates.isEmpty()) throw std::invalid_argument("ENTRANCE_FLOWRATE: enter one value per inlet.");
+                    for (const auto& flowrate : flowrates) {
+                        bool ok = false;
+                        const double number = flowrate.toDouble(&ok);
+                        if (!ok || !std::isfinite(number) || number < 0.0)
+                            throw std::invalid_argument("ENTRANCE_FLOWRATE: use finite, non-negative values, one per inlet.");
+                    }
+                    flowrateCount = flowrates.size();
+                }
             } else if (alglib) {
                 const double initial = values[1].toDouble();
                 const double lower = values[2].toDouble(), upper = values[3].toDouble();
@@ -410,6 +450,8 @@ void DatabaseTableTab::editRow(bool adding) {
             check(sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr));
             try {
                 if (selections) selections->validateReferences(db.get());
+                if (experiments && flowrateCount < maxConfiguredEntranceNumber(db.get(), values[0].toString()))
+                    throw std::invalid_argument("ENTRANCE_FLOWRATE: a value is required for every inlet already used by this experiment.");
                 using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
                 auto prepare = [&](const QString& sql) {
                     sqlite3_stmt* query = nullptr;
