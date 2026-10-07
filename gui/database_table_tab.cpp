@@ -1,5 +1,7 @@
 #include "database_table_tab.h"
 #include "experiment_fields.h"
+#include "experiment_selections.h"
+#include "quantity_units.h"
 #include "raw_profile_editor.h"
 #include <channel_dimensions.h>
 #include <QHeaderView>
@@ -211,10 +213,8 @@ void DatabaseTableTab::editRow(bool adding) {
     const bool experiments = tableKind_ == Table::experiments;
     auto fields = editableColumns(tableKind_);
     if (experiments) {
-        const QStringList metadata{"LOW_REF_LEFT", "LOW_REF_RIGHT", "HIGH_REF_LEFT", "HIGH_REF_RIGHT",
-            "DEFAULT_NORMALIZATION", "SPECIES", "REACTIONS", "ENTRANCE_FLOWRATE", "EDGES",
-            "SPECIE_INLET_CONC_UNITS", "SPECIE_MODEL_CONC_UNITS", "WIDTH"};
-        for (const auto& column : metadata) if (columns_.contains(column)) fields << column;
+        fields.clear();
+        for (const auto& column : experimentFieldOrder()) if (columns_.contains(column)) fields << column;
     }
     for (const auto& field : fields) if (!columns_.contains(field)) return;
     const auto database = database_;
@@ -238,15 +238,25 @@ void DatabaseTableTab::editRow(bool adding) {
 
     QDialog dialog(this); dialog.setObjectName(tableName_ + "Editor");
     dialog.setWindowTitle((adding ? "Add " : "Modify ") + QString(reactions ? "reaction" : alglib ? "ALGLIB input" : experiments ? "experiment" : "species"));
-    dialog.resize(660, 440);
+    dialog.resize(experiments ? 800 : 660, experiments ? 720 : 440);
     auto* layout = new QVBoxLayout(&dialog);
-    auto* note = new QLabel((experiments ? QString("Channel dimensions are in meters. ") : QString{}) + "Values use the database's existing units. Names cannot be changed when modifying a row, to preserve references.");
+    auto* note = new QLabel(experiments
+        ? "Choose concentration units for each species. Channel dimensions are stored in meters and entrance flowrates in m³/s; unit selectors convert the displayed values. Blank optional fields clear their values. Names cannot be changed when modifying a row."
+        : "Values use the database's existing units. Names cannot be changed when modifying a row, to preserve references.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* scroll = new QScrollArea; scroll->setWidgetResizable(true);
     auto* panel = new QWidget; auto* form = new QFormLayout(panel);
     scroll->setWidget(panel); layout->addWidget(scroll);
     std::vector<QLineEdit*> edits;
     std::vector<QCheckBox*> nulls;
+    QMap<QString, QComboBox*> quantities;
+    ExperimentSelections* selections = nullptr;
+    if (experiments) {
+        QMap<QString, QVariant> initial;
+        for (const auto& field : fields) initial[field] = adding ? QVariant{} : original[columns.indexOf(field)];
+        try { selections = new ExperimentSelections(database, initial, &dialog); }
+        catch (const std::exception& e) { status_->setText("Cannot edit experiment: " + QString::fromUtf8(e.what())); return; }
+    }
     for (const auto& field : fields) {
         const int col = columns.indexOf(field);
         QVariant value = adding ? QVariant{} : original[col];
@@ -255,19 +265,31 @@ void DatabaseTableTab::editRow(bool adding) {
             if (field == "CHANNEL_HEIGHT") value = 4e-5;
             if (field == "CHANNEL_LENGTH") value = .025;
         }
+        if (selections && selections->field(field)) {
+            form->addRow(experimentFieldLabel(field), selections->field(field));
+            edits.push_back(nullptr); nulls.push_back(nullptr); continue;
+        }
         auto* line = new QLineEdit(value.toString()); line->setObjectName(field);
+        if (experiments) {
+            if (!adding && field == "NAME") line->setReadOnly(true);
+            auto* fieldRow = new QHBoxLayout; fieldRow->addWidget(line);
+            if (field.startsWith("CHANNEL_") || field == "ENTRANCE_FLOWRATE") {
+                quantities[field] = quantityUnits(field, line); fieldRow->addWidget(quantities[field]);
+            }
+            form->addRow(experimentFieldLabel(field), fieldRow);
+            edits.push_back(line); nulls.push_back(nullptr); continue;
+        }
         auto* null = new QCheckBox("NULL"); null->setObjectName(field + "Null");
         null->setChecked(!value.isValid());
         // Reaction lists and names are required; optional species numeric fields retain SQL NULL.
-        const bool nullable = (tableKind_ == Table::species && field != "SPECIES_NAME" && field != "SPECIES_TYPE")
-            || (experiments && field != "NAME" && !field.startsWith("CHANNEL_"));
+        const bool nullable = tableKind_ == Table::species && field != "SPECIES_NAME" && field != "SPECIES_TYPE";
         if (!nullable) null->setChecked(false);
         null->setVisible(nullable);
         line->setEnabled(!null->isChecked());
         connect(null, &QCheckBox::toggled, line, [line](bool checked) { line->setEnabled(!checked); });
         if (!adding && field == fields.front()) line->setReadOnly(true);
         auto* fieldRow = new QHBoxLayout; fieldRow->addWidget(line); fieldRow->addWidget(null);
-        form->addRow(experiments && field.startsWith("CHANNEL_") ? field + " (m)" : field, fieldRow); edits.push_back(line); nulls.push_back(null);
+        form->addRow(field, fieldRow); edits.push_back(line); nulls.push_back(null);
     }
     auto* error = new QLabel; error->setObjectName("referenceEditorStatus");
     error->setTextFormat(Qt::PlainText); error->setWordWrap(true); layout->addWidget(error);
@@ -279,18 +301,29 @@ void DatabaseTableTab::editRow(bool adding) {
     bool wrote = false;
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         try {
+            if (selections && !selections->resolveReactions(&dialog)) return;
             std::vector<QVariant> values;
             for (int i = 0; i < fields.size(); ++i) {
-                const QString text = edits[i]->text();
-                QVariant value = nulls[i]->isChecked() ? QVariant{} : QVariant(text);
-                if (value.isValid() && !reactions && (experiments ? (i >= 1 && i <= 3) : i >= (alglib ? 1 : 2))) {
-                    bool ok = false; const double number = text.toDouble(&ok);
+                const auto& field = fields[i];
+                const QString text = edits[i] ? edits[i]->text() : selections->value(field);
+                const bool null = experiments ? (text.trimmed().isEmpty() && field != "NAME" && !field.startsWith("CHANNEL_")) : nulls[i]->isChecked();
+                QVariant value = null ? QVariant{} : QVariant(text);
+                if (value.isValid() && quantities.contains(field)) {
+                    const auto converted = quantityStoredText(edits[i], quantities[field]);
+                    if (field.startsWith("CHANNEL_") && converted.split(' ', Qt::SkipEmptyParts).size() != 1)
+                        throw std::invalid_argument("Channel dimensions require one finite positive number.");
+                    value = field.startsWith("CHANNEL_") ? QVariant(converted.toDouble()) : QVariant(converted);
+                }
+                if (value.isValid() && !reactions && (experiments ? field.startsWith("CHANNEL_") : i >= (alglib ? 1 : 2))) {
+                    bool ok = false; const double number = value.toString().toDouble(&ok);
                     if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + ((alglib || experiments) ? ": enter a finite number." : ": enter a finite number or select NULL.")).toStdString());
                     value = number;
                 }
                 if (!adding) {
                     const auto& old = original[columns.indexOf(fields[i])];
-                    if (text == old.toString() && nulls[i]->isChecked() == !old.isValid()) value = old;
+                    const auto storedText = quantities.contains(field) && value.isValid()
+                        ? quantityStoredText(edits[i], quantities[field]) : text;
+                    if (storedText == old.toString() && null == !old.isValid()) value = old;
                 }
                 values.push_back(value);
             }
@@ -313,7 +346,8 @@ void DatabaseTableTab::editRow(bool adding) {
                 }
                 values[1] = species.join(' ');
             } else if (experiments) {
-                const channel_dimensions valid(values[1].toDouble(), values[2].toDouble(), values[3].toDouble());
+                const channel_dimensions valid(values[fields.indexOf("CHANNEL_WIDTH")].toDouble(),
+                    values[fields.indexOf("CHANNEL_HEIGHT")].toDouble(), values[fields.indexOf("CHANNEL_LENGTH")].toDouble());
             } else if (alglib) {
                 const double initial = values[1].toDouble();
                 const double lower = values[2].toDouble(), upper = values[3].toDouble();
@@ -337,6 +371,7 @@ void DatabaseTableTab::editRow(bool adding) {
             check(sqlite3_exec(db.get(), "PRAGMA foreign_keys=ON", nullptr, nullptr, nullptr));
             check(sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr));
             try {
+                if (selections) selections->validateReferences(db.get());
                 using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
                 auto prepare = [&](const QString& sql) {
                     sqlite3_stmt* query = nullptr;

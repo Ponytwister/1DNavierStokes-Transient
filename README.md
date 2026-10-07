@@ -57,6 +57,23 @@ there when switching tabs. Loading costs are paid on database selection; memory
 usage scales with the table contents. Use **Refresh** to see external database
 changes. Row edits refresh their table, saving fitted inputs refreshes all five,
 and selecting another database replaces every cached table.
+The Experiments editor follows the table's column order and labels. Species and
+reactions use checkable dropdowns populated from their database tables. Save checks
+that every selected reaction's species is included; the warning offers to add missing
+species, remove affected reactions, or return to editing. No data is written until
+the completed form is saved. Concentration units are chosen separately for each
+species, preserving their positional association and existing species order.
+Supported choices match `unit_conversion()`: `umol`, `mg/ml`, `wt%`, and `g/ml`,
+plus `um2/ul`, `nm2/ul`, and `mm2/nl` for particles. These retain the solver's existing
+meanings and required species properties; changing a concentration-unit choice
+does not rescale stored inlet concentrations.
+Channel dimensions offer m, cm, mm, µm, and nm; entrance flowrate offers m³/s,
+L/s, mL/s, µL/s, mL/min, µL/min, and nL/min. Changing the selector converts
+the displayed value (each space-separated entrance flowrate separately). Saving
+converts back to meters and m³/s using SI scale factors and 60 seconds per minute.
+No schema or solver equation changes are involved. Blank optional experiment
+fields clear to SQL NULL; the experiment form has no NULL checkboxes. Entrance
+flowrate follows the requested columns at the end of the table and form.
 The Variables tab defaults to **Only used by selected experiments**. It shows the
 union of `universal_solve_for` in the active Model controls, `PARAMETERS_TO_SOLVE_FOR`
 in selected experiments, and `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` in their

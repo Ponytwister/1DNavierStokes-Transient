@@ -25,6 +25,9 @@
 #include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QFormLayout>
+#include <quantity_units.h>
+#include <experiment_selections.h>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -971,6 +974,129 @@ TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
     add->click();
     EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
     EXPECT_EQ(input.execute("SELECT count(*) FROM solutions"), 1);
+}
+
+TEST(Gui, ExperimentEditorUsesOrderedSelectionsAndConvertsDisplayUnits)
+{
+    Inputs input;
+    QFile migration(QString::fromUtf8(TSENSOR_FIXTURE_DIR) + "/../../migrations/001_channel_dimensions.sql");
+    ASSERT_TRUE(migration.open(QIODevice::ReadOnly)); input.execute(migration.readAll());
+    input.execute("ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT");
+    MainWindow window; input.choose(window); window.show();
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(2);
+    auto* table = widget<QTableWidget>(window, "experimentsTable"); table->selectRow(0);
+    EXPECT_EQ(table->horizontalHeaderItem(table->horizontalHeader()->logicalIndex(1))->text(), "Parameters to solve for");
+    QTimer::singleShot(0, [&] {
+        auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
+        EXPECT_TRUE(editor->findChildren<QCheckBox*>().isEmpty());
+        EXPECT_NE(editor->findChild<QToolButton*>("SPECIES"), nullptr);
+        EXPECT_NE(editor->findChild<QToolButton*>("REACTIONS"), nullptr);
+        auto* inlet = widget<QComboBox>(*editor, "SPECIE_INLET_CONC_UNITS:FITC");
+        EXPECT_EQ(inlet->currentData().toString(), "mg/ml");
+        EXPECT_EQ(inlet->findData("um2/ul"), -1); // Molecules cannot use particle surface-area units.
+        EXPECT_GE(widget<QComboBox>(*editor, "SPECIE_MODEL_CONC_UNITS:PS_40nm")->findData("um2/ul"), 0);
+        auto* species = widget<QListWidget>(*editor, "experimentSpeciesChoices");
+        for (int i = 0; i < species->count(); ++i) if (species->item(i)->text() == "FITC") {
+            species->item(i)->setCheckState(Qt::Unchecked); species->item(i)->setCheckState(Qt::Checked);
+        }
+        EXPECT_EQ(inlet->currentData().toString(), "mg/ml");
+        auto* form = qobject_cast<QFormLayout*>(widget<QLineEdit>(*editor, "NAME")->parentWidget()->layout());
+        ASSERT_NE(form, nullptr);
+        for (int i = 0; i < form->rowCount(); ++i) {
+            auto* label = qobject_cast<QLabel*>(form->itemAt(i, QFormLayout::LabelRole)->widget());
+            ASSERT_NE(label, nullptr);
+            EXPECT_EQ(label->text(), table->horizontalHeaderItem(table->horizontalHeader()->logicalIndex(i))->text());
+        }
+        auto* widthUnits = widget<QComboBox>(*editor, "CHANNEL_WIDTHUnits");
+        widthUnits->setCurrentText("mm");
+        EXPECT_NEAR(widget<QLineEdit>(*editor, "CHANNEL_WIDTH")->text().toDouble(), .5, 1e-12);
+        widget<QLineEdit>(*editor, "CHANNEL_WIDTH")->setText("2");
+        widget<QComboBox>(*editor, "CHANNEL_HEIGHTUnits")->setCurrentIndex(3); // micrometers
+        widget<QLineEdit>(*editor, "CHANNEL_HEIGHT")->setText("80");
+        widget<QComboBox>(*editor, "CHANNEL_LENGTHUnits")->setCurrentText("cm");
+        widget<QLineEdit>(*editor, "CHANNEL_LENGTH")->setText("5");
+        widget<QComboBox>(*editor, "ENTRANCE_FLOWRATEUnits")->setCurrentIndex(5); // microliters/min
+        EXPECT_NEAR(widget<QLineEdit>(*editor, "ENTRANCE_FLOWRATE")->text().toDouble(), 30, 1e-10);
+        widget<QLineEdit>(*editor, "ENTRANCE_FLOWRATE")->setText("60 120");
+        widget<QLineEdit>(*editor, "PARAMETERS_TO_SOLVE_FOR")->setText("keq1");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        if (editor->isVisible()) { ADD_FAILURE() << widget<QLabel>(*editor, "referenceEditorStatus")->text().toStdString(); editor->reject(); }
+    });
+    widget<QPushButton>(window, "experimentsModifyButton")->click();
+    EXPECT_NEAR(input.execute("SELECT CHANNEL_WIDTH FROM experiments"), .002, 1e-12);
+    EXPECT_NEAR(input.execute("SELECT CHANNEL_HEIGHT FROM experiments"), 80e-6, 1e-12);
+    EXPECT_NEAR(input.execute("SELECT CHANNEL_LENGTH FROM experiments"), .05, 1e-12);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE PARAMETERS_TO_SOLVE_FOR='keq1' AND SPECIES='FITC PS_40nm 40nm_Bound_Dye_1' AND SPECIE_INLET_CONC_UNITS='mg/ml wt% mg/ml'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE abs(CAST(substr(ENTRANCE_FLOWRATE,1,instr(ENTRANCE_FLOWRATE,' ')-1) AS REAL)-1e-9)<1e-20 AND abs(CAST(substr(ENTRANCE_FLOWRATE,instr(ENTRANCE_FLOWRATE,' ')+1) AS REAL)-2e-9)<1e-20"), 1);
+}
+
+TEST(Gui, ExperimentReactionMismatchOffersCancelAddAndRemoveWithoutPartialWrites)
+{
+    Inputs input;
+    QFile migration(QString::fromUtf8(TSENSOR_FIXTURE_DIR) + "/../../migrations/001_channel_dimensions.sql");
+    ASSERT_TRUE(migration.open(QIODevice::ReadOnly)); input.execute(migration.readAll());
+    MainWindow window; input.choose(window); window.show();
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(2);
+    auto* table = widget<QTableWidget>(window, "experimentsTable"); table->selectRow(0);
+    QTimer::singleShot(0, [&] {
+        auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
+        auto* choices = widget<QListWidget>(*editor, "experimentSpeciesChoices");
+        QListWidgetItem* removed = nullptr;
+        for (int i = 0; i < choices->count(); ++i) if (choices->item(i)->text() == "PS_40nm") removed = choices->item(i);
+        ASSERT_NE(removed, nullptr); removed->setCheckState(Qt::Unchecked);
+        auto answer = [&](const QString& text) {
+            QTimer::singleShot(0, [&, text] {
+                auto* warning = editor->findChild<QMessageBox*>("reactionSpeciesWarning"); ASSERT_NE(warning, nullptr);
+                for (auto* button : warning->buttons()) if (button->text() == text) { button->click(); return; }
+                ADD_FAILURE() << "Missing warning action"; warning->reject();
+            });
+            widget<QPushButton>(*editor, "saveReferenceButton")->click();
+            EXPECT_TRUE(editor->isVisible());
+            EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE SPECIES='FITC PS_40nm 40nm_Bound_Dye_1' AND REACTIONS='FITC_40nm_1'"), 1);
+        };
+        answer("Cancel"); EXPECT_EQ(removed->checkState(), Qt::Unchecked);
+        answer("Add species"); EXPECT_EQ(removed->checkState(), Qt::Checked);
+        EXPECT_EQ(widget<QComboBox>(*editor, "SPECIE_INLET_CONC_UNITS:PS_40nm")->currentData().toString(), "wt%");
+        removed->setCheckState(Qt::Unchecked); answer("Remove reactions");
+        EXPECT_EQ(widget<QListWidget>(*editor, "experimentReactionChoices")->item(0)->checkState(), Qt::Unchecked);
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        if (editor->isVisible()) { ADD_FAILURE(); editor->reject(); }
+    });
+    widget<QPushButton>(window, "experimentsModifyButton")->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE SPECIES='FITC 40nm_Bound_Dye_1' AND REACTIONS IS NULL AND SPECIE_INLET_CONC_UNITS='mg/ml mg/ml' AND SPECIE_MODEL_CONC_UNITS='umol umol'"), 1);
+}
+
+TEST(Gui, QuantityConversionsRejectInvalidAndOverflowingValues)
+{
+    EXPECT_EQ(convertQuantityList("60 120", 1e-9 / 60).split(' ').size(), 2);
+    EXPECT_NEAR(convertQuantityList("60", 1e-9 / 60).toDouble(), 1e-9, 1e-22);
+    EXPECT_THROW(convertQuantityList("nan", 1), std::invalid_argument);
+    EXPECT_THROW(convertQuantityList("1e308", 1000), std::invalid_argument);
+    EXPECT_THROW(convertQuantityList("1e-300", 1e-30), std::invalid_argument);
+    QLineEdit line("0.00012345678901234567");
+    std::unique_ptr<QComboBox> combo(quantityUnits("CHANNEL_WIDTH", &line));
+    for (int repeat = 0; repeat < 5; ++repeat)
+        for (int i = 0; i < combo->count(); ++i) combo->setCurrentIndex(i);
+    EXPECT_EQ(quantityStoredText(&line, combo.get()), "0.00012345678901234567");
+}
+
+TEST(Gui, ExperimentSelectionsRequireUnitsForNewSpeciesAndRecheckDatabaseReferences)
+{
+    Inputs input; QWidget parent;
+    ExperimentSelections selections(input.database, {}, &parent);
+    auto* species = widget<QListWidget>(parent, "experimentSpeciesChoices");
+    for (int i = 0; i < species->count(); ++i)
+        if (species->item(i)->text() == "FITC") species->item(i)->setCheckState(Qt::Checked);
+    EXPECT_THROW(selections.value("SPECIE_INLET_CONC_UNITS"), std::runtime_error);
+    widget<QComboBox>(parent, "SPECIE_INLET_CONC_UNITS:FITC")->setCurrentText("mg/ml");
+    widget<QComboBox>(parent, "SPECIE_MODEL_CONC_UNITS:FITC")->setCurrentText("umol");
+    EXPECT_EQ(selections.value("SPECIE_INLET_CONC_UNITS"), "mg/ml");
+    EXPECT_EQ(selections.value("SPECIE_MODEL_CONC_UNITS"), "umol");
+    input.execute("UPDATE species SET SPECIES_TYPE='particle' WHERE SPECIES_NAME='FITC'");
+    sqlite3* raw = nullptr;
+    ASSERT_EQ(sqlite3_open(input.database.toUtf8().constData(), &raw), SQLITE_OK);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close);
+    EXPECT_THROW(selections.validateReferences(raw), std::runtime_error);
 }
 
 TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
