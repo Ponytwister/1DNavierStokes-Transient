@@ -83,7 +83,9 @@ number or an alias written as `#variable_name` (for example, `#kon1`). The alias
 must be selected by `universal_solve_for` or the experiment's
 `PARAMETERS_TO_SOLVE_FOR`, and it must have a row in the Variables table
 (`alglib_input`). The solver then uses that variable for the corresponding reaction
-rate slot.
+rate slot. `reactions.COEFFICIENTS` and `reactions.EXPONENTS` accept the same alias
+form; prefix an alias with `-` to negate it, as in `-#p1`. Reusing an alias in
+multiple slots applies each slot's sign to the same solved value.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.
