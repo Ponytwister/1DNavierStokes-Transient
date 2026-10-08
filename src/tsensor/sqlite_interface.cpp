@@ -2354,33 +2354,42 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
 {
 
     //add_report(p, 0, "row:" + std::to_string(row) + "_start");
-    experiment_struct* exp_ptr = &p.experiments.at(row);
-    experiment_run_struct* run_ptr = exp_ptr->run;
+    auto* exp_ptr = &p.experiments.at(row);
+    auto* run_ptr = exp_ptr->run;
     const double left_edge = exp_ptr->left_edge.value();
-    assert(left_edge >= 0);
     const double width = exp_ptr->width.value();
-    assert(width > 0);
-    if ((double)exp_ptr->window_size < left_edge + width) {
-        std::runtime_error("exp_ptr->window_size < left_edge + width (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
+    if (!std::isfinite(left_edge) || left_edge < 0.0 || !std::isfinite(width) || width <= 0.0 ||
+        exp_ptr->window_size <= 0 || p.X < 2 || run_ptr->number_of_species <= 0 ||
+        run_ptr->number_of_reactions <= 0) {
+        throw std::invalid_argument("Invalid model dimensions or profile geometry for " +
+            run_ptr->name + ":" + exp_ptr->second_name);
     }
-    exp_ptr->scale_factor = run_ptr->W * 1.0e6 / (width);
-    if (exp_ptr->scale_factor > 0) {
-        std::runtime_error("scale factor <= 0 (window_size=" + std::to_string((double)exp_ptr->window_size) + ", left_edge=" + std::to_string(left_edge) + ", width=" + std::to_string(width) + ", run=" + run_ptr->name + ", exp=" + exp_ptr->second_name + ")");
+    if (static_cast<double>(exp_ptr->window_size) < std::ceil(width)) {
+        throw std::invalid_argument("Model profile width exceeds its sample window for " +
+            run_ptr->name + ":" + exp_ptr->second_name);
     }
-    assert(exp_ptr->scale_factor > 0);
-    double kon[run_ptr->number_of_reactions];
-    double reaction_rate[run_ptr->number_of_reactions];
-    double coef[run_ptr->number_of_reactions * run_ptr->number_of_species];
-    double exp[run_ptr->number_of_reactions * run_ptr->number_of_species];
-    double specie_rate[run_ptr->number_of_species];
-    double available[run_ptr->number_of_species];
-    double r[run_ptr->number_of_species];
-    int X = p.X;
-
-    double solution_arena[3 * run_ptr->number_of_species * X];
-    double* E                = &solution_arena[0];                                         // E[run_ptr->number_of_species * X];
-    double* solution         = &solution_arena[run_ptr->number_of_species * X];          // solution[run_ptr->number_of_species * X];
-    double* old_solution     = &solution_arena[2 * run_ptr->number_of_species * X];      // old_solution[run_ptr->number_of_species * X];
+    exp_ptr->scale_factor = run_ptr->W * 1.0e6 / width;
+    if (!std::isfinite(exp_ptr->scale_factor) || exp_ptr->scale_factor <= 0.0) {
+        throw std::invalid_argument("Invalid model scale factor for " +
+            run_ptr->name + ":" + exp_ptr->second_name);
+    }
+    const int X = p.X;
+    const int species_count = run_ptr->number_of_species;
+    const int reaction_count = run_ptr->number_of_reactions;
+    const std::size_t grid_size = static_cast<std::size_t>(species_count) * X;
+    const std::size_t reaction_species_size = static_cast<std::size_t>(reaction_count) * species_count;
+    std::vector<double> kon(reaction_count);
+    std::vector<double> reverse_kon(reaction_count);
+    std::vector<double> reaction_rate(reaction_count);
+    std::vector<double> coef(reaction_species_size);
+    std::vector<double> reaction_orders(reaction_species_size);
+    std::vector<double> specie_rate(species_count);
+    std::vector<double> available(species_count);
+    std::vector<double> r(species_count);
+    std::vector<double> solution_arena(3 * grid_size);
+    double* E = solution_arena.data();
+    double* solution = E + grid_size;
+    double* old_solution = solution + grid_size;
     double* solution_ptr     = solution;
     double* old_solution_ptr = old_solution;
     //The 3 Concentration Arrays.
@@ -2388,14 +2397,20 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_coef");
 
     
-    for (int react = 0; react < run_ptr->number_of_reactions; react++) {
+    for (int react = 0; react < reaction_count; react++) {
         reaction_struct* react_ptr = &run_ptr->reactions.at(react);
-        
         kon[react] = run_ptr->dt * react_ptr->k[0].value();
-        assert(react_ptr->k[1].value() > 0);
-        for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-            coef[specie + react * run_ptr->number_of_species] = react_ptr->coef.at(&run_ptr->species.at(specie)).value();
-            exp[specie + react * run_ptr->number_of_species] = react_ptr->exp.at(&run_ptr->species.at(specie)).value();
+        const double reverse_rate_constant = react_ptr->k[1].value();
+        if (!std::isfinite(reverse_rate_constant) || reverse_rate_constant <= 0.0) {
+            throw std::invalid_argument("Reaction reverse rate constant must be positive for " +
+                run_ptr->name + ":" + react_ptr->name);
+        }
+        reverse_kon[react] = kon[react] / reverse_rate_constant;
+        const std::size_t reaction_offset = static_cast<std::size_t>(react) * species_count;
+        for (int specie = 0; specie < species_count; specie++) {
+            auto* specie_ptr = &run_ptr->species.at(specie);
+            coef[reaction_offset + specie] = react_ptr->coef.at(specie_ptr).value();
+            reaction_orders[reaction_offset + specie] = react_ptr->exp.at(specie_ptr).value();
         }
     }
     assert (coef[run_ptr->FITC] == -coef[run_ptr->Bound_Dye_1]);
@@ -2403,7 +2418,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
 
     set_inlet_conc(p, exp_ptr, solution);
 
-    for (int specie = 0; specie < run_ptr->species.size(); specie++) {
+    for (int specie = 0; specie < species_count; specie++) {
         r[specie] = run_ptr->species.at(specie).r;
     }
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_preZloop");
@@ -2411,7 +2426,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     for (int z = 0; z < p.Z; z++) {
         check_cancellation(p);
         for (int i = 0; i < X; i++) { 
-            for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
+            for (int specie = 0; specie < species_count; specie++) {
                 solution_ptr = &solution[specie * X];
                 if (i == 0) { // left edge
                     available[specie] =                                     (1.00d - r[specie]) * solution_ptr[i]          + r[specie] * solution_ptr[i + 1];
@@ -2423,58 +2438,55 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
                 available[specie] = std::max(available[specie], 0.0d);
             }
             if (p.disable_reactions) {
-                for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
+                for (int reaction = 0; reaction < reaction_count; reaction++) {
                     reaction_rate[reaction] = 0.0d;
                 }
             } else {
                 // specie reaction rates
-                for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
-                    reaction_struct* react_ptr = &run_ptr->reactions.at(reaction);
-                    int specie_stagger = reaction * run_ptr->number_of_species;
+                for (int reaction = 0; reaction < reaction_count; reaction++) {
+                    const std::size_t specie_stagger = static_cast<std::size_t>(reaction) * species_count;
                     reaction_rate[reaction] = kon[reaction];
-                    double reverse = kon[reaction] / react_ptr->k[1].value();
+                    double reverse = reverse_kon[reaction];
                     if (p.disable_reverse_reactions) {
                         reverse = 0.0d;
                     }
-                    for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
+                    for (int specie = 0; specie < species_count; specie++) {
                         solution_ptr = &solution[specie * X];
-                        if (coef[specie + specie_stagger] < 0.0d) {
-                            reaction_rate[reaction] *= pow(solution_ptr[i], exp[specie]); // Forward Reaction
-                        } else if (coef[specie + specie_stagger] > 0.0d) {
-                            reverse *= pow(solution_ptr[i], exp[specie]); // Reverse Reaction
+                        if (coef[specie_stagger + specie] < 0.0d) {
+                            reaction_rate[reaction] *= std::pow(solution_ptr[i], reaction_orders[specie_stagger + specie]); // Forward Reaction
+                        } else if (coef[specie_stagger + specie] > 0.0d) {
+                            reverse *= std::pow(solution_ptr[i], reaction_orders[specie_stagger + specie]); // Reverse Reaction
                         }
                     }
                     reaction_rate[reaction] -= reverse;
                 }
                 // limiting reagents
-                for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-                    specie_struct* specie_ptr = &run_ptr->species.at(specie);
+                for (int specie = 0; specie < species_count; specie++) {
                     specie_rate[specie] = 0.0d;
-                    for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
-                        specie_rate[specie] += coef[specie + reaction * run_ptr->number_of_species] * reaction_rate[reaction];
+                    for (int reaction = 0; reaction < reaction_count; reaction++) {
+                        specie_rate[specie] += coef[specie + reaction * species_count] * reaction_rate[reaction];
                     }
                     int while_loop_iter = 0;
                     while(available[specie] + specie_rate[specie] < 0) { // check for limiting reagent.
                         double total_positive_magnitude = 0.00d;
                         specie_rate[specie] = 0.0d;
-                        for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
-                            if (reaction_rate[reaction] * coef[specie + reaction * run_ptr->number_of_species] > 0.0d) {
-                                total_positive_magnitude += reaction_rate[reaction] * coef[specie + reaction * run_ptr->number_of_species];
+                        for (int reaction = 0; reaction < reaction_count; reaction++) {
+                            if (reaction_rate[reaction] * coef[specie + reaction * species_count] > 0.0d) {
+                                total_positive_magnitude += reaction_rate[reaction] * coef[specie + reaction * species_count];
                             }
                         }
-                        for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
-                            reaction_struct* react_ptr = &run_ptr->reactions.at(reaction);
-                            double reaction_specie_rate = reaction_rate[reaction] * coef[specie + reaction * run_ptr->number_of_species];
+                        for (int reaction = 0; reaction < reaction_count; reaction++) {
+                            double reaction_specie_rate = reaction_rate[reaction] * coef[specie + reaction * species_count];
                             if ((reaction_specie_rate >= 0.0d)) {
                                 // skip this condition
                             } else if (total_positive_magnitude == 0.00d) {
                                 reaction_rate[reaction] = 0.0d;
-                            } else if (abs(reaction_specie_rate) > total_positive_magnitude && while_loop_iter == 0) {
-                                reaction_rate[reaction] = std::copysign(total_positive_magnitude / coef[specie + reaction * run_ptr->number_of_species], reaction_rate[reaction]);
+                            } else if (std::abs(reaction_specie_rate) > total_positive_magnitude && while_loop_iter == 0) {
+                                reaction_rate[reaction] = std::copysign(total_positive_magnitude / coef[specie + reaction * species_count], reaction_rate[reaction]);
                             } else {
                                 reaction_rate[reaction] = reaction_rate[reaction] * 0.99;
                             }
-                            specie_rate[specie] += coef[specie + reaction * run_ptr->number_of_species] * reaction_rate[reaction];
+                            specie_rate[specie] += coef[specie + reaction * species_count] * reaction_rate[reaction];
                             assert (!std::isnan(specie_rate[specie]));
                             assert (!std::isinf(specie_rate[specie]));
                         }
@@ -2483,21 +2495,20 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
                     }
                 }
                 // Final rates after limiting 
-                for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
+                for (int specie = 0; specie < species_count; specie++) {
                     specie_rate[specie] = 0.0d;
-                    for (int reaction = 0; reaction < run_ptr->number_of_reactions; reaction++) {
-                        specie_rate[specie] += coef[specie + reaction * run_ptr->number_of_species] * reaction_rate[reaction];
+                    for (int reaction = 0; reaction < reaction_count; reaction++) {
+                        specie_rate[specie] += coef[specie + reaction * species_count] * reaction_rate[reaction];
                     }
                 }
                 //assert (reaction_rate[run_ptr->FITC_Bead_1] >= 0.0d);
                 //assert (specie_rate[run_ptr->FITC] < 0.0d);
             }
-            for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
+            for (int specie = 0; specie < species_count; specie++) {
                 E[specie * X + i] = available[specie] + specie_rate[specie];
             }
         }
-        for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-            specie_struct* specie_ptr = &run_ptr->species.at(specie);
+        for (int specie = 0; specie < species_count; specie++) {
             double oneplus_r = 1.0d / (1.0d + r[specie]);
             double specie_total = 0;
             solution_ptr = &solution[specie * X];
@@ -2508,7 +2519,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
             }
             double error = specie_total;
             int while_loop_iter = 0;
-            while (error > p.time_step_convergence * specie_total && while_loop_iter < X * 2 || while_loop_iter < 3) {
+            while ((error > p.time_step_convergence * specie_total && while_loop_iter < X * 2) || while_loop_iter < 3) {
                 check_cancellation(p);
                 error = 0.0d;
                 std::swap(old_solution_ptr, solution_ptr);
@@ -2528,16 +2539,6 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
                 assert (&solution_arena[run_ptr->number_of_species * X] <= &solution_ptr[i]);
                 assert (&solution_arena[3 * run_ptr->number_of_species * X] > &solution_ptr[i]);
                 solution[specie * X + i] = solution_ptr[i]; // solution_ptr may be pointing to data in old_solution region
-            }
-            double solution_total = 0;
-            double old_solution_total = 0;
-            for (int i = 0; i < X; i++) {
-                assert (&solution_arena[run_ptr->number_of_species * X] <= &solution_ptr[i]);
-                assert (&solution_arena[3 * run_ptr->number_of_species * X] > &solution_ptr[i]);
-                assert (&solution_arena[run_ptr->number_of_species * X] <= &old_solution_ptr[i]);
-                assert (&solution_arena[3 * run_ptr->number_of_species * X] > &old_solution_ptr[i]);
-                solution_total += solution_ptr[i];
-                old_solution_total += old_solution_ptr[i];
             }
             assert (while_loop_iter < X * 1);
             for (int i = 0; i < X; i++) {
