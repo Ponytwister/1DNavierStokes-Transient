@@ -10,6 +10,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QScrollArea>
 #include <QRegularExpression>
 #include <QVariant>
@@ -77,11 +78,14 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     refresh_->setObjectName(tableName_ + "RefreshButton");
     add_ = new QPushButton("Add..."); add_->setObjectName(tableName_ + "AddButton");
     modify_ = new QPushButton("Modify..."); modify_->setObjectName(tableName_ + "ModifyButton");
-    buttons->addWidget(add_); buttons->addWidget(modify_);
+    remove_ = new QPushButton("Delete"); remove_->setObjectName(tableName_ + "DeleteButton");
+    remove_->setVisible(tableKind_ == Table::alglib);
+    buttons->addWidget(add_); buttons->addWidget(modify_); buttons->addWidget(remove_);
     buttons->addWidget(refresh_); buttons->addStretch(); layout->addLayout(buttons);
     connect(refresh_, &QPushButton::clicked, this, [this] { load(database_); });
     connect(add_, &QPushButton::clicked, this, [this] { editRow(true); });
     connect(modify_, &QPushButton::clicked, this, [this] { editRow(false); });
+    connect(remove_, &QPushButton::clicked, this, [this] { deleteRow(); });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { updateButtons(); });
     clear();
 }
@@ -241,6 +245,55 @@ void DatabaseTableTab::updateButtons() {
     for (const auto& column : expected) supported = supported && columns_.contains(column);
     add_->setEnabled(supported);
     modify_->setEnabled(supported && !table_->selectedItems().isEmpty());
+    const int selectedRow = table_->currentRow();
+    const int variableColumn = columns_.indexOf("VARIABLE");
+    const QString selectedVariable = selectedRow >= 0 && variableColumn >= 0 && table_->item(selectedRow, variableColumn)
+        ? table_->item(selectedRow, variableColumn)->text() : QString{};
+    remove_->setEnabled(tableKind_ == Table::alglib && loaded_ && editingEnabled_ && selectedRow >= 0 &&
+        variableColumn >= 0 && selectedVariable != "width" && selectedVariable != "left_edge");
+}
+
+void DatabaseTableTab::deleteRow() {
+    const int row = table_->currentRow();
+    const int variableColumn = columns_.indexOf("VARIABLE");
+    if (tableKind_ != Table::alglib || !loaded_ || !editingEnabled_ || row < 0 || variableColumn < 0) return;
+    const auto* variableItem = table_->item(row, variableColumn);
+    if (!variableItem) return;
+    const QString variable = variableItem->text();
+    if (variable == "width" || variable == "left_edge") {
+        status_->setText("The reserved geometry variable '" + variable + "' cannot be deleted.");
+        updateButtons();
+        return;
+    }
+    if (QMessageBox::question(this, "Delete variable", "Delete variable '" + variable + "'?",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+
+    const auto database = database_;
+    std::vector<QVariant> original;
+    for (int col = 0; col < table_->columnCount(); ++col)
+        original.push_back(table_->item(row, col)->data(Qt::UserRole));
+    try {
+        sqlite3* raw = nullptr;
+        const int opened = sqlite3_open_v2(database.toUtf8().constData(), &raw, SQLITE_OPEN_READWRITE, nullptr);
+        std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> db(raw, sqlite3_close_v2);
+        if (opened != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db.get()));
+        sqlite3_busy_timeout(db.get(), 1000);
+        sqlite3_stmt* query = nullptr;
+        QStringList predicates;
+        for (const auto& column : columns_) predicates << quoteIdentifier(column) + " IS ?";
+        const auto sql = "DELETE FROM alglib_input WHERE " + predicates.join(" AND ");
+        const int prepared = sqlite3_prepare_v2(db.get(), sql.toUtf8().constData(), -1, &query, nullptr);
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(query, sqlite3_finalize);
+        if (prepared != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db.get()));
+        for (int i = 0; i < static_cast<int>(original.size()); ++i) bindValue(db.get(), statement.get(), i + 1, original[i]);
+        const int stepped = sqlite3_step(statement.get());
+        if (stepped != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db.get()));
+        if (sqlite3_changes(db.get()) != 1) throw std::runtime_error("The row changed in the database. Refresh before deleting.");
+        load(database);
+        if (saved) saved();
+    } catch (const std::exception& error) {
+        status_->setText("Cannot delete variable: " + QString::fromUtf8(error.what()));
+    }
 }
 
 void DatabaseTableTab::editRow(bool adding) {

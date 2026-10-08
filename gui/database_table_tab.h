@@ -21,6 +21,7 @@ public:
 private:
     ExperimentRowFilter* filter_ = nullptr;
     void editRow(bool adding);
+    void deleteRow();
     void updateButtons();
     bool editingEnabled_ = true;
     bool loaded_ = false;
@@ -30,5 +31,5 @@ private:
     QString tableName_;
     QLabel* status_;
     QTableWidget* table_;
-    QPushButton *refresh_, *add_, *modify_;
+    QPushButton *refresh_, *add_, *modify_, *remove_;
 };

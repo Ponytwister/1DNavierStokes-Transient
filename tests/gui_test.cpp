@@ -1005,6 +1005,38 @@ TEST(Gui, AlglibBrowseAddValidateAndModify)
     EXPECT_TRUE(widget<QLabel>(window, "alglib_inputStatus")->text().contains("Cannot load alglib_input"));
 }
 
+TEST(Gui, VariablesCanBeDeletedExceptReservedGeometryVariables)
+{
+    Inputs input;
+    input.execute("INSERT INTO alglib_input VALUES('width',1,0,2,1)");
+    input.execute("INSERT INTO alglib_input VALUES('left_edge',1,0,2,1)");
+    MainWindow window; input.choose(window); window.show();
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(5);
+    auto* table = widget<QTableWidget>(window, "alglib_inputTable");
+    auto* remove = widget<QPushButton>(window, "alglib_inputDeleteButton");
+    auto selectVariable = [&](const QString& name) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (table->item(row, 0)->text() == name) {
+                table->setCurrentCell(row, 0); table->selectRow(row); return;
+            }
+        }
+        ADD_FAILURE() << "Variable missing: " << name.toStdString();
+    };
+
+    selectVariable("width"); EXPECT_FALSE(remove->isEnabled());
+    selectVariable("left_edge"); EXPECT_FALSE(remove->isEnabled());
+    EXPECT_EQ(input.execute("SELECT count(*) FROM alglib_input WHERE VARIABLE IN ('width','left_edge')"), 2);
+
+    selectVariable("keq1"); ASSERT_TRUE(remove->isEnabled());
+    QTimer::singleShot(0, &window, [&] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        ASSERT_NE(box, nullptr); box->button(QMessageBox::Yes)->click();
+    });
+    remove->click();
+    EXPECT_EQ(input.execute("SELECT count(*) FROM alglib_input WHERE VARIABLE='keq1'"), 0);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM alglib_input WHERE VARIABLE IN ('width','left_edge')"), 2);
+}
+
 TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
 {
     Inputs input;
