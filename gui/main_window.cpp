@@ -4,6 +4,8 @@
 #include "controls_dialog.h"
 #include "setup_file.h"
 #include "report_tab.h"
+#include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -13,6 +15,8 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMenuBar>
+#include <QMetaObject>
+#include <QKeySequence>
 #include <QWidgetAction>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -99,6 +103,60 @@ MainWindow::MainWindow()
     makePath("&Output directory", "outputPath", output_, browseOutput_);
     connect(openSetup_, &QAction::triggered, this, [this] { openSetup(); });
     connect(saveSetup_, &QAction::triggered, this, [this] { saveSetup(); });
+
+    auto* edit = menuBar()->addMenu("&Edit");
+    auto addEditAction = [this, edit](const QString& label, QKeySequence::StandardKey key, const char* method) {
+        auto* action = edit->addAction(label);
+        action->setShortcut(QKeySequence(key));
+        connect(action, &QAction::triggered, this, [method] {
+            if (auto* focus = QApplication::focusWidget())
+                QMetaObject::invokeMethod(focus, method, Qt::DirectConnection);
+        });
+        return action;
+    };
+    addEditAction("Undo", QKeySequence::Undo, "undo");
+    addEditAction("Redo", QKeySequence::Redo, "redo");
+    edit->addSeparator();
+    addEditAction("Cut", QKeySequence::Cut, "cut");
+    addEditAction("Copy", QKeySequence::Copy, "copy");
+    addEditAction("Paste", QKeySequence::Paste, "paste");
+    edit->addSeparator();
+    addEditAction("Select All", QKeySequence::SelectAll, "selectAll");
+
+    auto* view = menuBar()->addMenu("&View");
+    auto* navigate = view->addMenu("Go to tab");
+    auto* tabActions = new QActionGroup(this);
+    tabActions->setExclusive(true);
+    for (int index = 0; index < tabs_->count(); ++index) {
+        auto* action = navigate->addAction(tabs_->tabText(index));
+        action->setCheckable(true);
+        action->setChecked(index == tabs_->currentIndex());
+        tabActions->addAction(action);
+        connect(action, &QAction::triggered, this, [this, index] { tabs_->setCurrentIndex(index); });
+    }
+    connect(tabs_, &QTabWidget::currentChanged, this, [this, tabActions](int index) {
+        if (index >= 0 && index < tabActions->actions().size())
+            tabActions->actions().at(index)->setChecked(true);
+    });
+    view->addSeparator();
+    auto* showLog = view->addAction("Show progress log");
+    showLog->setCheckable(true);
+    showLog->setChecked(true);
+    connect(showLog, &QAction::toggled, this, [this](bool visible) { log_->setVisible(visible); });
+
+    auto* help = menuBar()->addMenu("&Help");
+    auto* guide = help->addAction("Using Navier...");
+    connect(guide, &QAction::triggered, this, [this] {
+        QMessageBox::information(this, "Using Navier",
+            "Choose a database and output directory in File. Configure model controls and experiment data, then select Run and results and click Run. "
+            "Use the Report tab to prepare reports. Results and fitted inputs are written only when you choose an explicit save action.");
+    });
+    auto* about = help->addAction("About Navier");
+    connect(about, &QAction::triggered, this, [this] {
+        QMessageBox::about(this, "About Navier",
+            "<b>Navier — Transient Model</b><p>A transient 1D Navier–Stokes model and parameter fitting application.</p>");
+    });
+
     auto* note = new QLabel("Running may create solution records in the selected database. Results and fitted inputs are saved only when you choose to save.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* controls = new QHBoxLayout;
