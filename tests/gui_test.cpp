@@ -707,8 +707,11 @@ TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
                   "DEFAULT_NORMALIZATION,SPECIES,REACTIONS,ENTRANCE_FLOWRATE,EDGES,SPECIE_INLET_CONC_UNITS,"
                   "SPECIE_MODEL_CONC_UNITS,WIDTH FROM experiments WHERE NAME='uniform';"
                   "INSERT INTO experiments(NAME) VALUES('uniform-extra');"
-                  "INSERT INTO raw_profile SELECT 'second',WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,"
-                  "INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT FROM raw_profile WHERE NAME='uniform' LIMIT 1;"
+                  "INSERT INTO raw_profile(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,"
+                  "INTENSITY_ARRAY,INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,ENTRANCE_CONC,ENTRANCE_CONC_UNITS) "
+                  "SELECT 'second',WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,INTENSITY_ARRAY,"
+                  "INLET_COND_ID,LEFT_EDGE,WIDTH,OMIT,ENTRANCE_CONC,ENTRANCE_CONC_UNITS "
+                  "FROM raw_profile WHERE NAME='uniform' LIMIT 1;"
                   "INSERT INTO raw_profile(NAME) VALUES('uniform-extra'),(NULL)");
     const auto original = model_controls::load(input.database);
     MainWindow window; input.choose(window);
@@ -1302,8 +1305,12 @@ TEST(Gui, ChannelDimensionsValidateSaveConflictRollbackAndDiscard)
     QTimer::singleShot(0, [&] {
         auto* editor = window.findChild<QDialog*>("experimentsEditor"); ASSERT_NE(editor, nullptr);
         widget<QLineEdit>(*editor, "NAME")->setText("uniform");
+        // The existing profiles for uniform require four inlet flowrates. Keep the
+        // new row otherwise valid so this save reaches duplicate-name validation.
+        widget<QLineEdit>(*editor, "ENTRANCE_FLOWRATE")->setText("1 1 1 1");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
-        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("already exists"));
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("already exists"))
+            << widget<QLabel>(*editor, "referenceEditorStatus")->text().toStdString();
         widget<QLineEdit>(*editor, "NAME")->setText("new-experiment");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
         if (editor->isVisible()) { ADD_FAILURE(); editor->reject(); }
