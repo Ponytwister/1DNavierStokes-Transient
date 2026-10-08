@@ -79,18 +79,21 @@ union of `universal_solve_for` in the active Model controls, `PARAMETERS_TO_SOLV
 in selected experiments, and `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` in their
 non-omitted raw profiles. Uncheck the toggle to view all variables.
 For reaction parameters, either space-separated entry in `reactions.Ks` may be a
-number or an alias written as `#variable_name` (for example, `#kon1`). The alias
-must be selected by `universal_solve_for` or the experiment's
-`PARAMETERS_TO_SOLVE_FOR`, and it must have a row in the Variables table
-(`alglib_input`). The solver then uses that variable for the corresponding reaction
-rate slot. `reactions.COEFFICIENTS` and `reactions.EXPONENTS` accept the same alias
-form; prefix an alias with `-` to negate it, as in `-#p1`. Reusing an alias in
-multiple slots applies each slot's sign to the same solved value.
-The same `#variable_name` form is accepted by `raw_profile.ENTRANCE_CONC`,
+number or an alias such as `#kon1`. A value and alias can be paired as
+`23.7#kon1`. If the alias is selected by `universal_solve_for` or the experiment's
+`PARAMETERS_TO_SOLVE_FOR`, its Variables table row (`alglib_input`) supplies the
+solved value. If it is not selected, the numeric part is used as a fixed value.
+Alias-only entries still require a selected variable. `reactions.COEFFICIENTS` and
+`reactions.EXPONENTS` accept the same forms; prefix an alias with `-` to negate it,
+as in `-#p1` or `-23.7#p1`. Saving fitted parameters updates the numeric part and
+retains the alias. Reusing an alias in multiple slots applies each slot's sign to
+the same solved value.
+The same alias and paired-value forms are accepted by `raw_profile.ENTRANCE_CONC`,
 `species.QE`, `species.DIFFUSION_RATE`, and `species.PARTICLE_DIAMETER`.
 Raw-profile concentration aliases may be selected for that profile, its
 experiment, or globally; species aliases use the experiment or global
-solve-for sections. Each alias must have a row in `alglib_input`. Entrance
+solve-for sections. A selected alias must have a row in `alglib_input`. An
+unselected paired alias uses its numeric value as a fixed value. Entrance
 concentration values use `ENTRANCE_CONC_UNITS` (or the species model units when
 blank), diffusion values use the existing `DIFFUSION_RATE` units, and particle
 diameter values use the database field's nanometer units. Particle diffusion

@@ -149,7 +149,14 @@ MainWindow::MainWindow()
     connect(guide, &QAction::triggered, this, [this] {
         QMessageBox::information(this, "Using Navier",
             "Choose a database and output directory in File. Configure model controls and experiment data, then select Run and results and click Run. "
-            "Use the Report tab to prepare reports. Results and fitted inputs are written only when you choose an explicit save action.");
+            "Use the Report tab to prepare reports. Results and fitted inputs are written only when you choose an explicit save action.\n\n"
+            "Aliases link model values to variables selected for solving. Enter an alias such as #kon1 in a reaction, species, or raw-profile value field, "
+            "then select kon1 in the applicable solve-for section and provide its bounds in Variables. You can pair a numeric fallback with the alias, "
+            "for example 23.7#kon1. When kon1 is selected, the solver uses its variable value; when it is not selected, the model uses 23.7 as a fixed value. "
+            "Saving fitted parameters updates the numeric value and keeps the alias.\n\n"
+            "For reaction coefficients and exponents, a leading minus sign negates the alias. For example, -#p1 means negative p1, while -23.7#p1 "
+            "means negative p1 when selected and -23.7 when not selected. Alias-only entries such as -#p1 need the alias selected; the numeric part in "
+            "-23.7#p1 supplies the fallback when it is not selected.");
     });
     auto* about = help->addAction("About Navier");
     connect(about, &QAction::triggered, this, [this] {

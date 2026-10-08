@@ -142,6 +142,7 @@ struct specie_struct {
     //double difusion_beads; // m2/s From kB*T/(3*pi*visc*d) kB=1.380649×10−23 J⋅K−1
     double diameter;
     std::string diameter_alias;
+    std::string qe_alias;
     double particle_density;
     double molecular_weight;
     solvable QE;
@@ -213,6 +214,7 @@ struct experiment_struct {
     int INLET_COND_ID = 0;
     bool has_legacy_inlet_cond_id = false;
     bool has_entrance_conc_override = false;
+    bool entrance_conc_has_paired_value = false;
     double entrance_conc_override = 0.0;
     std::string entrance_conc_alias;
     std::string entrance_conc_units;
