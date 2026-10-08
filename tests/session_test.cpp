@@ -111,6 +111,7 @@ TEST(RunSession, InletLoaderOwnsZeroInitializedConcentrationBuffers)
     for (auto& experiment : p.experiments) {
         experiment.run = &run;
         experiment.INLET_COND_ID = 1;
+        experiment.has_legacy_inlet_cond_id = true;
         experiment.entrances.resize(1);
     }
     execute(session.database(), R"(
