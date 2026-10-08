@@ -50,7 +50,10 @@ model once (using initial values for any selected parameters); it no longer skip
 model evaluation. Profile coordinates now use the current width's scale before
 sampling, including on the first evaluation. Equations, units, boundary conditions,
 and parameter links are unchanged.
-The **File** menu contains setup actions and database/output path selection.
+The **File** menu contains **New database...** to create an empty experiment database,
+setup actions, and database/output path selection. New databases are created at a
+chosen path without replacing existing files; add model controls and experiment data
+before running the model.
 The Experiments, Reactions, Species, Variables (`alglib_input`), and Raw profiles
 (`raw_profile`) tables load into memory when a database is selected and remain
 there when switching tabs. Loading costs are paid on database selection; memory

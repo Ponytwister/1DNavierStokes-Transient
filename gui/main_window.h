@@ -31,6 +31,7 @@ private:
     void startRun();
     void saveSetup();
     void openSetup();
+    void createDatabase();
     void poll();
     void updateControls();
     void clearResult();
@@ -55,7 +56,7 @@ private:
     // Destroy/join pending work before destroying the session it borrows.
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
-    QAction *openSetup_, *saveSetup_;
+    QAction *newDatabase_, *openSetup_, *saveSetup_;
     QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_;
     QLabel *status_, *summary_, *resultDatabase_;
     std::optional<double> latestResidualSum_;

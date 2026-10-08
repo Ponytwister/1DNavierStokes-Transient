@@ -16,7 +16,6 @@ def create_database(destination):
             with database:
                 schema = Path(__file__).resolve().parents[1] / "schema/blank_database.sql"
                 database.executescript(schema.read_text(encoding="utf-8"))
-                database.execute("PRAGMA user_version = 1")
                 if database.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise RuntimeError("The created database failed SQLite integrity_check")
     except Exception:

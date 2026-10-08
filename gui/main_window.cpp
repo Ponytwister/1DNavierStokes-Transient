@@ -7,6 +7,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
@@ -25,6 +26,8 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <sqlite3.h>
+#include <stdexcept>
 
 using namespace tsensor_workflow;
 namespace {
@@ -85,6 +88,7 @@ MainWindow::MainWindow()
     auto font = title->font(); font.setPointSize(18); title->setFont(font);
     layout->addWidget(title);
     auto* file = menuBar()->addMenu("&File");
+    newDatabase_ = file->addAction("&New database..."); newDatabase_->setObjectName("newDatabaseAction");
     openSetup_ = file->addAction("&Open setup..."); openSetup_->setObjectName("openSetupAction");
     saveSetup_ = file->addAction("&Save setup..."); saveSetup_->setObjectName("saveSetupAction");
     file->addSeparator();
@@ -103,6 +107,7 @@ MainWindow::MainWindow()
     makePath("&Output directory", "outputPath", output_, browseOutput_);
     connect(openSetup_, &QAction::triggered, this, [this] { openSetup(); });
     connect(saveSetup_, &QAction::triggered, this, [this] { saveSetup(); });
+    connect(newDatabase_, &QAction::triggered, this, [this] { createDatabase(); });
 
     auto* edit = menuBar()->addMenu("&Edit");
     auto addEditAction = [this, edit](const QString& label, QKeySequence::StandardKey key, const char* method) {
@@ -343,6 +348,73 @@ void MainWindow::openSetup() {
     } catch (...) { reportFailure(std::current_exception()); }
 }
 
+void MainWindow::createDatabase() {
+    if (work_ != Work::idle || closing_) return;
+
+    QFileDialog dialog(this, "Create experiment database");
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilter("SQLite databases (*.db *.sqlite *.sqlite3);;All files (*)");
+    dialog.setDefaultSuffix("db");
+    dialog.setOption(QFileDialog::DontConfirmOverwrite);
+    dialog.selectFile("new-experiment.db");
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+
+    const auto filename = dialog.selectedFiles().front();
+    QFile schemaFile(":/schema/blank_database.sql");
+    if (!schemaFile.open(QIODevice::ReadOnly)) {
+        QMessageBox::critical(this, "Cannot create database", "The built-in database schema is unavailable.");
+        return;
+    }
+    const auto schema = schemaFile.readAll();
+    if (schemaFile.error() != QFileDevice::NoError) {
+        QMessageBox::critical(this, "Cannot create database", "The built-in database schema could not be read.");
+        return;
+    }
+
+    QFile databaseFile(filename);
+    if (!databaseFile.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        QMessageBox::warning(this, "Cannot create database",
+            "The destination could not be created. Choose a new path; existing files are never replaced.");
+        return;
+    }
+    databaseFile.close();
+
+    sqlite3* database = nullptr;
+    const auto encodedFilename = filename.toUtf8();
+    int rc = sqlite3_open_v2(encodedFilename.constData(), &database, SQLITE_OPEN_READWRITE, nullptr);
+    char* sqlError = nullptr;
+    if (rc == SQLITE_OK)
+        rc = sqlite3_exec(database, schema.constData(), nullptr, nullptr, &sqlError);
+
+    QString error;
+    if (rc != SQLITE_OK) {
+        error = sqlError ? QString::fromUtf8(sqlError)
+                         : QString::fromUtf8(database ? sqlite3_errmsg(database) : sqlite3_errstr(rc));
+    }
+    if (sqlError) sqlite3_free(sqlError);
+    if (database) {
+        const int closeResult = sqlite3_close_v2(database);
+        if (rc == SQLITE_OK && closeResult != SQLITE_OK) {
+            rc = closeResult;
+            error = "The database was created but could not be closed cleanly.";
+        }
+    }
+    if (rc != SQLITE_OK) {
+        QFile::remove(filename);
+        QMessageBox::critical(this, "Cannot create database", error);
+        return;
+    }
+
+    discardControlsEditor();
+    clearResult();
+    database_->setText(QDir::toNativeSeparators(QFileInfo(filename).absoluteFilePath()));
+    tabs_->setCurrentIndex(0);
+    setStatus("Empty experiment database created: " + filename);
+    QMessageBox::information(this, "Database created",
+        "The empty database is ready. Add experiment controls and input data before running the model.");
+}
+
 void MainWindow::clearResult()
 {
     reportPage_->clearGenerated();
@@ -355,6 +427,7 @@ void MainWindow::clearResult()
 void MainWindow::updateControls()
 {
     const bool idle = work_ == Work::idle && !closing_;
+    newDatabase_->setEnabled(idle);
     openSetup_->setEnabled(idle);
     saveSetup_->setEnabled(idle && !database_->text().trimmed().isEmpty() && !output_->text().trimmed().isEmpty());
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);

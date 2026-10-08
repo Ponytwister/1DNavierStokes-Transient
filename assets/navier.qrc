@@ -2,4 +2,7 @@
   <qresource prefix="/icons">
     <file>navier.ico</file>
   </qresource>
+  <qresource prefix="/schema">
+    <file alias="blank_database.sql">../schema/blank_database.sql</file>
+  </qresource>
 </RCC>

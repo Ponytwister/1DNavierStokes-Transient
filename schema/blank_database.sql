@@ -152,3 +152,5 @@ CREATE TABLE model_profile (
     CONSTRAINT model_profile_solutions_FK FOREIGN KEY (SOLUTION_ID)
         REFERENCES solutions(SOLUTION_ID) ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+PRAGMA user_version = 1;
