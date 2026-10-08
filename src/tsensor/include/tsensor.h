@@ -137,9 +137,11 @@ struct report {
 
 struct specie_struct {
     double diffusion_rate;
+    std::string diffusion_alias;
     //double difusion_dye; // m2/s From 4.9 × 10−6 cm2 s−1 The diffusion coefficient of fluorescein in water at 21.5°C, as calculated from the Wilke-Chang correlation
     //double difusion_beads; // m2/s From kB*T/(3*pi*visc*d) kB=1.380649×10−23 J⋅K−1
     double diameter;
+    std::string diameter_alias;
     double particle_density;
     double molecular_weight;
     solvable QE;
@@ -197,7 +199,7 @@ struct experiment_run_struct : channel_dimensions {
     std::vector<double> ENTRANCE_FLOWRATE;
     std::vector<specie_struct> species;
     std::vector<reaction_struct> reactions;
-    std::map<std::string, solvable> reaction_variables;
+    std::map<std::string, solvable> alias_variables;
     std::vector<std::string> solve_for;
 };
 
@@ -212,6 +214,7 @@ struct experiment_struct {
     bool has_legacy_inlet_cond_id = false;
     bool has_entrance_conc_override = false;
     double entrance_conc_override = 0.0;
+    std::string entrance_conc_alias;
     std::string entrance_conc_units;
     struct entrance_concentration_override {
         int entrance_number;

@@ -113,7 +113,7 @@ TEST(Workflow, ReactionKsAliasesResolveThroughSolveForVariables) {
     near(p.initial_values_alglib.front(), 0.75);
     auto& reaction = p.experiment_runs.front().reactions.front();
     EXPECT_EQ(reaction.k_alias[0], "association_rate");
-    EXPECT_EQ(p.experiment_runs.front().reaction_variables.at("association_rate").source, &p.solvables.front());
+    EXPECT_EQ(p.experiment_runs.front().alias_variables.at("association_rate").source, &p.solvables.front());
     near(reaction.k[0].value(), 0.75);
 }
 
@@ -185,6 +185,84 @@ TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
     // 5 umol of a 100 g/mol molecule is 0.0005 mg/ml; this replaces ID 1's 0.002 mg/ml.
     EXPECT_NEAR(profile->entrances.front().CONC.at(fitc), 0.0005,
                 1e-12 + 1e-10 * 0.0005);
+}
+
+TEST(Workflow, RawProfileEntranceConcentrationCanUseSolveForAlias) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "ALTER TABLE raw_profile ADD COLUMN INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT;"
+        "UPDATE model_controls SET value='keq1' WHERE criterion='universal_solve_for';"
+        "UPDATE raw_profile SET ENTRANCE_CONC='#inlet_fit', ENTRANCE_CONC_UNITS='umol', "
+        "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='inlet_fit' WHERE WT_PERCENT='1.0';"
+        "INSERT INTO alglib_input VALUES('inlet_fit',5,0,10,1)");
+    migrate_channels(session.database());
+    session.load_inputs();
+
+    auto& p = session.parameters();
+    auto profile = std::find_if(p.experiments.begin(), p.experiments.end(),
+        [](const experiment_struct& item) { return item.second_name == "1.0"; });
+    ASSERT_NE(profile, p.experiments.end());
+    auto* fitc = &profile->run->species.at(profile->run->FITC);
+    ASSERT_TRUE(profile->entrances.front().CONC.contains(fitc));
+    near(profile->entrances.front().CONC.at(fitc), 0.0005);
+    near(profile->run->dye_conc_mgml, 0.002); // Other profiles retain the legacy inlet concentration.
+
+    std::size_t alias_index = p.solvables.size();
+    for (std::size_t i = 0; i < p.solvables.size(); ++i)
+        if (p.solvables[i].name == "inlet_fit") alias_index = i;
+    ASSERT_LT(alias_index, p.solvables.size());
+    p.row_count = 0;
+    alglib::real_1d_array controls, residuals;
+    controls.setlength(static_cast<alglib::ae_int_t>(p.solvables.size()));
+    for (std::size_t i = 0; i < p.solvables.size(); ++i) controls[static_cast<alglib::ae_int_t>(i)] = p.initial_values_alglib[i];
+    controls[static_cast<alglib::ae_int_t>(alias_index)] = 10;
+    alglib_solver(controls, residuals, &p);
+    near(profile->entrances.front().CONC.at(fitc), 0.001);
+    near(profile->run->dye_conc_mgml, 0.002);
+}
+
+TEST(Workflow, SpeciesPropertiesCanUseSolveForAliases) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE model_controls SET value='qe_fit diffusion_fit diameter_fit' WHERE criterion='universal_solve_for';"
+        "UPDATE species SET QE='#qe_fit' WHERE SPECIES_NAME='40nm_Bound_Dye_1';"
+        "UPDATE species SET DIFFUSION_RATE='#diffusion_fit' WHERE SPECIES_NAME='FITC';"
+        "UPDATE species SET PARTICLE_DIAMETER='#diameter_fit' WHERE SPECIES_NAME='PS_40nm';"
+        "INSERT INTO alglib_input VALUES('qe_fit',0.4,0,1,1);"
+        "INSERT INTO alglib_input VALUES('diffusion_fit',5e-10,0,1e-8,1);"
+        "INSERT INTO alglib_input VALUES('diameter_fit',60,1,100,1)");
+    session.load_inputs();
+
+    auto& p = session.parameters();
+    auto& run = p.experiment_runs.front();
+    auto& bound = run.species.at(specie_index(&run, "40nm_Bound_Dye_1"));
+    auto& fitc = run.species.at(specie_index(&run, "FITC"));
+    auto& beads = run.species.at(specie_index(&run, "PS_40nm"));
+    near(bound.QE.value(), 0.4);
+    near(fitc.diffusion_rate, 5e-10);
+    near(beads.diameter, 60e-9);
+    const double initial_particle_diffusion = 1.380649e-23 * run.temperature /
+        (3.0 * M_PI * run.visc * 60e-9);
+    near(beads.diffusion_rate, initial_particle_diffusion);
+
+    p.row_count = 0;
+    alglib::real_1d_array controls, residuals;
+    controls.setlength(static_cast<alglib::ae_int_t>(p.solvables.size()));
+    for (std::size_t i = 0; i < p.solvables.size(); ++i) controls[static_cast<alglib::ae_int_t>(i)] = p.initial_values_alglib[i];
+    for (std::size_t i = 0; i < p.solvables.size(); ++i) {
+        if (p.solvables[i].name == "qe_fit") controls[static_cast<alglib::ae_int_t>(i)] = 0.8;
+        if (p.solvables[i].name == "diffusion_fit") controls[static_cast<alglib::ae_int_t>(i)] = 7e-10;
+        if (p.solvables[i].name == "diameter_fit") controls[static_cast<alglib::ae_int_t>(i)] = 80;
+    }
+    alglib_solver(controls, residuals, &p);
+    near(bound.QE.value(), 0.8);
+    near(fitc.diffusion_rate, 7e-10);
+    near(beads.diameter, 80e-9);
+    const double updated_particle_diffusion = 1.380649e-23 * run.temperature /
+        (3.0 * M_PI * run.visc * 80e-9);
+    near(beads.diffusion_rate, updated_particle_diffusion);
 }
 
 TEST(Workflow, OmittedProfileParametersNeverReachGuiEventsOrSolver) {

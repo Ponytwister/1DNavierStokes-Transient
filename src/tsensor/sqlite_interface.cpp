@@ -690,21 +690,44 @@ specie_db_callback(void *data, int count, char **argv, char **columnNames)
                 specie_ptr->type = 2;
             }
         } else if (criterion == "DIFFUSION_RATE") {
-            if (!value.empty()) {
+            if (!value.empty() && value.front() == '#') {
+                specie_ptr->diffusion_alias = value.substr(1);
+                if (specie_ptr->diffusion_alias.empty()) {
+                    throw std::runtime_error("Species diffusion alias must include a variable name for '" + specie_ptr->name + "'");
+                }
+                run_ptr->alias_variables.try_emplace(specie_ptr->diffusion_alias);
+            } else if (!value.empty()) {
+                specie_ptr->diffusion_alias.clear();
                 specie_ptr->diffusion_rate = std::stod(value);
             } else {
+                specie_ptr->diffusion_alias.clear();
                 specie_ptr->diffusion_rate = 0.0d;
             }
         } else if (criterion == "QE") {
-            if (!value.empty()) {
+            if (!value.empty() && value.front() == '#') {
+                const std::string alias = value.substr(1);
+                if (alias.empty()) {
+                    throw std::runtime_error("Species QE alias must include a variable name for '" + specie_ptr->name + "'");
+                }
+                auto& alias_variable = run_ptr->alias_variables.try_emplace(alias).first->second;
+                specie_ptr->QE = solvable(&alias_variable, alias);
+            } else if (!value.empty()) {
                 specie_ptr->QE = solvable(std::stod(value));
             } else {
                 specie_ptr->QE = solvable(1.0d);
             }
         } else if (criterion == "PARTICLE_DIAMETER") {
-            if (!value.empty()) {
+            if (!value.empty() && value.front() == '#') {
+                specie_ptr->diameter_alias = value.substr(1);
+                if (specie_ptr->diameter_alias.empty()) {
+                    throw std::runtime_error("Species diameter alias must include a variable name for '" + specie_ptr->name + "'");
+                }
+                run_ptr->alias_variables.try_emplace(specie_ptr->diameter_alias);
+            } else if (!value.empty()) {
+                specie_ptr->diameter_alias.clear();
                 specie_ptr->diameter = std::stod(value) * 1.0e-9d;
             } else {
+                specie_ptr->diameter_alias.clear();
                 specie_ptr->diameter = 0.0d;
             }
         } else if (criterion == "PARTICLE_DENSITY") {
@@ -782,7 +805,7 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
                     if (alias.empty()) {
                         throw std::runtime_error("Reaction coefficient alias must include a variable name in reaction '" + reaction.name + "'");
                     }
-                    run_ptr->reaction_variables.try_emplace(alias);
+                    run_ptr->alias_variables.try_emplace(alias);
                     reaction.coef_alias[specie_ptr] = {alias, sign};
                     auto& coefficient = reaction.coef.try_emplace(specie_ptr).first->second;
                     coefficient.value() = 0.0;
@@ -809,7 +832,7 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
                         throw std::runtime_error("Reaction Ks alias must include a variable name in reaction '" + reaction.name + "'");
                     }
                     reaction.k_alias[iter] = alias;
-                    run_ptr->reaction_variables.try_emplace(alias);
+                    run_ptr->alias_variables.try_emplace(alias);
                 } else {
                     reaction.k_alias[iter].clear();
                     reaction.k[iter].value() = std::stod(s);
@@ -837,7 +860,7 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
                     if (alias.empty()) {
                         throw std::runtime_error("Reaction exponent alias must include a variable name in reaction '" + reaction.name + "'");
                     }
-                    run_ptr->reaction_variables.try_emplace(alias);
+                    run_ptr->alias_variables.try_emplace(alias);
                     reaction.exp_alias[specie_ptr] = {alias, sign};
                     auto& exponent = reaction.exp.try_emplace(specie_ptr).first->second;
                     exponent.value() = 0.0;
@@ -860,19 +883,104 @@ reaction_db_callback(void *data, int count, char **argv, char **columnNames)
 }
 
 static void
-synchronize_reaction_aliases(experiment_run_struct& run)
+synchronize_run_aliases(parameters_t& p, experiment_run_struct& run)
 {
     for (auto& reaction : run.reactions) {
         for (std::size_t parameter = 0; parameter < std::size(reaction.k_alias); ++parameter) {
             if (!reaction.k_alias[parameter].empty()) {
-                reaction.k[parameter].value() = run.reaction_variables.at(reaction.k_alias[parameter]).value();
+                reaction.k[parameter].value() = run.alias_variables.at(reaction.k_alias[parameter]).value();
             }
         }
         for (const auto& [species, alias] : reaction.coef_alias) {
-            reaction.coef.at(species).value() = alias.sign * run.reaction_variables.at(alias.name).value();
+            reaction.coef.at(species).value() = alias.sign * run.alias_variables.at(alias.name).value();
         }
         for (const auto& [species, alias] : reaction.exp_alias) {
-            reaction.exp.at(species).value() = alias.sign * run.reaction_variables.at(alias.name).value();
+            reaction.exp.at(species).value() = alias.sign * run.alias_variables.at(alias.name).value();
+        }
+    }
+    for (auto& species : run.species) {
+        if (!species.diameter_alias.empty()) {
+            species.diameter = run.alias_variables.at(species.diameter_alias).value() * 1.0e-9d;
+        }
+        if (species.type == 2 && (!std::isfinite(species.diameter) || species.diameter <= 0.0d ||
+                                  !std::isfinite(species.particle_density) || species.particle_density <= 0.0d)) {
+            throw std::runtime_error("Particle diameter or density undefined for species '" + species.name + "'");
+        }
+        if (!species.diffusion_alias.empty()) {
+            species.diffusion_rate = run.alias_variables.at(species.diffusion_alias).value();
+        } else if (species.type == 2) {
+            species.diffusion_rate = 1.380649e-23d * run.temperature / (3.0d * M_PI * run.visc * species.diameter);
+        }
+        if (!std::isfinite(species.diffusion_rate) || species.diffusion_rate < 0.0d) {
+            throw std::runtime_error("Species diffusion rate must be finite and non-negative for '" + species.name + "'");
+        }
+        species.r = species.diffusion_rate * run.dt / (run.W * run.W) * p.X * p.X;
+    }
+}
+
+static solvable*
+find_profile_alias_parameter(parameters_t& p, const experiment_struct& experiment, const std::string& alias)
+{
+    const std::string profile_source = experiment.run->name + "_" + experiment.second_name;
+    for (const std::string& source : {profile_source, experiment.run->name, std::string("global")}) {
+        for (auto& parameter : p.solvables) {
+            if (parameter.name == alias && parameter.source_name == source) return &parameter;
+        }
+    }
+    return nullptr;
+}
+
+static double
+profile_alias_value(parameters_t& p, const experiment_struct& experiment, bool use_initial_values)
+{
+    auto* parameter = find_profile_alias_parameter(p, experiment, experiment.entrance_conc_alias);
+    if (!parameter) {
+        throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + experiment.entrance_conc_alias +
+                                 "' must be selected for its profile, experiment, or globally");
+    }
+    if (!use_initial_values) return parameter->value();
+    for (std::size_t i = 0; i < p.solvables.size(); ++i) {
+        if (&p.solvables[i] == parameter) return p.initial_values_alglib.at(i);
+    }
+    throw std::runtime_error("Raw profile ENTRANCE_CONC alias parameter was not found in the solver inputs");
+}
+
+static void
+synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_values)
+{
+    for (auto& experiment : p.experiments) {
+        if (experiment.omit || experiment.entrance_conc_alias.empty()) continue;
+        auto* run = experiment.run;
+        if (run->FITC < 0 || run->FITC >= static_cast<ptrdiff_t>(run->species.size())) {
+            throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
+        }
+        if (experiment.entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
+        const double concentration = profile_alias_value(p, experiment, use_initial_values);
+        if (!std::isfinite(concentration) || concentration < 0.0)
+            throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+        specie_struct* inlet_species = &run->species.at(run->FITC);
+        const std::string source_units = experiment.entrance_conc_units.empty()
+            ? inlet_species->model_units : experiment.entrance_conc_units;
+        const double input_concentration = concentration *
+            unit_conversion(run, run->FITC, source_units, inlet_species->input_units);
+        if (!std::isfinite(input_concentration))
+            throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+        experiment.entrances.front().CONC[inlet_species] = input_concentration;
+    }
+
+    for (auto& run : p.experiment_runs) {
+        run.dye_conc_mgml = 0.0;
+        for (const auto& experiment : p.experiments) {
+            if (experiment.run != &run || run.FITC < 0 || run.FITC >= static_cast<ptrdiff_t>(run.species.size())) continue;
+            auto* fitc = &run.species.at(run.FITC);
+            for (const auto& entrance : experiment.entrances) {
+                const auto concentration = entrance.CONC.find(fitc);
+                if (concentration != entrance.CONC.end()) run.dye_conc_mgml = std::max(run.dye_conc_mgml, concentration->second);
+            }
+        }
+        if (run.FITC >= 0 && run.FITC < static_cast<ptrdiff_t>(run.species.size())) {
+            run.dye_conc = run.dye_conc_mgml * unit_conversion(&run, run.FITC,
+                run.species.at(run.FITC).input_units, run.species.at(run.FITC).model_units);
         }
     }
 }
@@ -908,14 +1016,14 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
         }
         execute_sql(p, db, sqltext.c_str(), reaction_db_callback, errMsg.out());
 
-        for (const auto& [alias, variable] : run_ptr->reaction_variables) {
+        for (const auto& [alias, variable] : run_ptr->alias_variables) {
             if (alias == "left_edge" || alias == "width") {
-                throw std::runtime_error("Reaction alias '" + alias + "' conflicts with a reserved geometry variable");
+                throw std::runtime_error("Model alias '" + alias + "' conflicts with a reserved geometry variable");
             }
             const bool globally_solved = std::find(p.global_solve_for.begin(), p.global_solve_for.end(), alias) != p.global_solve_for.end();
             const bool locally_solved = std::find(run_ptr->solve_for.begin(), run_ptr->solve_for.end(), alias) != run_ptr->solve_for.end();
             if (!globally_solved && !locally_solved) {
-                throw std::runtime_error("Reaction alias '" + alias + "' must be listed in a global or experiment solve-for section");
+                throw std::runtime_error("Model alias '" + alias + "' must be listed in a global or experiment solve-for section");
             }
         }
 
@@ -934,7 +1042,9 @@ read_specie_and_reaction_values_from_db(parameters_t& p, sqlite3* db) //reading 
         for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
             add_report(p, 0, "specie: " + std::to_string(specie));
             specie_struct* specie_ptr = &run_ptr->species.at(specie);
-            if (specie_ptr->type == 2 && specie_ptr->diameter != 0.0d && specie_ptr->particle_density != 0.0d) {
+            if (specie_ptr->type == 2 && !specie_ptr->diameter_alias.empty()) {
+                // Diameter and its derived diffusion rate resolve after Variables load.
+            } else if (specie_ptr->type == 2 && specie_ptr->diameter != 0.0d && specie_ptr->particle_density != 0.0d) {
                 specie_ptr->diffusion_rate = 1.380649e-23d * run_ptr->temperature / (3.0d * M_PI * run_ptr->visc * specie_ptr->diameter);
             } else if (specie_ptr->type == 1) {
                 // Skip. pulled dirrectly from db. 
@@ -1078,13 +1188,22 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             pop_report(p, 0);
         } else if (criterion == "ENTRANCE_CONC") {
             if (!value.empty()) {
-                std::size_t parsed = 0;
-                const double concentration = std::stod(raw_value, &parsed);
-                if (raw_value.find_first_not_of(" \t\r\n", parsed) == std::string::npos) {
-                    if (!std::isfinite(concentration) || concentration < 0.0)
-                        throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
-                    exp_ptr->entrance_conc_override = concentration;
+                if (value.front() == '#') {
+                    exp_ptr->entrance_conc_alias = value.substr(1);
+                    if (exp_ptr->entrance_conc_alias.empty()) {
+                        throw std::runtime_error("Raw profile ENTRANCE_CONC alias must include a variable name");
+                    }
                     exp_ptr->has_entrance_conc_override = true;
+                } else {
+                    exp_ptr->entrance_conc_alias.clear();
+                    std::size_t parsed = 0;
+                    const double concentration = std::stod(raw_value, &parsed);
+                    if (raw_value.find_first_not_of(" \t\r\n", parsed) == std::string::npos) {
+                        if (!std::isfinite(concentration) || concentration < 0.0)
+                            throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+                        exp_ptr->entrance_conc_override = concentration;
+                        exp_ptr->has_entrance_conc_override = true;
+                    }
                 }
             }
         } else if (criterion == "ENTRANCE_CONC_UNITS") {
@@ -1167,6 +1286,14 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     const char* sql = sqltext.c_str();
     execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
+
+    for (const auto& experiment : p.experiments) {
+        if (experiment.omit || experiment.entrance_conc_alias.empty()) continue;
+        if (!find_profile_alias_parameter(p, experiment, experiment.entrance_conc_alias)) {
+            throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + experiment.entrance_conc_alias +
+                                     "' must be selected for its profile, experiment, or globally");
+        }
+    }
 
     sqlite3_stmt* table_check_raw = nullptr;
     int table_check_rc = sqlite3_prepare_v2(db,
@@ -1337,7 +1464,7 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
                     throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
                 exp_ptr->entrances.at(override.entrance_number - 1).CONC[&run_ptr->species.at(specie)] = input_concentration;
             }
-        } else if (exp_ptr->has_entrance_conc_override) {
+        } else if (exp_ptr->has_entrance_conc_override && exp_ptr->entrance_conc_alias.empty()) {
             if (run_ptr->FITC < 0 || run_ptr->FITC >= static_cast<ptrdiff_t>(run_ptr->species.size()))
                 throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
             if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
@@ -1599,8 +1726,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     p.up_bound.resize(p.solvables.size());
     if (p.solvables.empty()) {
         for (const auto& run : p.experiment_runs) {
-            if (!run.reaction_variables.empty()) {
-                throw std::runtime_error("Reaction alias '" + run.reaction_variables.begin()->first + "' must be listed in a solve-for section");
+            if (!run.alias_variables.empty()) {
+                throw std::runtime_error("Model alias '" + run.alias_variables.begin()->first + "' must be listed in a solve-for section");
             }
         }
         return;
@@ -1621,9 +1748,9 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     execute_sql(p, db, sqltext.c_str(), alglib_input_db_callback, errMsg.out());
 
     for (const auto& run : p.experiment_runs) {
-        for (const auto& [alias, variable] : run.reaction_variables) {
+        for (const auto& [alias, variable] : run.alias_variables) {
             if (!p.initial_values_alglib_map.contains(alias)) {
-                throw std::runtime_error("Reaction alias '" + alias + "' is missing from the Variables table or has no solve-for bounds");
+                throw std::runtime_error("Model alias '" + alias + "' is missing from the Variables table or has no solve-for bounds");
             }
         }
     }
@@ -1631,10 +1758,10 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
     
     for (int i = 0; i < p.solvables.size(); i++) {
         auto& s = p.solvables.at(i);
-        const bool reaction_alias = std::any_of(p.experiment_runs.begin(), p.experiment_runs.end(), [&](const auto& run) {
-            return run.reaction_variables.contains(s.name);
+        const bool model_alias = std::any_of(p.experiment_runs.begin(), p.experiment_runs.end(), [&](const auto& run) {
+            return run.alias_variables.contains(s.name);
         });
-        if (reaction_alias) {
+        if (model_alias) {
             p.initial_values_alglib[i] = p.initial_values_alglib_map.at(s.name);
             s.value() = p.initial_values_alglib[i];
         } else if ((p.use_alglib_init_values || s.source_name == "global") && !s.param_init) {
@@ -1649,7 +1776,8 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
 
     }
 
-    for (auto& run : p.experiment_runs) synchronize_reaction_aliases(run);
+    for (auto& run : p.experiment_runs) synchronize_run_aliases(p, run);
+    synchronize_profile_entrance_concentrations(p, true);
 }
 
 void 
@@ -1998,7 +2126,7 @@ solvable&
 variable_location(const std::string& variable_name, experiment_run_struct* run_ptr) {
     if (variable_name == "left_edge") {return run_ptr->left_edge;}
     if (variable_name == "width") {return run_ptr->width;}
-    if (run_ptr->reaction_variables.contains(variable_name)) return run_ptr->reaction_variables.at(variable_name);
+    if (run_ptr->alias_variables.contains(variable_name)) return run_ptr->alias_variables.at(variable_name);
     if (variable_name == "FITC_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "FITC")));}
     if (variable_name == "bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "PS_40nm", "PS_20nm")));}
     if (variable_name == "bound_bead_exp") {return run_ptr->reactions.at(reaction_index(run_ptr, "FITC_40nm_1", "FITC_20nm_1")).exp.at(&run_ptr->species.at(specie_index(run_ptr, "40nm_Bound_Dye_1", "20nm_Bound_Dye_1")));}
@@ -2590,7 +2718,8 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             auto& s = p.solvables.at(i);
             s.value() = control_parameters[i];
         }
-        for (auto& run : p.experiment_runs) synchronize_reaction_aliases(run);
+        for (auto& run : p.experiment_runs) synchronize_run_aliases(p, run);
+        synchronize_profile_entrance_concentrations(p, false);
         for (int run = 0; run < p.experiment_runs.size(); run++) {
             experiment_run_struct* run_ptr = &p.experiment_runs.at(run);
             for (int i = 0; i < run_ptr->reactions.size(); i++) {
