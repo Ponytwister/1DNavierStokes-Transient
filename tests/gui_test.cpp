@@ -1124,12 +1124,12 @@ TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
         EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("Unknown or ambiguous species"));
         widget<QLineEdit>(*editor, "SPECIES")->setText("FITC PS_40nm");
         widget<QLineEdit>(*editor, "COEFFICIENTS")->setText("#coef_fit -#coef_fit");
-        widget<QLineEdit>(*editor, "Ks")->setText("#rate_fit 1");
+        widget<QLineEdit>(*editor, "Ks")->setText("6.211091e-1#rate_fit 3.886943e1");
         widget<QLineEdit>(*editor, "EXPONENTS")->setText("#exp_fit 1");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
     });
     add->click();
-    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction' AND COEFFICIENTS='#coef_fit -#coef_fit' AND Ks='#rate_fit 1' AND EXPONENTS='#exp_fit 1'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction' AND COEFFICIENTS='#coef_fit -#coef_fit' AND Ks='6.211091e-1#rate_fit 3.886943e1' AND EXPONENTS='#exp_fit 1'"), 1);
     widget<QCheckBox>(window, "reactionsSelectedOnly")->setChecked(false);
     auto* table = widget<QTableWidget>(window, "reactionsTable");
     for (int row = 0; row < table->rowCount(); ++row)

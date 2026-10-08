@@ -226,11 +226,20 @@ void bindValue(sqlite3* db, sqlite3_stmt* query, int index, const QVariant& valu
     if (rc != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
 }
 bool aliasToken(const QString& token, bool allowSign, QString& alias, bool& attempted) {
-    attempted = token.startsWith('#') || (allowSign && token.startsWith("-#"));
+    const int marker = token.indexOf('#');
+    attempted = marker >= 0;
     if (!attempted) return false;
-    alias = token.startsWith("-#") ? token.mid(2) : token.mid(1);
+    alias = token.mid(marker + 1);
     if (alias.isEmpty() || alias.contains(QRegularExpression("\\s")))
         throw std::invalid_argument("Aliases must use #variable_name with no spaces.");
+    const QString numeric = token.left(marker);
+    if (numeric == "-" && allowSign) return true;
+    if (!numeric.isEmpty()) {
+        bool ok = false;
+        const double number = numeric.toDouble(&ok);
+        if (!ok || !std::isfinite(number))
+            throw std::invalid_argument("Alias fallback values must be finite numbers.");
+    }
     return true;
 }
 }
