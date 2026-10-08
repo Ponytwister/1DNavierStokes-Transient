@@ -30,7 +30,28 @@ set_source_files_properties(${PROJECT_BINARY_DIR}/navier.rc PROPERTIES
 set_target_properties(NavierGui PROPERTIES AUTORCC ON)
 target_link_libraries(NavierGui PRIVATE navier_gui)
 
+add_executable(navier_shortcut ../tools/create_shortcut.cpp)
+target_link_libraries(navier_shortcut PRIVATE ole32 uuid)
+target_link_options(navier_shortcut PRIVATE -municode)
+add_custom_target(update_root_shortcut ALL
+    COMMAND "$<TARGET_FILE:navier_shortcut>"
+        "${PROJECT_SOURCE_DIR}/Navier.lnk"
+        "${PROJECT_SOURCE_DIR}/out/desktop/bin/NavierGui.exe"
+        "out/desktop/bin/NavierGui.exe"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    DEPENDS NavierGui navier_shortcut
+    VERBATIM)
+
 include(${PROJECT_SOURCE_DIR}/cmake/PackageGui.cmake)
+
+add_custom_target(deploy_desktop
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "PATH=${navier_qt_bin};${navier_compiler_bin};$ENV{PATH}"
+        "${CMAKE_COMMAND}" --install "${PROJECT_BINARY_DIR}"
+            --prefix "${PROJECT_SOURCE_DIR}/out/desktop" --config "$<CONFIG>"
+    DEPENDS NavierGui navier_shortcut
+    COMMENT "Deploying NavierGui to out/desktop"
+    VERBATIM)
 
 if(BUILD_TESTING)
     add_test(NAME Application.GuiStartup COMMAND NavierGui --smoke-test)

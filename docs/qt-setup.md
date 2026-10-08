@@ -228,6 +228,21 @@ licenses/notices and satisfy the chosen license's source and replacement/relinki
 requirements. Record the actual distributed Qt components and their third-party
 notices when packaging. Static linking is not part of this kit decision.
 
+### Local desktop deployment
+
+For an installed copy in the repository's ignored `out/desktop` directory,
+build and deploy with:
+
+```powershell
+cmake --preset qt-mingw-release
+cmake --build --preset qt-mingw-release --target deploy_desktop --parallel 2
+```
+
+The deploy target installs the GUI and runtime files to `out/desktop`, writes a
+`Navier.lnk` shortcut there, and refreshes the root `Navier.lnk` to launch that
+deployment. A regular Qt GUI build also refreshes the root shortcut. The two
+shortcuts are generated locally and remain outside the portable ZIP.
+
 ## Portable Windows package
 
 From the repository root, build the Release ZIP with the pinned kit:

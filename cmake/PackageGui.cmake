@@ -22,3 +22,33 @@ get_target_property(navier_qt_qmake Qt6::qmake IMPORTED_LOCATION)
 get_filename_component(navier_qt_bin "${navier_qt_qmake}" DIRECTORY)
 install(DIRECTORY "${navier_qt_bin}/../sbom/" DESTINATION notices/qt-sbom)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/portable-package.md" DESTINATION . RENAME README.md)
+
+# Keep the portable ZIP free of this machine-local shortcut. The local desktop
+# deployment gets its own relative shortcut and refreshes the ignored root link.
+install(CODE "
+set(navier_shortcut_tool \"$<TARGET_FILE:navier_shortcut>\")
+set(navier_source_dir \"${PROJECT_SOURCE_DIR}\")
+set(navier_install_root \"\${CMAKE_INSTALL_PREFIX}\")
+file(REAL_PATH \"\${navier_install_root}\" navier_install_real)
+file(REAL_PATH \"\${navier_source_dir}/out/desktop\" navier_desktop_real)
+string(TOLOWER \"\${navier_install_real}\" navier_install_lower)
+string(TOLOWER \"\${navier_desktop_real}\" navier_desktop_lower)
+if(navier_install_lower STREQUAL navier_desktop_lower)
+    execute_process(
+        COMMAND \"\${navier_shortcut_tool}\" \"\${navier_install_root}/Navier.lnk\"
+            \"\${navier_install_root}/bin/NavierGui.exe\" \"bin/NavierGui.exe\"
+        WORKING_DIRECTORY \"\${navier_install_root}\"
+        RESULT_VARIABLE navier_deployed_shortcut_result)
+    if(NOT navier_deployed_shortcut_result EQUAL 0)
+        message(FATAL_ERROR \"Failed to create the deployed Navier shortcut\")
+    endif()
+    execute_process(
+        COMMAND \"\${navier_shortcut_tool}\" \"\${navier_source_dir}/Navier.lnk\"
+            \"\${navier_install_root}/bin/NavierGui.exe\" \"out/desktop/bin/NavierGui.exe\"
+        WORKING_DIRECTORY \"\${navier_source_dir}\"
+        RESULT_VARIABLE navier_root_shortcut_result)
+    if(NOT navier_root_shortcut_result EQUAL 0)
+        message(FATAL_ERROR \"Failed to refresh the root Navier shortcut\")
+    endif()
+endif()
+")
