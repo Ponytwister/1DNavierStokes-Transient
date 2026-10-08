@@ -76,8 +76,8 @@ QString help(const QString& name) {
     if (name == "experiment_name") return "Select one or more experiments from the database.";
     if (name == "universal_solve_for") return "Select global parameters to solve for. No selections means NULL; parameter links are unchanged.";
     if (name == "convergence_epsx") return "Numeric tolerance strictly greater than 0 and less than 1e-3. Scientific notation is accepted.";
-    if (name == "debug_level") return "Integer from 0 to 6; larger values suppress more messages.";
-    if (name == "run_solver") return "true enables parameter fitting; false evaluates the model without fitting.";
+    if (name == "debug_level") return "Choose a message threshold from 0 (most detail) to 6 (least). Level 0 includes row-by-row internals; level 1 hides those details; levels 2–3 show progressively less setup/progress information. The current code emits no level 2 messages, and levels 4–6 currently suppress all progress messages.";
+    if (name == "run_solver") return "true runs ALGLIB parameter fitting when at least one parameter is selected to solve for; with no selected parameters it evaluates once. false skips fitting but still evaluates the model once at the current parameter values and calculates residuals/results. Fitted inputs are not written back to their source values unless you choose Save fitted inputs.";
     if (name == "scatter_correction_type") return "Supported correction methods: none and NS_ND.";
     if (kind(name) == Kind::positive_integer) return "Positive integer resolution, within the model's integer range.";
     if (kind(name) == Kind::nonnegative_integer) return "Nonnegative integer padding, in profile samples.";

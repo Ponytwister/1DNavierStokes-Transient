@@ -33,5 +33,5 @@ private:
     QWidget* fields_;
     QFormLayout* form_;
     std::vector<QWidget*> editors_;
-    QPushButton *save_, *cancel_, *use_;
+    QPushButton *save_, *cancel_, *use_, *acceptChanges_;
 };

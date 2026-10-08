@@ -40,10 +40,14 @@ ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::op
     save_ = buttons->addButton("Update default", QDialogButtonBox::AcceptRole); save_->setObjectName("saveControlsButton");
     use_ = buttons->addButton("Use values", QDialogButtonBox::AcceptRole); use_->setObjectName("useControlsButton");
     use_->setDefault(true);
+    acceptChanges_ = buttons->addButton("Accept changes", QDialogButtonBox::AcceptRole);
+    acceptChanges_->setObjectName("acceptControlsButton");
+    acceptChanges_->hide();
     cancel_ = buttons->addButton(QDialogButtonBox::Cancel); cancel_->setObjectName("cancelControlsButton");
     layout->addWidget(buttons);
     connect(save_, &QPushButton::clicked, this, [this] { save(true); });
     connect(use_, &QPushButton::clicked, this, [this] { save(false); });
+    connect(acceptChanges_, &QPushButton::clicked, this, [this] { save(false); });
     connect(cancel_, &QPushButton::clicked, this, &ControlsDialog::reject);
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this] { poll(); }); timer->start(50);
@@ -53,7 +57,8 @@ ControlsDialog::ControlsDialog(const QString& database, QWidget* parent, std::op
     catch (const std::exception& error) { busy(false); save_->setEnabled(false); use_->setEnabled(false); status_->setText(QString::fromUtf8(error.what())); }
 }
 void ControlsDialog::busy(bool value) {
-    use_->setEnabled(!value); fields_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
+    use_->setEnabled(!value); acceptChanges_->setEnabled(!value);
+    fields_->setEnabled(!value); save_->setEnabled(!value); cancel_->setEnabled(!value);
 }
 void ControlsDialog::reject() {
     // A pending transaction must finish before its dialog and result are discarded.
@@ -70,6 +75,23 @@ void ControlsDialog::populate() {
         } else if (row.name == "universal_solve_for") {
             editor = new ChecklistPicker(parameters_, row.value.value_or(QString{}), row.name,
                 "parameterChoices", "None (optional)");
+        } else if (row.name == "debug_level") {
+            auto* combo = new QComboBox;
+            const QStringList descriptions{
+                "Trace: row-by-row and internal calculation details",
+                "Detailed: setup steps, without level 0 details",
+                "Reduced: high-level progress only (no level 2 messages currently)",
+                "High-level: loading, normalization, and completion",
+                "Quiet: suppresses all current progress messages",
+                "Quieter: same current output as level 4",
+                "Most quiet: same current output as level 4"
+            };
+            for (int level = 0; level <= 6; ++level) {
+                combo->addItem(QString::number(level) + " — " + descriptions.at(level), level);
+                combo->setItemData(level, descriptions.at(level), Qt::ToolTipRole);
+            }
+            combo->setCurrentIndex(row.value ? combo->findData(row.value->toInt()) : -1);
+            editor = combo;
         } else if (type == model_controls::Kind::boolean) {
             auto* check = new QCheckBox;
             check->setChecked(row.value == std::optional<QString>("true"));
@@ -103,10 +125,11 @@ void ControlsDialog::populate() {
 void ControlsDialog::showStatus(const QString& message) { status_->setText(message); }
 void ControlsDialog::configurePresetButton(const QString& label, std::function<void()> savePreset) {
     save_->hide();
+    acceptChanges_->show();
     use_->setText(label);
     disconnect(use_, nullptr, this, nullptr);
     connect(use_, &QPushButton::clicked, this, [savePreset] { savePreset(); });
-    findChild<QLabel*>("controlsDescription")->setText("Edit controls for the next run. Run asks you to accept changed values. Save a preset to reuse them.");
+    findChild<QLabel*>("controlsDescription")->setText("Edit controls for the next run. Accept changes to use these values for this session. Save a preset to reuse them.");
 }
 model_controls::Snapshot ControlsDialog::draft(bool validate) const {
     if (!ready()) throw std::runtime_error("Model controls are still loading or could not be loaded.");
@@ -126,7 +149,11 @@ model_controls::Snapshot ControlsDialog::draft(bool validate) const {
         else if (auto* check = qobject_cast<QCheckBox*>(editor)) {
             if (check->property("invalidValue").toBool()) edited[i].value.reset();
             else edited[i].value = check->isChecked() ? "true" : "false";
-        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) edited[i].value = combo->currentText();
+        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+            if (edited[i].name == "debug_level")
+                edited[i].value = combo->currentData().isValid() ? combo->currentData().toString() : QString{};
+            else edited[i].value = combo->currentText();
+        }
         else {
             const auto text = qobject_cast<QLineEdit*>(editor)->text();
             edited[i].value = edited[i].name == "universal_solve_for" && text.trimmed().isEmpty()
@@ -160,9 +187,11 @@ void ControlsDialog::poll() {
         experiments_ = std::move(result.experiments);
         parameters_ = std::move(result.parameters); populate();
         save_->setEnabled(!original_.rows.empty()); use_->setEnabled(!original_.rows.empty());
+        acceptChanges_->setEnabled(!original_.rows.empty());
         status_->setText("All values are required except universal_solve_for. Hover over a control for help.");
     } catch (const std::exception& error) {
-        busy(false); save_->setEnabled(saving_); use_->setEnabled(saving_); saving_ = false;
+        busy(false); save_->setEnabled(saving_); use_->setEnabled(saving_);
+        acceptChanges_->setEnabled(saving_); saving_ = false;
         status_->setText(QString::fromUtf8(error.what()));
     }
 }
