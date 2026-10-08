@@ -2197,15 +2197,13 @@ add_finishing_report(parameters_t& p, int debug_level, std::string text_to_add)
 
 void removeSpaces(std::string &str)
 {
-    if (str.begin() == str.end()) {
+    const auto first = str.find_first_not_of(' ');
+    if (first == std::string::npos) {
+        str.clear();
         return;
     }
-    while (str.front() == ' ') {
-        str.erase(str.begin());
-    }
-    while (str.back() == ' ') {
-        str.erase(str.end());
-    }
+    str.erase(str.find_last_not_of(' ') + 1);
+    str.erase(0, first);
 }
 
 ptrdiff_t
