@@ -231,6 +231,17 @@ file. Existing files with the same experiment-based name are still overwritten.
 Experiment names containing `/`, `\`, or `:` are rejected at export so they cannot
 redirect the file outside the selected directory.
 
+Create a new empty experiment database from the repository root with Python 3:
+
+```powershell
+python tools/create_blank_database.py .\new-experiment.db
+```
+
+The command creates all application tables without inserting experiment data and
+fails if the destination already exists. `schema/blank_database.sql` is the
+authoritative empty-database schema. Add experiment controls, species, reactions,
+profiles, and other inputs before running the model.
+
 Runs can write database results and prompt to save fitted parameters. Selecting a
 different output directory does not isolate database writes: use a disposable copy
 of the database when the original must be preserved. Automated checks do not run a
