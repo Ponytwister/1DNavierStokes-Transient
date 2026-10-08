@@ -1,16 +1,10 @@
-# Generated text reports, including exports into output subdirectories.
-/out/**/*.txt
+# Generated build trees, exports, deployment files, and other local outputs.
+/out/
 
-# Isolated Qt installer helper and Qt-kit build trees.
-/out/qt-setup/
-/out/qt-debug/
-/out/qt-release/
-
-# Local desktop deployment, shortcut, and preserved root build artifacts.
-/out/desktop/
-/out/root-backup-*/
+# Local desktop shortcut.
 /Navier.lnk
 
 # Local database migration backups and Python bytecode.
 /out/database-backups/
 __pycache__/
+navier.db

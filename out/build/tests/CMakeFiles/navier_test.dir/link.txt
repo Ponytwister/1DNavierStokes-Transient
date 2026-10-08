@@ -1,3 +1,0 @@
-"D:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\navier_test.dir/objects.a
-C:\msys64\mingw64\bin\ar.exe qc CMakeFiles\navier_test.dir/objects.a @CMakeFiles\navier_test.dir\objects1.rsp
-C:\msys64\mingw64\bin\c++.exe -Wl,--whole-archive CMakeFiles\navier_test.dir/objects.a -Wl,--no-whole-archive -o navier_test.exe -Wl,--out-implib,libnavier_test.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\navier_test.dir\linkLibs.rsp
