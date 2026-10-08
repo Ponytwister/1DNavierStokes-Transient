@@ -1,4 +1,5 @@
 #include "experiment_selections.h"
+#include "model_controls.h"
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
@@ -41,6 +42,13 @@ ExperimentSelections::ExperimentSelections(const QString& database, const QMap<Q
     if (rc != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(raw));
     types_ = readPairs(raw, "SELECT SPECIES_NAME, SPECIES_TYPE FROM species ORDER BY SPECIES_NAME");
     reactionSpecies_ = readPairs(raw, "SELECT REACTION_NAME, SPECIES FROM reactions ORDER BY REACTION_NAME");
+    if (initial.contains("PARAMETERS_TO_SOLVE_FOR")) {
+        parameters_ = new ChecklistPicker(model_controls::solvableParameters(database),
+            initial.value("PARAMETERS_TO_SOLVE_FOR").toString(), "PARAMETERS_TO_SOLVE_FOR",
+            "experimentParameterChoices", "None (optional)");
+        parameters_->setParent(parent);
+        fields_["PARAMETERS_TO_SOLVE_FOR"] = parameters_;
+    }
     species_ = new ChecklistPicker(types_.keys(), initial.value("SPECIES").toString(), "Species", "experimentSpeciesChoices", "None");
     species_->setParent(parent);
     reactions_ = new ChecklistPicker(reactionSpecies_.keys(), initial.value("REACTIONS").toString(), "Reactions", "experimentReactionChoices", "None");
@@ -103,6 +111,7 @@ void ExperimentSelections::refreshUnits() {
 QString ExperimentSelections::value(const QString& name) const {
     if (name == "SPECIES") return species_->value();
     if (name == "REACTIONS") return reactions_->value();
+    if (name == "PARAMETERS_TO_SOLVE_FOR") return parameters_ ? parameters_->value() : QString{};
     QStringList result;
     for (const auto& specie : species()) {
         if (types_.value(specie) != "particle" && types_.value(specie) != "molecule")

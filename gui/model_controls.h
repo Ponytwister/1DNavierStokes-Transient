@@ -26,6 +26,7 @@ enum class ExperimentReferences { reactions, species };
 QStringList experimentReferences(const QString& database, const QStringList& selected,
                                  ExperimentReferences references);
 QStringList experimentNames(const QString& database);
+QStringList variableNames(const QString& database);
 QStringList solvableParameters(const QString& database);
 // Selected global/experiment variables and non-omitted profile-local variables.
 QStringList selectedVariables(const QString& database, const Snapshot& controls);

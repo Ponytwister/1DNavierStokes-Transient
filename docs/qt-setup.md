@@ -302,9 +302,12 @@ edits. Names are fixed when modifying a row so existing experiment/reaction
 references remain intact. New names must be unique, nonempty, and contain no
 whitespace or apostrophes (the model uses space-separated names and SQL lookups).
 Species type must be `molecule` or `particle`; numeric fields require finite
-numbers or explicit SQL NULL. Reaction species must exist in the database;
-coefficients and exponents require one number per species, and `Ks` requires two
-numbers, matching the loader's forward/reverse rate array. These checks do not
+numbers or explicit SQL NULL, except `QE`, `DIFFUSION_RATE`, and
+`PARTICLE_DIAMETER`, which also accept `#variable_name` aliases. Reaction species
+must exist in the database; coefficients and exponents require one number or
+alias per species, and `Ks` requires two numbers or aliases, matching the
+loader's forward/reverse rate array. Coefficients and exponents also accept
+`-#variable_name`. An alias must match a row in Variables. These checks do not
 establish physical suitability or convergence.
 
 Writes use bound parameters and a transaction. Modify compares the complete
@@ -320,8 +323,8 @@ and Refresh controls. The editor exposes `VARIABLE`, `INITIAL VALUE`, `LOWER BOU
 `UPPER BOUND`, and `SCALE`. All four numeric values are required and finite;
 the lower bound must not exceed the upper bound, the initial value must lie within
 those bounds, and scale must be nonzero. Existing variable names cannot be renamed.
-Adding a row does not select that variable for solving; selection remains in Model
-controls. No schema migration is needed.
+Adding a row makes the variable available in the global and experiment solve-for
+pickers; it still must be selected for solving. No schema migration is needed.
 
 Browsing does not write to the database. Save uses the same transactional writes
 and concurrent-change detection as the Reactions and Species editors, then clears
@@ -350,6 +353,9 @@ references cannot be left without a matching flowrate. Each species row has a
 concentration value and units selector. Units default to that species' entry in
 `SPECIE_MODEL_CONC_UNITS` and can be overridden per profile and inlet. Changing
 `NAME` refreshes the species order, inlet blocks, and default units.
+The **FITC concentration alias** field accepts `#variable_name`; select that
+variable in `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` unless it is already selected
+globally or for the experiment. It must match a row in Variables.
 Apply migrations `002_raw_profile_entrance_conc_units.sql`,
 `003_raw_profile_species_concentrations.sql`, and
 `004_raw_profile_entrance_numbers.sql` in order, once each. Migration 003

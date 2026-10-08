@@ -21,4 +21,5 @@ private:
     QMap<QString, QString> types_, reactionSpecies_;
     QMap<QString, QMap<QString, QComboBox*>> units_;
     ChecklistPicker *species_, *reactions_;
+    ChecklistPicker* parameters_ = nullptr;
 };

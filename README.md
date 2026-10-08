@@ -95,6 +95,10 @@ concentration values use `ENTRANCE_CONC_UNITS` (or the species model units when
 blank), diffusion values use the existing `DIFFUSION_RATE` units, and particle
 diameter values use the database field's nanometer units. Particle diffusion
 is recalculated from the aliased diameter during each solver update.
+To set one in the app, add the name and bounds in **Variables**, select it in
+**Model controls** or the experiment/profile solve-for picker, then enter
+`#name` in the matching reaction/species field or the Raw profiles **FITC
+concentration alias** field. Coefficients and exponents also accept `-#name`.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.

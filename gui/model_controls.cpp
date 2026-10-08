@@ -145,8 +145,26 @@ QStringList experimentReferences(const QString& database, const QStringList& sel
     names.removeDuplicates();
     return names;
 }
+QStringList variableNames(const QString& database) {
+    auto db = open(database, false);
+    auto exists = prepare(db.get(), "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alglib_input'");
+    const int found = sqlite3_step(exists.get());
+    if (found == SQLITE_DONE) return {};
+    if (found != SQLITE_ROW) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    auto statement = prepare(db.get(), "SELECT VARIABLE FROM alglib_input ORDER BY VARIABLE");
+    QStringList names;
+    int rc;
+    while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        const auto name = column(statement.get(), 0);
+        if (!name.isEmpty() && !names.contains(name)) names.push_back(name);
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    return names;
+}
+
 QStringList solvableParameters(const QString& database) {
     QStringList names{"p1", "kon1", "keq1", "left_edge", "width", "QE1"};
+    for (const auto& name : variableNames(database)) if (!names.contains(name)) names.push_back(name);
     auto db = open(database, false);
     auto statement = prepare(db.get(), "SELECT REACTIONS FROM experiments WHERE REACTIONS IS NOT NULL");
     int rc;

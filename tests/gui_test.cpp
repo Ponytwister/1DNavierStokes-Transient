@@ -499,6 +499,7 @@ TEST(Gui, RawProfilesBrowseRefreshAndClearWithoutWrites)
 TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
 {
     Inputs input;
+    input.execute("INSERT INTO alglib_input VALUES('inlet_fit',5,0,10,1)");
     input.execute("CREATE TABLE edited_profiles(NAME TEXT NOT NULL, WT_PERCENT DOUBLE NOT NULL, "
                   "CHANNEL_LEFT_EDGE INT, CHANNEL_RIGHT_EDGE INT, INTENSITY_ARRAY TEXT, ENTRANCE_CONC ANY, "
                   "INLET_COND_ID INTEGER, OMIT ANY, INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT, "
@@ -529,6 +530,9 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
         fill(*editor);
+        EXPECT_EQ(widget<QLineEdit>(*editor, "entranceConcValue_1_0")->text(), "0.25");
+        EXPECT_EQ(widget<QLineEdit>(*editor, "entranceConcValue_1_1")->text(), "0.1");
+        EXPECT_EQ(widget<QLineEdit>(*editor, "entranceConcValue_1_2")->text(), "0.05");
         EXPECT_EQ(widget<QComboBox>(*editor, "entranceConcUnits_1_0")->currentText(), "umol");
         EXPECT_EQ(widget<QLabel>(*editor, "entranceConcSpecies_1_0")->text(), "FITC");
         EXPECT_EQ(widget<QLabel>(*editor, "entranceConcSpecies_1_1")->text(), "PS_40nm");
@@ -545,16 +549,23 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         left->setText("0.5"); save->click(); EXPECT_TRUE(error->text().contains("integer"));
         left->setText("0");
         auto* right = widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE");
-        right->setText("4"); save->click(); EXPECT_TRUE(error->text().contains("no greater"));
+        right->setText("4"); save->click(); EXPECT_TRUE(error->text().contains("no greater")) << error->text().toStdString();
         right->setText("3");
         auto* intensity = widget<QPlainTextEdit>(*editor, "INTENSITY_ARRAY");
-        intensity->setPlainText("1 nan 3"); save->click(); EXPECT_TRUE(error->text().contains("finite"));
+        intensity->setPlainText("1 nan 3"); save->click(); EXPECT_TRUE(error->text().contains("finite")) << error->text().toStdString();
         intensity->setPlainText("1  2 3");
         auto* name = widget<QComboBox>(*editor, "NAME");
         name->setCurrentIndex(-1); save->click(); EXPECT_TRUE(error->text().contains("NAME"));
-        name->setCurrentText("uniform");
+        name->setCurrentIndex(name->findText("uniform", Qt::MatchExactly));
+        widget<QLineEdit>(*editor, "entranceConcValue_1_0")->setText("0.25");
+        widget<QLineEdit>(*editor, "entranceConcValue_1_1")->setText("0.1");
+        widget<QLineEdit>(*editor, "entranceConcValue_1_2")->setText("0.05");
         auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
         EXPECT_EQ(choices->count(), model_controls::solvableParameters(input.database).size());
+        widget<QLineEdit>(*editor, "entranceConcAlias")->setText("#missing");
+        save->click(); EXPECT_TRUE(error->text().contains("row in Variables")) << error->text().toStdString();
+        widget<QLineEdit>(*editor, "entranceConcAlias")->setText("#inlet_fit");
+        choices->findItems("inlet_fit", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         choices->findItems("left_edge", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         choices->findItems("width", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         save->click();
@@ -565,9 +576,11 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile"), 5);
     EXPECT_EQ(input.execute("SELECT OMIT IS NULL FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
-    EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
-    EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC=0.25 AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
-    EXPECT_EQ(input.execute("SELECT CONCENTRATION=0.25 AND SPECIES_NAME='FITC' AND UNITS='umol' AND ENTRANCE_NUMBER=1 FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width inlet_fit' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC='#inlet_fit' AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 1);
+    EXPECT_DOUBLE_EQ(input.execute("SELECT CONCENTRATION FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 0.25);
+    EXPECT_EQ(input.execute("SELECT UNITS='umol' FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 1);
     EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 3);
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr); fill(*editor);
@@ -586,6 +599,7 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QComboBox>(*editor, "NAME")->setCurrentText("second");
         widget<QLineEdit>(*editor, "WT_PERCENT")->setText("6");
         widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("2"); // Below sample count is allowed.
+        widget<QLineEdit>(*editor, "entranceConcAlias")->clear();
         widget<QComboBox>(*editor, "OMIT")->setCurrentText("true");
         auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
         for (int i = 0; i < choices->count(); ++i) choices->item(i)->setCheckState(Qt::Unchecked);
@@ -991,6 +1005,7 @@ TEST(Gui, AlglibBrowseAddValidateAndModify)
 TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
 {
     Inputs input;
+    input.execute("INSERT INTO alglib_input VALUES('qe_fit',0.4,0,1,1)");
     MainWindow window; input.choose(window); window.show();
     auto* tabs = widget<QTabWidget>(window, "mainTabs"); tabs->setCurrentIndex(4);
     auto* add = widget<QPushButton>(window, "speciesAddButton");
@@ -1005,12 +1020,15 @@ TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
         widget<QLineEdit>(*editor, "QE")->setText("nan");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
         EXPECT_TRUE(editor->isVisible());
-        widget<QLineEdit>(*editor, "QE")->setText("2.5");
+        widget<QLineEdit>(*editor, "QE")->setText("#missing");
+        widget<QPushButton>(*editor, "saveReferenceButton")->click();
+        EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("row in Variables"));
+        widget<QLineEdit>(*editor, "QE")->setText("#qe_fit");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
     });
     add->click();
     EXPECT_EQ(input.execute("SELECT count(*) FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
-    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 2.5);
+    EXPECT_EQ(input.execute("SELECT QE='#qe_fit' FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
     EXPECT_EQ(input.execute("SELECT DIFFUSION_RATE IS NULL FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
     widget<QCheckBox>(window, "speciesSelectedOnly")->setChecked(false);
     auto selectNew = [&] {
@@ -1026,7 +1044,7 @@ TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
         widget<QPushButton>(*editor, "cancelReferenceButton")->click();
     });
     modify->click();
-    EXPECT_DOUBLE_EQ(input.execute("SELECT QE FROM species WHERE SPECIES_NAME='NewSpecies'"), 2.5);
+    EXPECT_EQ(input.execute("SELECT QE='#qe_fit' FROM species WHERE SPECIES_NAME='NewSpecies'"), 1);
     QTimer::singleShot(0, &window, [&] {
         auto* editor = QApplication::activeModalWidget(); ASSERT_NE(editor, nullptr);
         widget<QLineEdit>(*editor, "QE")->setText("4");
@@ -1051,6 +1069,9 @@ TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
 TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
 {
     Inputs input;
+    input.execute("INSERT INTO alglib_input VALUES('coef_fit',0.7,0,2,1);"
+                  "INSERT INTO alglib_input VALUES('rate_fit',0.8,0,2,1);"
+                  "INSERT INTO alglib_input VALUES('exp_fit',1,0,3,1)");
     MainWindow window; input.choose(window); window.show();
     widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(3);
     auto* add = widget<QPushButton>(window, "reactionsAddButton");
@@ -1067,10 +1088,13 @@ TEST(Gui, ReactionsAddValidateDuplicatesAndModify)
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
         EXPECT_TRUE(widget<QLabel>(*editor, "referenceEditorStatus")->text().contains("Unknown or ambiguous species"));
         widget<QLineEdit>(*editor, "SPECIES")->setText("FITC PS_40nm");
+        widget<QLineEdit>(*editor, "COEFFICIENTS")->setText("#coef_fit -#coef_fit");
+        widget<QLineEdit>(*editor, "Ks")->setText("#rate_fit 1");
+        widget<QLineEdit>(*editor, "EXPONENTS")->setText("#exp_fit 1");
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
     });
     add->click();
-    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='NewReaction' AND COEFFICIENTS='#coef_fit -#coef_fit' AND Ks='#rate_fit 1' AND EXPONENTS='#exp_fit 1'"), 1);
     widget<QCheckBox>(window, "reactionsSelectedOnly")->setChecked(false);
     auto* table = widget<QTableWidget>(window, "reactionsTable");
     for (int row = 0; row < table->rowCount(); ++row)
@@ -1104,7 +1128,8 @@ TEST(Gui, ExperimentEditorUsesOrderedSelectionsAndConvertsDisplayUnits)
     Inputs input;
     QFile migration(QString::fromUtf8(TSENSOR_FIXTURE_DIR) + "/../../migrations/001_channel_dimensions.sql");
     ASSERT_TRUE(migration.open(QIODevice::ReadOnly)); input.execute(migration.readAll());
-    input.execute("ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT");
+    input.execute("ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT;"
+                  "INSERT INTO alglib_input VALUES('experiment_fit',1,0,2,1)");
     MainWindow window; input.choose(window); window.show();
     widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(2);
     auto* table = widget<QTableWidget>(window, "experimentsTable"); table->selectRow(0);
@@ -1128,7 +1153,8 @@ TEST(Gui, ExperimentEditorUsesOrderedSelectionsAndConvertsDisplayUnits)
         for (int i = 0; i < form->rowCount(); ++i) {
             auto* label = qobject_cast<QLabel*>(form->itemAt(i, QFormLayout::LabelRole)->widget());
             ASSERT_NE(label, nullptr);
-            EXPECT_EQ(label->text(), table->horizontalHeaderItem(table->horizontalHeader()->logicalIndex(i))->text());
+            const auto header = table->horizontalHeaderItem(table->horizontalHeader()->logicalIndex(i))->text();
+            EXPECT_EQ(label->text(), header.endsWith(" (m)") ? header.left(header.size() - 4) : header);
         }
         auto* widthUnits = widget<QComboBox>(*editor, "CHANNEL_WIDTHUnits");
         widthUnits->setCurrentText("mm");
@@ -1141,7 +1167,8 @@ TEST(Gui, ExperimentEditorUsesOrderedSelectionsAndConvertsDisplayUnits)
         widget<QComboBox>(*editor, "ENTRANCE_FLOWRATEUnits")->setCurrentIndex(5); // microliters/min
         EXPECT_NEAR(widget<QLineEdit>(*editor, "ENTRANCE_FLOWRATE")->text().toDouble(), 30, 1e-10);
         widget<QLineEdit>(*editor, "ENTRANCE_FLOWRATE")->setText("60 120");
-        widget<QLineEdit>(*editor, "PARAMETERS_TO_SOLVE_FOR")->setText("keq1");
+        auto* parameters = widget<QListWidget>(*editor, "experimentParameterChoices");
+        parameters->findItems("experiment_fit", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         widget<QPushButton>(*editor, "saveReferenceButton")->click();
         if (editor->isVisible()) { ADD_FAILURE() << widget<QLabel>(*editor, "referenceEditorStatus")->text().toStdString(); editor->reject(); }
     });
@@ -1149,7 +1176,7 @@ TEST(Gui, ExperimentEditorUsesOrderedSelectionsAndConvertsDisplayUnits)
     EXPECT_NEAR(input.execute("SELECT CHANNEL_WIDTH FROM experiments"), .002, 1e-12);
     EXPECT_NEAR(input.execute("SELECT CHANNEL_HEIGHT FROM experiments"), 80e-6, 1e-12);
     EXPECT_NEAR(input.execute("SELECT CHANNEL_LENGTH FROM experiments"), .05, 1e-12);
-    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE PARAMETERS_TO_SOLVE_FOR='keq1' AND SPECIES='FITC PS_40nm 40nm_Bound_Dye_1' AND SPECIE_INLET_CONC_UNITS='mg/ml wt% mg/ml'"), 1);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE PARAMETERS_TO_SOLVE_FOR='experiment_fit' AND SPECIES='FITC PS_40nm 40nm_Bound_Dye_1' AND SPECIE_INLET_CONC_UNITS='mg/ml wt% mg/ml'"), 1);
     EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE abs(CAST(substr(ENTRANCE_FLOWRATE,1,instr(ENTRANCE_FLOWRATE,' ')-1) AS REAL)-1e-9)<1e-20 AND abs(CAST(substr(ENTRANCE_FLOWRATE,instr(ENTRANCE_FLOWRATE,' ')+1) AS REAL)-2e-9)<1e-20"), 1);
 }
 
@@ -1539,26 +1566,29 @@ TEST(Gui, ParameterChecklistSupportsMemoryDefaultsAndEmptySelection)
 {
     Inputs input;
     input.execute("INSERT INTO experiments(NAME,REACTIONS) VALUES('other','first second')");
+    input.execute("INSERT INTO alglib_input VALUES('custom_fit',1,0,2,1)");
     const auto original = model_controls::load(input.database);
     ControlsDialog dialog(input.database); dialog.show();
     auto* use = widget<QPushButton>(dialog, "useControlsButton");
     ASSERT_TRUE(until([&] { return use->isEnabled(); }));
     EXPECT_EQ(dialog.findChild<QLineEdit*>("universal_solve_for"), nullptr);
     auto* choices = widget<QListWidget>(dialog, "parameterChoices");
-    ASSERT_EQ(choices->count(), 10);
+    ASSERT_EQ(choices->count(), 11);
     choices->findItems("kon2", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
+    choices->findItems("custom_fit", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
     use->click(); ASSERT_EQ(dialog.result(), QDialog::Accepted);
     auto memory = dialog.values();
-    EXPECT_EQ(control(memory.rows, "universal_solve_for").value, "keq1 kon2");
+    EXPECT_EQ(control(memory.rows, "universal_solve_for").value, "keq1 custom_fit kon2");
     EXPECT_EQ(model_controls::load(input.database), original);
     ControlsDialog reopened(input.database, nullptr, memory); reopened.show();
     auto* save = widget<QPushButton>(reopened, "saveControlsButton");
     ASSERT_TRUE(until([&] { return save->isEnabled(); }));
     auto* storedChoices = widget<QListWidget>(reopened, "parameterChoices");
     EXPECT_EQ(storedChoices->findItems("kon2", Qt::MatchExactly).front()->checkState(), Qt::Checked);
+    EXPECT_EQ(storedChoices->findItems("custom_fit", Qt::MatchExactly).front()->checkState(), Qt::Checked);
     save->click(); ASSERT_TRUE(until([&] { return reopened.result() == QDialog::Accepted; }));
     auto stored = model_controls::load(input.database);
-    EXPECT_EQ(control(stored.rows, "universal_solve_for").value, "keq1 kon2");
+    EXPECT_EQ(control(stored.rows, "universal_solve_for").value, "keq1 custom_fit kon2");
     ControlsDialog empty(input.database); empty.show();
     auto* emptySave = widget<QPushButton>(empty, "saveControlsButton");
     ASSERT_TRUE(until([&] { return emptySave->isEnabled(); }));

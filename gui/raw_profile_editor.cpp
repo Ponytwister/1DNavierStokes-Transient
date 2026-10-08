@@ -185,6 +185,14 @@ bool editRawProfile(const QString& database, const QStringList& columns,
         form->addRow(field, line);
     };
     addField("WT_PERCENT");
+    QLineEdit* entranceAlias = nullptr;
+    if (columns.contains("ENTRANCE_CONC")) {
+        const auto saved = old("ENTRANCE_CONC").toString();
+        entranceAlias = new QLineEdit(saved.startsWith('#') ? saved : QString{});
+        entranceAlias->setObjectName("entranceConcAlias");
+        entranceAlias->setPlaceholderText("#variable_name (optional)");
+        form->addRow("FITC concentration alias", entranceAlias);
+    }
     ChecklistPicker* picker = nullptr;
     const QString solveField = "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR";
     if (columns.contains(solveField)) {
@@ -209,7 +217,7 @@ bool editRawProfile(const QString& database, const QStringList& columns,
     form->addRow("ENTRANCE_CONC", concentrationPanel);
     auto rebuildConcentrationRows = [&] {
         while (auto* item = concentrationLayout->takeAt(0)) {
-            if (item->widget()) item->widget()->deleteLater();
+            if (item->widget()) delete item->widget();
             delete item;
         }
         concentrationWidgets.clear();
@@ -328,12 +336,19 @@ bool editRawProfile(const QString& database, const QStringList& columns,
                 return nullptr;
             };
             const auto fitc = findSpeciesConcentration(editedConcentrations, 1, "FITC");
-            const bool preserveLegacyEntranceValue = !adding && old("ENTRANCE_CONC").isValid() &&
-                !scalarConcentration(old("ENTRANCE_CONC")).has_value();
-            if (columns.contains("ENTRANCE_CONC")) values["ENTRANCE_CONC"] = preserveLegacyEntranceValue
-                ? old("ENTRANCE_CONC") : (fitc ? QVariant(fitc->value) : QVariant{});
-            if (columns.contains("ENTRANCE_CONC_UNITS")) values["ENTRANCE_CONC_UNITS"] = preserveLegacyEntranceValue
-                ? old("ENTRANCE_CONC_UNITS") : (fitc ? QVariant(fitc->units) : QVariant{});
+            const auto aliasText = entranceAlias ? entranceAlias->text().trimmed() : QString{};
+            if (!aliasText.isEmpty()) {
+                if (!aliasText.startsWith('#') || aliasText.size() < 2 || aliasText.mid(1).contains(QRegularExpression("\\s")))
+                    throw std::runtime_error("ENTRANCE_CONC alias: enter #variable_name with no spaces.");
+                if (!model_controls::variableNames(database).contains(aliasText.mid(1)))
+                    throw std::runtime_error("ENTRANCE_CONC alias must match a row in Variables.");
+                if (!fitc || catalog.entranceCount < 1)
+                    throw std::runtime_error("ENTRANCE_CONC alias requires FITC and at least one inlet.");
+            }
+            if (columns.contains("ENTRANCE_CONC")) values["ENTRANCE_CONC"] = !aliasText.isEmpty()
+                ? QVariant(aliasText) : (fitc ? QVariant(fitc->value) : QVariant{});
+            if (columns.contains("ENTRANCE_CONC_UNITS")) values["ENTRANCE_CONC_UNITS"] =
+                fitc ? QVariant(fitc->units) : QVariant{};
             auto concentrationKey = [](int entrance, const QString& species) {
                 return QString::number(entrance) + QChar(0x1f) + species;
             };

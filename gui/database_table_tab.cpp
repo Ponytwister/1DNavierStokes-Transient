@@ -221,6 +221,14 @@ void bindValue(sqlite3* db, sqlite3_stmt* query, int index, const QVariant& valu
     }
     if (rc != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
 }
+bool aliasToken(const QString& token, bool allowSign, QString& alias, bool& attempted) {
+    attempted = token.startsWith('#') || (allowSign && token.startsWith("-#"));
+    if (!attempted) return false;
+    alias = token.startsWith("-#") ? token.mid(2) : token.mid(1);
+    if (alias.isEmpty() || alias.contains(QRegularExpression("\\s")))
+        throw std::invalid_argument("Aliases must use #variable_name with no spaces.");
+    return true;
+}
 }
 
 void DatabaseTableTab::setEditingEnabled(bool enabled) {
@@ -366,6 +374,7 @@ void DatabaseTableTab::editRow(bool adding) {
         try {
             if (selections && !selections->resolveReactions(&dialog)) return;
             std::vector<QVariant> values;
+            QStringList aliases;
             for (int i = 0; i < fields.size(); ++i) {
                 const auto& field = fields[i];
                 const QString text = edits[i] ? edits[i]->text()
@@ -380,9 +389,16 @@ void DatabaseTableTab::editRow(bool adding) {
                     value = field.startsWith("CHANNEL_") ? QVariant(converted.toDouble()) : QVariant(converted);
                 }
                 if (value.isValid() && !reactions && (experiments ? field.startsWith("CHANNEL_") : i >= (alglib ? 1 : 2))) {
-                    bool ok = false; const double number = value.toString().toDouble(&ok);
-                    if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + ((alglib || experiments) ? ": enter a finite number." : ": enter a finite number or select NULL.")).toStdString());
-                    value = number;
+                    const bool speciesAliasField = !experiments && !alglib &&
+                        (field == "DIFFUSION_RATE" || field == "QE" || field == "PARTICLE_DIAMETER");
+                    QString alias; bool attempted = false;
+                    if (speciesAliasField && aliasToken(value.toString(), false, alias, attempted)) {
+                        aliases << alias;
+                    } else {
+                        bool ok = false; const double number = value.toString().toDouble(&ok);
+                        if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + ((alglib || experiments) ? ": enter a finite number." : ": enter a finite number or select NULL.")).toStdString());
+                        value = number;
+                    }
                 }
                 if (!adding) {
                     const auto& old = original[columns.indexOf(fields[i])];
@@ -405,6 +421,10 @@ void DatabaseTableTab::editRow(bool adding) {
                     const int expected = i == 3 ? 2 : species.size();
                     if (tokens.size() != expected) throw std::invalid_argument((fields[i] + ": incorrect number of values.").toStdString());
                     for (const auto& token : tokens) {
+                        QString alias; bool attempted = false;
+                        const bool signedAllowed = fields[i] == "COEFFICIENTS" || fields[i] == "EXPONENTS";
+                        if (aliasToken(token, signedAllowed, alias, attempted)) { aliases << alias; continue; }
+                        if (attempted) throw std::invalid_argument((fields[i] + ": invalid alias.").toStdString());
                         bool ok = false; const double number = token.toDouble(&ok);
                         if (!ok || !std::isfinite(number)) throw std::invalid_argument((fields[i] + ": values must be finite numbers.").toStdString());
                     }
@@ -458,6 +478,16 @@ void DatabaseTableTab::editRow(bool adding) {
                     const int rc = sqlite3_prepare_v2(db.get(), sql.toUtf8().constData(), -1, &query, nullptr);
                     Statement result(query, sqlite3_finalize); check(rc); return result;
                 };
+                for (const auto& alias : aliases) {
+                    auto variable = prepare("SELECT 1 FROM alglib_input WHERE VARIABLE=?");
+                    const auto nameBytes = alias.toUtf8();
+                    check(sqlite3_bind_text(variable.get(), 1, nameBytes.constData(), nameBytes.size(), SQLITE_TRANSIENT));
+                    const int found = sqlite3_step(variable.get());
+                    if (found != SQLITE_ROW) {
+                        if (found != SQLITE_DONE) check(found, SQLITE_ROW);
+                        throw std::invalid_argument("Alias '#" + alias.toStdString() + "' must match a row in Variables.");
+                    }
+                }
                 auto identity = prepare("SELECT count(*) FROM " + quoteIdentifier(tableName_) + " WHERE " + quoteIdentifier(fields.front()) + "=?");
                 bindValue(db.get(), identity.get(), 1, values[0]); check(sqlite3_step(identity.get()), SQLITE_ROW);
                 if (sqlite3_column_int(identity.get(), 0) != (adding ? 0 : 1))
