@@ -74,7 +74,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             }
             fout << channel_position << "  ";
         }
-        fout << std::endl;
+        fout << '\n';
 
 
     };
@@ -119,8 +119,8 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             for (const auto& species : run_ptr->species)
                 profile_names.push_back("Species:" + species.name + "_(" + species.model_units + ")");
         }
-        std::vector<double> model = exp_ptr->model_profile;
-        std::vector<double> experiment = exp_ptr->experimental_profile;
+        const auto& model = exp_ptr->model_profile;
+        const auto& experiment = exp_ptr->experimental_profile;
         const auto& out = exp_ptr->species_out;
         fout << "sec"                       << "  "; //1
         fout << "(" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units << "_FITC)  "; //2
@@ -135,7 +135,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             const double position = exp_ptr->channel_position.at(x);
             fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
         }
-        fout << std::endl;
+        fout << '\n';
         double beads_sa = 0;
         for (auto specie_key : exp_ptr->entrances.at(0).CONC) {
             if (specie_key.first == PS_beads_ptr) {
@@ -144,12 +144,18 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             }
         }
 
+        const double FITC_unit = unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
+        const double bead_unit = unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
+        const double bead_coefficient = std::abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value());
+        const double p1 = variable_location("p1", run_ptr).value();
+        const double kon1 = variable_location("kon1", run_ptr).value();
+        const double keq1 = variable_location("keq1", run_ptr).value();
         int width;
         for (int j = 0; j < profile_names.size(); j++) {
             fout << p.Z * run_ptr->dt                   << "  "; //1
-            fout << variable_location("p1", run_ptr).value()    << "  "; //2
-            fout << variable_location("kon1", run_ptr).value()  << "  "; //3
-            fout << variable_location("keq1", run_ptr).value()  << "  "; //4
+            fout << p1                                       << "  "; //2
+            fout << kon1                                     << "  "; //3
+            fout << keq1                                     << "  "; //4
             fout << run_ptr->dye_conc                   << "  "; //5
             fout << exp_ptr->second_name                << "  "; //6
             fout << beads_sa                            << "  "; //7
@@ -187,9 +193,6 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             } else {
                 width = exp_ptr->window_size;
             }
-            const double FITC_unit = unit_conversion(run_ptr, FITC, FITC_ptr->model_units, FITC_ptr->input_units);
-            const double bead_unit = unit_conversion(run_ptr, PS_beads, PS_beads_ptr->model_units, PS_beads_ptr->input_units);
-
             for (int x = 0; x < width; x++) {
                 switch(j) {
                     case 0: // Free_Dye
@@ -209,7 +212,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                         fout << exp_ptr->analytical_zero.at(x);
                         break;   
                     case 5: // Total_Beads_(wt%)
-                        fout << (out[PS_beads][x] + out[Bound_Dye_1][x] / abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value())) * bead_unit;
+                        fout << (out[PS_beads][x] + out[Bound_Dye_1][x] / bead_coefficient) * bead_unit;
                         break;
                     case 6: // Experimental_Derivative
                         fout << exp_ptr->experimental_derivative.at(x);
@@ -233,10 +236,9 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                         fout << exp_ptr->error.at(x);
                         break;
                     case 13: { // Bound beads: original stoichiometric conversion.
-                        const double coefficient = std::abs(FITC_Bead_1_ptr->coef.at(FITC_ptr).value());
-                        if (!std::isfinite(coefficient) || coefficient == 0)
+                        if (!std::isfinite(bead_coefficient) || bead_coefficient == 0)
                             throw std::invalid_argument("Cannot report bound beads with a zero or nonfinite dye coefficient");
-                        fout << out.at(Bound_Dye_1).at(x) / coefficient * bead_unit;
+                        fout << out.at(Bound_Dye_1).at(x) / bead_coefficient * bead_unit;
                         break;
                     }
                     default: // Additional species profiles stay in declared model units.
@@ -245,9 +247,9 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                 }
                 fout << "    ";
             }
-            fout << std::endl;
+            fout << '\n';
         }
-        fout << std::endl;
+        fout << '\n';
     }
 }
 
