@@ -86,6 +86,15 @@ must be selected by `universal_solve_for` or the experiment's
 rate slot. `reactions.COEFFICIENTS` and `reactions.EXPONENTS` accept the same alias
 form; prefix an alias with `-` to negate it, as in `-#p1`. Reusing an alias in
 multiple slots applies each slot's sign to the same solved value.
+The same `#variable_name` form is accepted by `raw_profile.ENTRANCE_CONC`,
+`species.QE`, `species.DIFFUSION_RATE`, and `species.PARTICLE_DIAMETER`.
+Raw-profile concentration aliases may be selected for that profile, its
+experiment, or globally; species aliases use the experiment or global
+solve-for sections. Each alias must have a row in `alglib_input`. Entrance
+concentration values use `ENTRANCE_CONC_UNITS` (or the species model units when
+blank), diffusion values use the existing `DIFFUSION_RATE` units, and particle
+diameter values use the database field's nanometer units. Particle diffusion
+is recalculated from the aliased diameter during each solver update.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.
