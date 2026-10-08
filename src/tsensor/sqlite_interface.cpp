@@ -2325,27 +2325,35 @@ lin_interpolate(double x, double x1, double y1, double x2, double y2)
 void
 set_inlet_conc(parameters_t& p, experiment_struct* exp_ptr, double* solution)
 {
-    double FLOWRATE_ACCOUNTED_FOR = 0.0d;
-    experiment_run_struct* run_ptr = exp_ptr->run;
-    for (int entrance = 0; entrance < exp_ptr->entrances.size(); entrance++) {
-        entrance_struct* entr_ptr = &exp_ptr->entrances.at(entrance);
-        for (int x = static_cast<int>(p.X * FLOWRATE_ACCOUNTED_FOR / run_ptr->total_flowrate); x < p.X; x++) {
-            for (int specie = 0; specie < run_ptr->number_of_species; specie++) {
-                specie_struct* specie_ptr = &run_ptr->species.at(specie);
-                double conc = 0;
-                for (auto specie_key : entr_ptr->CONC) {
-                    if (specie_key.first == specie_ptr) {
-                        conc = specie_key.second;
-                        break;
-                    }
-                }
-                if (x < (static_cast<int>(p.X * (entr_ptr->ENTRANCE_FLOWRATE + FLOWRATE_ACCOUNTED_FOR) / run_ptr->total_flowrate))) { 
-                    solution[specie * p.X + x] = conc * unit_conversion(run_ptr, specie, run_ptr->species.at(specie).input_units, run_ptr->species.at(specie).model_units);
-                    solution[specie * p.X + x + run_ptr->number_of_species * p.X] = solution[specie * p.X + x];
-                }
+    auto* run_ptr = exp_ptr->run;
+    const int species_count = run_ptr->number_of_species;
+    const double total_flowrate = run_ptr->total_flowrate;
+    if (p.X <= 0 || species_count <= 0 || !std::isfinite(total_flowrate) || total_flowrate <= 0.0) {
+        throw std::invalid_argument("Invalid grid or total flowrate while setting inlet concentrations for " +
+            run_ptr->name + ":" + exp_ptr->second_name);
+    }
+
+    double flowrate_accounted_for = 0.0;
+    for (const auto& entrance : exp_ptr->entrances) {
+        const int first_cell = static_cast<int>(p.X * flowrate_accounted_for / total_flowrate);
+        flowrate_accounted_for += entrance.ENTRANCE_FLOWRATE;
+        const int end_cell = static_cast<int>(p.X * flowrate_accounted_for / total_flowrate);
+
+        for (int specie = 0; specie < species_count; specie++) {
+            auto* specie_ptr = &run_ptr->species.at(specie);
+            double concentration = 0.0;
+            const auto concentration_entry = entrance.CONC.find(specie_ptr);
+            if (concentration_entry != entrance.CONC.end()) {
+                concentration = concentration_entry->second;
+            }
+            const double model_concentration = concentration * unit_conversion(
+                run_ptr, specie, specie_ptr->input_units, specie_ptr->model_units);
+            for (int x = first_cell; x < end_cell; x++) {
+                const int grid_index = specie * p.X + x;
+                solution[grid_index] = model_concentration;
+                solution[grid_index + species_count * p.X] = model_concentration;
             }
         }
-        FLOWRATE_ACCOUNTED_FOR += entr_ptr->ENTRANCE_FLOWRATE;
     }
 }
 
