@@ -35,7 +35,7 @@ void save(const QString& filename, const Setup& setup) {
         controls.append(QJsonObject{{"name", row.name}, {"value", row.value ? QJsonValue(*row.value) : QJsonValue(QJsonValue::Null)}});
     const auto bytes = QJsonDocument(QJsonObject{{"format", "navier-setup"}, {"version", 1},
         {"database", QFileInfo(setup.database).absoluteFilePath()},
-        {"outputDirectory", QFileInfo(setup.outputDirectory).absoluteFilePath()}, {"controls", controls}}).toJson();
+        {"outputDirectory", QFileInfo(setup.outputDirectory).absoluteFilePath()}, {"controls", controls}, {"profiles", setup.profiles}}).toJson();
     QSaveFile file(filename);
     if (!file.open(QIODevice::WriteOnly)) fail(file.errorString());
     if (file.write(bytes) != bytes.size()) fail(file.errorString());
@@ -52,7 +52,8 @@ Setup load(const QString& filename) {
         fail("Unsupported setup format or version.");
     if (!object["database"].isString() || !object["outputDirectory"].isString() || !object["controls"].isArray())
         fail("Setup requires database, outputDirectory, and controls fields.");
-    Setup setup{object["database"].toString(), object["outputDirectory"].toString(), {}};
+    if (!object["profiles"].isUndefined() && !object["profiles"].isObject()) fail("Invalid profile display settings.");
+    Setup setup{object["database"].toString(), object["outputDirectory"].toString(), {}, object["profiles"].toObject()};
     for (const auto value : object["controls"].toArray()) {
         if (!value.isObject()) fail("Invalid control row.");
         const auto row = value.toObject();

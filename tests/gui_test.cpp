@@ -1416,12 +1416,14 @@ TEST(SetupFile, RoundTripAndTransactionalRestore)
     input.execute("INSERT INTO model_controls VALUES('future_control',NULL)");
     const auto original = model_controls::load(input.database);
     const auto filename = input.directory.filePath(QString::fromUtf8("saved setup ü.navier.json"));
-    setup_file::Setup setup{input.database, input.directory.filePath("output with spaces"), original.rows};
+    setup_file::Setup setup{input.database, input.directory.filePath("output with spaces"), original.rows,
+        QJsonObject{{"profile", "Experimental"}, {"lineColor", "#ff123456"}, {"fill", true}, {"xMin", -2.5}}};
     setup_file::save(filename, setup);
     const auto loaded = setup_file::load(filename);
     EXPECT_EQ(loaded.database, setup.database);
     EXPECT_EQ(loaded.outputDirectory, setup.outputDirectory);
     EXPECT_EQ(loaded.controls, original.rows);
+    EXPECT_EQ(loaded.profiles, setup.profiles);
     input.execute("UPDATE model_controls SET value='7' WHERE criterion='max_iterations'");
     const auto changed = model_controls::load(input.database);
     setup_file::restore(loaded, changed);
@@ -1439,6 +1441,23 @@ TEST(SetupFile, RoundTripAndTransactionalRestore)
     EXPECT_EQ(setup_file::load(filename).controls, original.rows);
 }
 
+TEST(SetupFile, PersistsProfileDisplayOptionsAndLoadsLegacyPresets)
+{
+    QTemporaryDir directory(QDir::current().filePath(".profile-preset-test-XXXXXX"));
+    ASSERT_TRUE(directory.isValid());
+    const auto filename = directory.filePath("profiles.navier.json");
+    setup_file::Setup setup{directory.filePath("database.db"), directory.filePath("reports"), {},
+        QJsonObject{{"profile", "Experimental"}, {"lineColor", "#ff123456"}, {"fill", true}, {"xMin", -2.5}}};
+    setup_file::save(filename, setup);
+    EXPECT_EQ(setup_file::load(filename).profiles, setup.profiles);
+
+    QFile legacy(filename);
+    ASSERT_TRUE(legacy.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    legacy.write(R"({"format":"navier-setup","version":1,"database":"db","outputDirectory":"reports","controls":[]})");
+    legacy.close();
+    EXPECT_TRUE(setup_file::load(filename).profiles.isEmpty());
+}
+
 TEST(SetupFile, ValidatesFileAndResolvesRelativePaths)
 {
     QTemporaryDir directory;
@@ -1448,6 +1467,7 @@ TEST(SetupFile, ValidatesFileAndResolvesRelativePaths)
     };
     write(R"({"format":"navier-setup","version":1,"database":"inputs.db","outputDirectory":"reports","controls":[{"name":"max_iterations","value":"3"}]})");
     const auto loaded = setup_file::load(filename);
+    EXPECT_TRUE(loaded.profiles.isEmpty()); // Presets created before profile settings remain valid.
     EXPECT_EQ(loaded.database, directory.filePath("inputs.db"));
     EXPECT_EQ(loaded.outputDirectory, directory.filePath("reports"));
     for (const auto& bytes : {

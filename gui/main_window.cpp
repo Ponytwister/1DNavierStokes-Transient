@@ -318,7 +318,7 @@ void MainWindow::savePreset(bool saveAs) {
             ? QFileDialog::getSaveFileName(this, "Save preset", presetFilename_, "Navier setup (*.navier.json)")
             : presetFilename_;
         if (filename.isEmpty()) return;
-        setup_file::save(filename, {database_->text().trimmed(), output_->text().trimmed(), snapshot.rows});
+        setup_file::save(filename, {database_->text().trimmed(), output_->text().trimmed(), snapshot.rows, profilesPage_->settings()});
         presetFilename_ = filename;
         if (controlsEditor_) controlsEditor_->configurePresetButton("Update preset", [this] { savePreset(false); });
         setStatus("Preset saved: " + filename);
@@ -346,6 +346,7 @@ void MainWindow::openSetup() {
         discardControlsEditor();
         clearResult();
         database_->setText(setup.database); output_->setText(setup.outputDirectory);
+        profilesPage_->setSettings(setup.profiles);
         modelControls_ = original; modelControls_->rows = setup.controls;
         presetFilename_ = filename;
         tabs_->setCurrentIndex(0);
