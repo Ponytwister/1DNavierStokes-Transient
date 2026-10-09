@@ -1037,6 +1037,53 @@ TEST(Gui, VariablesCanBeDeletedExceptReservedGeometryVariables)
     EXPECT_EQ(input.execute("SELECT count(*) FROM alglib_input WHERE VARIABLE IN ('width','left_edge')"), 2);
 }
 
+TEST(Gui, ExperimentsSpeciesReactionsAndRawProfilesCanBeDeleted)
+{
+    Inputs input;
+    input.execute("INSERT INTO raw_profile_entrance_concentrations VALUES('uniform','1.0',1,'FITC',0.25,'umol')");
+    MainWindow window; input.choose(window); window.show();
+    auto deleteSelected = [&](const char* tableName, const char* buttonName,
+                              const QString& identity, const QString& secondary = {}) {
+        auto* table = widget<QTableWidget>(window, tableName);
+        const int nameColumn = 0;
+        const int secondaryColumn = secondary.isEmpty() ? -1 : 1;
+        int selected = -1;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            if (table->item(row, nameColumn)->text() == identity &&
+                (secondaryColumn < 0 || table->item(row, secondaryColumn)->text() == secondary)) {
+                selected = row; break;
+            }
+        }
+        ASSERT_GE(selected, 0) << "Missing row " << identity.toStdString() << " in " << tableName;
+        table->setCurrentCell(selected, nameColumn); table->selectRow(selected);
+        auto* remove = widget<QPushButton>(window, buttonName);
+        ASSERT_TRUE(remove->isEnabled());
+        QTimer::singleShot(0, &window, [&] {
+            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            ASSERT_NE(box, nullptr); box->button(QMessageBox::Yes)->click();
+        });
+        remove->click();
+    };
+
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(2);
+    deleteSelected("experimentsTable", "experimentsDeleteButton", "uniform");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM experiments WHERE NAME='uniform'"), 0);
+
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(3);
+    deleteSelected("speciesTable", "speciesDeleteButton", "FITC");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM species WHERE SPECIES_NAME='FITC'"), 0);
+
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(4);
+    deleteSelected("reactionsTable", "reactionsDeleteButton", "FITC_40nm_1");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM reactions WHERE REACTION_NAME='FITC_40nm_1'"), 0);
+
+    widget<QTabWidget>(window, "mainTabs")->setCurrentIndex(6);
+    deleteSelected("raw_profileTable", "raw_profileDeleteButton", "uniform", "1.0");
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile WHERE NAME='uniform' AND WT_PERCENT='1.0'"), 0);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE NAME='uniform' AND WT_PERCENT='1.0'"), 0);
+    EXPECT_EQ(input.execute("SELECT count(*) FROM inlet_conditions WHERE INLET_COND_ID=1"), 0);
+}
+
 TEST(Gui, SpeciesAddModifyCancelAndConcurrentChange)
 {
     Inputs input;

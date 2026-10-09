@@ -79,7 +79,6 @@ DatabaseTableTab::DatabaseTableTab(Table table, QWidget* parent)
     add_ = new QPushButton("Add..."); add_->setObjectName(tableName_ + "AddButton");
     modify_ = new QPushButton("Modify..."); modify_->setObjectName(tableName_ + "ModifyButton");
     remove_ = new QPushButton("Delete"); remove_->setObjectName(tableName_ + "DeleteButton");
-    remove_->setVisible(tableKind_ == Table::alglib);
     buttons->addWidget(add_); buttons->addWidget(modify_); buttons->addWidget(remove_);
     buttons->addWidget(refresh_); buttons->addStretch(); layout->addLayout(buttons);
     connect(refresh_, &QPushButton::clicked, this, [this] { load(database_); });
@@ -190,7 +189,7 @@ void DatabaseTableTab::load(QString database) {
             status_->setText("Legacy dimensions: 5e-4 x 4e-5 x 0.025 m. Apply migration 001 to add or modify experiments.");
             return;
         }
-        status_->setText(QString("%1 %2 rows in %3. Use Add or select a row and choose Modify.")
+        status_->setText(QString("%1 %2 rows in %3. Use Add or select a row and choose Modify or Delete.")
             .arg(table_->rowCount()).arg(tableName_).arg(database));
     } catch (const std::exception& error) {
         loaded_ = false; columns_.clear(); updateButtons();
@@ -258,23 +257,26 @@ void DatabaseTableTab::updateButtons() {
     const int variableColumn = columns_.indexOf("VARIABLE");
     const QString selectedVariable = selectedRow >= 0 && variableColumn >= 0 && table_->item(selectedRow, variableColumn)
         ? table_->item(selectedRow, variableColumn)->text() : QString{};
-    remove_->setEnabled(tableKind_ == Table::alglib && loaded_ && editingEnabled_ && selectedRow >= 0 &&
-        variableColumn >= 0 && selectedVariable != "width" && selectedVariable != "left_edge");
+    const bool reservedGeometry = tableKind_ == Table::alglib &&
+        (selectedVariable == "width" || selectedVariable == "left_edge");
+    remove_->setEnabled(loaded_ && editingEnabled_ && selectedRow >= 0 && !reservedGeometry);
 }
 
 void DatabaseTableTab::deleteRow() {
     const int row = table_->currentRow();
-    const int variableColumn = columns_.indexOf("VARIABLE");
-    if (tableKind_ != Table::alglib || !loaded_ || !editingEnabled_ || row < 0 || variableColumn < 0) return;
-    const auto* variableItem = table_->item(row, variableColumn);
-    if (!variableItem) return;
-    const QString variable = variableItem->text();
-    if (variable == "width" || variable == "left_edge") {
-        status_->setText("The reserved geometry variable '" + variable + "' cannot be deleted.");
+    if (!loaded_ || !editingEnabled_ || row < 0 || columns_.isEmpty()) return;
+    const QString identityColumn = tableKind_ == Table::reactions ? "REACTION_NAME"
+        : tableKind_ == Table::species ? "SPECIES_NAME"
+        : tableKind_ == Table::alglib ? "VARIABLE" : "NAME";
+    const int identityIndex = columns_.indexOf(identityColumn);
+    if (identityIndex < 0 || !table_->item(row, identityIndex)) return;
+    const QString identity = table_->item(row, identityIndex)->text();
+    if (tableKind_ == Table::alglib && (identity == "width" || identity == "left_edge")) {
+        status_->setText("The reserved geometry variable '" + identity + "' cannot be deleted.");
         updateButtons();
         return;
     }
-    if (QMessageBox::question(this, "Delete variable", "Delete variable '" + variable + "'?",
+    if (QMessageBox::question(this, "Delete row", "Delete '" + identity + "' from " + tableName_ + "?",
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
 
     const auto database = database_;
@@ -287,21 +289,66 @@ void DatabaseTableTab::deleteRow() {
         std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> db(raw, sqlite3_close_v2);
         if (opened != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db.get()));
         sqlite3_busy_timeout(db.get(), 1000);
-        sqlite3_stmt* query = nullptr;
-        QStringList predicates;
-        for (const auto& column : columns_) predicates << quoteIdentifier(column) + " IS ?";
-        const auto sql = "DELETE FROM alglib_input WHERE " + predicates.join(" AND ");
-        const int prepared = sqlite3_prepare_v2(db.get(), sql.toUtf8().constData(), -1, &query, nullptr);
-        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(query, sqlite3_finalize);
-        if (prepared != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db.get()));
-        for (int i = 0; i < static_cast<int>(original.size()); ++i) bindValue(db.get(), statement.get(), i + 1, original[i]);
-        const int stepped = sqlite3_step(statement.get());
-        if (stepped != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db.get()));
-        if (sqlite3_changes(db.get()) != 1) throw std::runtime_error("The row changed in the database. Refresh before deleting.");
+        auto check = [&](int rc, int expected = SQLITE_OK) {
+            if (rc != expected) throw std::runtime_error(sqlite3_errmsg(db.get()));
+        };
+        check(sqlite3_exec(db.get(), "BEGIN IMMEDIATE", nullptr, nullptr, nullptr));
+        try {
+            sqlite3_stmt* query = nullptr;
+            QStringList predicates;
+            for (const auto& column : columns_) predicates << quoteIdentifier(column) + " IS ?";
+            const auto sql = "DELETE FROM " + quoteIdentifier(tableName_) + " WHERE " + predicates.join(" AND ");
+            const int prepared = sqlite3_prepare_v2(db.get(), sql.toUtf8().constData(), -1, &query, nullptr);
+            std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(query, sqlite3_finalize);
+            check(prepared);
+            for (int i = 0; i < static_cast<int>(original.size()); ++i) bindValue(db.get(), statement.get(), i + 1, original[i]);
+            check(sqlite3_step(statement.get()), SQLITE_DONE);
+            if (sqlite3_changes(db.get()) != 1) throw std::runtime_error("The row changed in the database. Refresh before deleting.");
+            statement.reset();
+
+            if (tableKind_ == Table::raw_profile) {
+                const int nameIndex = columns_.indexOf("NAME");
+                const int weightIndex = columns_.indexOf("WT_PERCENT");
+                const int inletIdIndex = columns_.indexOf("INLET_COND_ID");
+                auto tableExists = [&](const char* name) {
+                    sqlite3_stmt* existsRaw = nullptr;
+                    const int rc = sqlite3_prepare_v2(db.get(),
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", -1, &existsRaw, nullptr);
+                    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> exists(existsRaw, sqlite3_finalize);
+                    check(rc);
+                    check(sqlite3_bind_text(exists.get(), 1, name, -1, SQLITE_STATIC));
+                    const int stepped = sqlite3_step(exists.get());
+                    if (stepped != SQLITE_ROW && stepped != SQLITE_DONE) check(stepped, SQLITE_ROW);
+                    return stepped == SQLITE_ROW;
+                };
+                auto executeCleanup = [&](const QString& cleanupSql, const QVariant& first, const QVariant& second) {
+                    sqlite3_stmt* cleanupRaw = nullptr;
+                    const int rc = sqlite3_prepare_v2(db.get(), cleanupSql.toUtf8().constData(), -1, &cleanupRaw, nullptr);
+                    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> cleanup(cleanupRaw, sqlite3_finalize);
+                    check(rc);
+                    bindValue(db.get(), cleanup.get(), 1, first);
+                    bindValue(db.get(), cleanup.get(), 2, second);
+                    check(sqlite3_step(cleanup.get()), SQLITE_DONE);
+                };
+                if (nameIndex >= 0 && weightIndex >= 0 && tableExists("raw_profile_entrance_concentrations")) {
+                    executeCleanup("DELETE FROM raw_profile_entrance_concentrations WHERE NAME IS ? AND WT_PERCENT IS ?",
+                        original[nameIndex], original[weightIndex]);
+                }
+                if (inletIdIndex >= 0 && original[inletIdIndex].isValid() && tableExists("inlet_conditions")) {
+                    executeCleanup("DELETE FROM inlet_conditions WHERE INLET_COND_ID IS ? AND NOT EXISTS "
+                        "(SELECT 1 FROM raw_profile WHERE INLET_COND_ID IS ?)",
+                        original[inletIdIndex], original[inletIdIndex]);
+                }
+            }
+            check(sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr));
+        } catch (...) {
+            sqlite3_exec(db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
+            throw;
+        }
         load(database);
         if (saved) saved();
     } catch (const std::exception& error) {
-        status_->setText("Cannot delete variable: " + QString::fromUtf8(error.what()));
+        status_->setText("Cannot delete row: " + QString::fromUtf8(error.what()));
     }
 }
 
