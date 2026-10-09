@@ -187,6 +187,27 @@ TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
                 1e-12 + 1e-10 * 0.0005);
 }
 
+TEST(Workflow, NormalizedFitcConcentrationOverridesLegacyZero)
+{
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE raw_profile SET ENTRANCE_CONC=0, ENTRANCE_CONC_UNITS='umol' WHERE WT_PERCENT='1.0';"
+        "INSERT INTO raw_profile_entrance_concentrations "
+        "(NAME,WT_PERCENT,ENTRANCE_NUMBER,SPECIES_NAME,CONCENTRATION,UNITS) "
+        "VALUES('uniform','1.0',1,'FITC',0.00336,'mg/ml')");
+    migrate_channels(session.database());
+    session.load_inputs();
+
+    const auto profile = std::find_if(session.parameters().experiments.begin(), session.parameters().experiments.end(),
+        [](const experiment_struct& item) { return item.second_name == "1.0"; });
+    ASSERT_NE(profile, session.parameters().experiments.end());
+    auto* fitc = &profile->run->species.at(profile->run->FITC);
+    ASSERT_TRUE(profile->entrances.front().CONC.contains(fitc));
+    EXPECT_DOUBLE_EQ(profile->entrances.front().CONC.at(fitc), 0.00336);
+    EXPECT_DOUBLE_EQ(profile->run->dye_conc_mgml, 0.00336);
+}
+
 TEST(Workflow, RawProfileEntranceConcentrationCanUseSolveForAlias) {
     fixture files;
     run_session session(files.database);
