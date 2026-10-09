@@ -4,6 +4,7 @@
 #include "controls_dialog.h"
 #include "setup_file.h"
 #include "report_tab.h"
+#include "profiles_tab.h"
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
@@ -63,6 +64,8 @@ MainWindow::MainWindow()
     reportPage_ = new ReportTab;
     reportPage_->generateRequested = [this] { prepareReport(); };
     tabs_->addTab(reportPage_, "Report");
+    profilesPage_ = new ProfilesTab;
+    tabs_->addTab(profilesPage_, "Profiles");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
         for (const auto& row : snapshot.rows)
@@ -214,6 +217,7 @@ MainWindow::MainWindow()
         reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); rawProfilesPage_->clear(); clearResult();
         // Each table owns its in-memory rows for the selected database.
         reloadTables();
+        profilesPage_->setDatabase(database_->text().trimmed());
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
@@ -262,6 +266,7 @@ MainWindow::MainWindow()
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { poll(); });
     timer_->start(50);
+    profilesPage_->setDatabase(database_->text().trimmed());
     updateControls();
 }
 

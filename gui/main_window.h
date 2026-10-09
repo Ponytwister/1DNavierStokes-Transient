@@ -8,6 +8,7 @@ class ControlsDialog;
 class ExperimentsTab;
 class DatabaseTableTab;
 class ReportTab;
+class ProfilesTab;
 class QAction;
 class QLineEdit;
 class QPushButton;
@@ -68,5 +69,6 @@ private:
     QWidget* controlsPage_;
     ExperimentsTab* experimentsPage_;
     ReportTab* reportPage_;
+    ProfilesTab* profilesPage_;
     DatabaseTableTab *reactionsPage_, *speciesPage_, *alglibPage_, *rawProfilesPage_;
 };
