@@ -366,18 +366,25 @@ that list in a separate **Entrance / inlet** block for each `ENTRANCE_FLOWRATE`
 value. Experiments therefore need one flowrate value per inlet; existing inlet
 references cannot be left without a matching flowrate. Each species row has a
 concentration value and units selector. Units default to that species' entry in
-`SPECIE_MODEL_CONC_UNITS` and can be overridden per profile and inlet. Changing
+`SPECIE_INLET_CONC_UNITS` (falling back to `SPECIE_MODEL_CONC_UNITS`) and can be overridden per profile and inlet. Changing
 `NAME` refreshes the species order, inlet blocks, and default units.
-The **FITC concentration alias** field accepts `#variable_name`; select that
-variable in `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` unless it is already selected
-globally or for the experiment. It must match a row in Variables.
+Any species concentration at any inlet accepts `#variable_name` or a numeric
+fallback followed by an alias, such as `0.25#variable_name`. An alias must match
+a row in Variables. Select it in `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR` unless
+the numeric fallback should be used when the alias is not selected.
 Apply migrations `002_raw_profile_entrance_conc_units.sql`,
 `003_raw_profile_species_concentrations.sql`, and
-`004_raw_profile_entrance_numbers.sql` in order, once each. Migration 003
+`004_raw_profile_entrance_numbers.sql` and
+`005_raw_profile_concentration_aliases.sql` in order, once each. Then run
+`python migrations/006_convert_legacy_raw_profile_concentrations.py DATABASE`
+once for each database that still has legacy concentration matrices. Migration 003
 creates the per-species table and copies existing numeric scalar
 `ENTRANCE_CONC` values to FITC rows. Migration 004 adds the inlet number and
-moves existing concentration rows to inlet 1. Older non-scalar values stay
-intact in the legacy column. The old columns remain for compatibility. The legacy
+moves existing concentration rows to inlet 1. Migration 005 permits alias
+strings in the per-species concentration column. Migration 006 treats each
+legacy matrix line as one inlet, maps the first three values to species order,
+discards a fourth value, and assigns units from `SPECIE_INLET_CONC_UNITS`. It
+also stores these values in the per-species table. The old columns remain for compatibility. The legacy
 `INLET_COND_ID` column remains visible and stored for database compatibility,
 but `ENTRANCE_CONC` rows take precedence when present; profiles without them
 continue to use the existing `inlet_conditions` lookup.

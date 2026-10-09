@@ -223,6 +223,8 @@ struct experiment_struct {
         std::string species_name;
         double concentration;
         std::string units;
+        std::string alias;
+        bool has_paired_value = false;
     };
     std::vector<entrance_concentration_override> entrance_concentrations;
     double exp_DA;

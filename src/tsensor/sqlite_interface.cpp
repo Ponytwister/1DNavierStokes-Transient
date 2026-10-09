@@ -31,10 +31,16 @@ value_alias_token parse_value_alias(const std::string& token, const std::string&
     const auto marker = value.find('#');
     if (marker != std::string::npos) {
         result.alias = value.substr(marker + 1);
-        if (result.alias.empty()) throw std::runtime_error(description + " alias must include a variable name");
+        if (result.alias.empty() || result.alias.find_first_of(" \t\r\n") != std::string::npos)
+            throw std::runtime_error(description + " alias must include a variable name with no spaces");
         value.resize(marker);
     }
-    if (!value.empty()) { result.value = result.sign * std::stod(value); result.has_value = true; }
+    if (!value.empty()) {
+        std::size_t consumed = 0;
+        result.value = result.sign * std::stod(value, &consumed);
+        if (consumed != value.size()) throw std::runtime_error(description + " must be a number optionally followed by #variable_name");
+        result.has_value = true;
+    }
     return result;
 }
 bool alias_is_selected(const parameters_t& p, const experiment_run_struct& run, const std::string& alias)
@@ -894,10 +900,14 @@ find_profile_alias_parameter(parameters_t& p, const experiment_struct& experimen
 }
 
 static double
-profile_alias_value(parameters_t& p, const experiment_struct& experiment, bool use_initial_values)
+profile_alias_value(parameters_t& p, const experiment_struct& experiment, const std::string& alias,
+                    double fallback, bool has_fallback, bool use_initial_values)
 {
-    auto* parameter = find_profile_alias_parameter(p, experiment, experiment.entrance_conc_alias);
-    if (!parameter) return experiment.entrance_conc_override;
+    auto* parameter = find_profile_alias_parameter(p, experiment, alias);
+    if (!parameter) {
+        if (has_fallback) return fallback;
+        throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + alias + "' has no selected parameter or numeric fallback");
+    }
     if (!use_initial_values) return parameter->value();
     for (std::size_t i = 0; i < p.solvables.size(); ++i) {
         if (&p.solvables[i] == parameter) return p.initial_values_alglib.at(i);
@@ -909,23 +919,40 @@ static void
 synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_values)
 {
     for (auto& experiment : p.experiments) {
-        if (experiment.omit || experiment.entrance_conc_alias.empty()) continue;
+        if (experiment.omit) continue;
         auto* run = experiment.run;
-        if (run->FITC < 0 || run->FITC >= static_cast<ptrdiff_t>(run->species.size())) {
-            throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
+        if (!experiment.entrance_conc_alias.empty()) {
+            if (run->FITC < 0 || run->FITC >= static_cast<ptrdiff_t>(run->species.size()))
+                throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
+            if (experiment.entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
+            const double concentration = profile_alias_value(p, experiment, experiment.entrance_conc_alias,
+                experiment.entrance_conc_override, experiment.entrance_conc_has_paired_value, use_initial_values);
+            if (!std::isfinite(concentration) || concentration < 0.0)
+                throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+            specie_struct* inlet_species = &run->species.at(run->FITC);
+            const std::string source_units = experiment.entrance_conc_units.empty()
+                ? inlet_species->model_units : experiment.entrance_conc_units;
+            const double input_concentration = concentration *
+                unit_conversion(run, run->FITC, source_units, inlet_species->input_units);
+            if (!std::isfinite(input_concentration))
+                throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+            experiment.entrances.front().CONC[inlet_species] = input_concentration;
         }
-        if (experiment.entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
-        const double concentration = profile_alias_value(p, experiment, use_initial_values);
-        if (!std::isfinite(concentration) || concentration < 0.0)
-            throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
-        specie_struct* inlet_species = &run->species.at(run->FITC);
-        const std::string source_units = experiment.entrance_conc_units.empty()
-            ? inlet_species->model_units : experiment.entrance_conc_units;
-        const double input_concentration = concentration *
-            unit_conversion(run, run->FITC, source_units, inlet_species->input_units);
-        if (!std::isfinite(input_concentration))
-            throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-        experiment.entrances.front().CONC[inlet_species] = input_concentration;
+        for (const auto& override : experiment.entrance_concentrations) {
+            if (override.alias.empty()) continue;
+            const auto species = specie_index(run, override.species_name);
+            auto* inlet_species = &run->species.at(species);
+            const double concentration = profile_alias_value(p, experiment, override.alias,
+                override.concentration, override.has_paired_value, use_initial_values);
+            if (!std::isfinite(concentration) || concentration < 0.0)
+                throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+            const std::string source_units = override.units.empty() ? inlet_species->model_units : override.units;
+            const double input_concentration = concentration *
+                unit_conversion(run, species, source_units, inlet_species->input_units);
+            if (!std::isfinite(input_concentration))
+                throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+            experiment.entrances.at(override.entrance_number - 1).CONC[inlet_species] = input_concentration;
+        }
     }
 
     for (auto& run : p.experiment_runs) {
@@ -1150,12 +1177,25 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             }
             pop_report(p, 0);
         } else if (criterion == "ENTRANCE_CONC") {
-            if (!value.empty()) {
+            if (!value.empty() && value.find('#') != std::string::npos) {
                 const auto parsed = parse_value_alias(raw_value, "Raw profile ENTRANCE_CONC");
                 exp_ptr->entrance_conc_alias = parsed.alias;
                 exp_ptr->entrance_conc_override = parsed.value;
                 exp_ptr->entrance_conc_has_paired_value = parsed.has_value;
                 exp_ptr->has_entrance_conc_override = true;
+            } else if (!value.empty()) {
+                try {
+                    std::size_t consumed = 0;
+                    const double concentration = std::stod(raw_value, &consumed);
+                    if (consumed == raw_value.size() && std::isfinite(concentration) && concentration >= 0.0) {
+                        exp_ptr->entrance_conc_override = concentration;
+                        exp_ptr->entrance_conc_has_paired_value = true;
+                        exp_ptr->has_entrance_conc_override = true;
+                    }
+                } catch (const std::exception&) {
+                    // Older databases stored concentration matrices in this scalar column.
+                    // Per-species, per-inlet values are read from the normalized table below.
+                }
             }
         } else if (criterion == "ENTRANCE_CONC_UNITS") {
             if (!value.empty()) exp_ptr->entrance_conc_units = value;
@@ -1239,13 +1279,20 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
     execute_sql(p, db, sql, raw_profiles_db_callback, errMsg.out());
 
     for (const auto& experiment : p.experiments) {
-        if (experiment.omit || experiment.entrance_conc_alias.empty()) continue;
-        const bool selected = alias_is_selected(p, *experiment.run, experiment.entrance_conc_alias);
-        if ((!selected && !experiment.entrance_conc_has_paired_value) ||
-            (selected && !find_profile_alias_parameter(p, experiment, experiment.entrance_conc_alias))) {
-            throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + experiment.entrance_conc_alias +
-                                     "' must be selected for its profile, experiment, or globally");
-        }
+        if (experiment.omit) continue;
+        auto validate_alias = [&](const std::string& alias, bool has_fallback) {
+            if (alias.empty()) return;
+            const bool selected = alias_is_selected(p, *experiment.run, alias) ||
+                find_profile_alias_parameter(p, experiment, alias) != nullptr;
+            const bool has_parameter = find_profile_alias_parameter(p, experiment, alias) != nullptr;
+            if ((!selected && !has_fallback) ||
+                (selected && !has_parameter))
+                throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + alias +
+                    "' must be selected for its profile, experiment, or globally, or include a numeric fallback");
+        };
+        validate_alias(experiment.entrance_conc_alias, experiment.entrance_conc_has_paired_value);
+        for (const auto& override : experiment.entrance_concentrations)
+            validate_alias(override.alias, override.has_paired_value);
     }
 
     sqlite3_stmt* table_check_raw = nullptr;
@@ -1271,10 +1318,15 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
                 const int entrance_number = sqlite3_column_int(query.get(), 0);
                 const auto* species = reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 1));
                 const auto* units = reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 3));
-                const double concentration = sqlite3_column_double(query.get(), 2);
-                if (entrance_number < 1 || !species || !std::isfinite(concentration) || concentration < 0.0)
+                const auto* value_text = reinterpret_cast<const char*>(sqlite3_column_text(query.get(), 2));
+                if (entrance_number < 1 || !species || !value_text)
                     throw std::runtime_error("Invalid raw profile entrance concentration row.");
-                experiment.entrance_concentrations.push_back({entrance_number, species, concentration, units ? units : ""});
+                const auto parsed = parse_value_alias(value_text, "Raw profile ENTRANCE_CONC");
+                if (!std::isfinite(parsed.value) || parsed.value < 0.0 || parsed.sign < 0.0 ||
+                    (parsed.alias.empty() && !parsed.has_value))
+                    throw std::runtime_error("Invalid raw profile entrance concentration row.");
+                experiment.entrance_concentrations.push_back({entrance_number, species, parsed.value,
+                    units ? units : "", parsed.alias, parsed.has_value});
             }
             if (rc != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
         }
@@ -1406,6 +1458,7 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
         if (!exp_ptr->entrance_concentrations.empty()) {
             if (exp_ptr->entrances.empty()) throw std::runtime_error("Per-species ENTRANCE_CONC requires at least one entrance.");
             for (const auto& override : exp_ptr->entrance_concentrations) {
+                if (!override.alias.empty()) continue;
                 if (override.entrance_number > static_cast<int>(exp_ptr->entrances.size()))
                     throw std::runtime_error("ENTRANCE_CONC refers to an inlet that is missing from ENTRANCE_FLOWRATE.");
                 const auto specie = specie_index(run_ptr, override.species_name);

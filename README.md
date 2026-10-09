@@ -91,20 +91,21 @@ Alias-only entries still require a selected variable. `reactions.COEFFICIENTS` a
 as in `-#p1` or `-23.7#p1`. Saving fitted parameters updates the numeric part and
 retains the alias. Reusing an alias in multiple slots applies each slot's sign to
 the same solved value.
-The same alias and paired-value forms are accepted by `raw_profile.ENTRANCE_CONC`,
-`species.QE`, `species.DIFFUSION_RATE`, and `species.PARTICLE_DIAMETER`.
-Raw-profile concentration aliases may be selected for that profile, its
-experiment, or globally; species aliases use the experiment or global
-solve-for sections. A selected alias must have a row in `alglib_input`. An
-unselected paired alias uses its numeric value as a fixed value. Entrance
-concentration values use `ENTRANCE_CONC_UNITS` (or the species model units when
-blank), diffusion values use the existing `DIFFUSION_RATE` units, and particle
-diameter values use the database field's nanometer units. Particle diffusion
-is recalculated from the aliased diameter during each solver update.
+The same alias and paired-value forms are accepted by per-species, per-inlet
+raw-profile concentrations, `species.QE`, `species.DIFFUSION_RATE`, and
+`species.PARTICLE_DIAMETER`. Raw-profile concentration aliases may be selected
+for that profile, its experiment, or globally; species aliases use the
+experiment or global solve-for sections. A selected alias must have a row in
+`alglib_input`. An unselected paired alias uses its numeric value as a fixed
+value. Entrance concentration values use the concentration row's `UNITS` (or
+the species model units when blank), diffusion values use the existing
+`DIFFUSION_RATE` units, and particle diameter values use the database field's
+nanometer units. Particle diffusion is recalculated from the aliased diameter
+during each solver update.
 To set one in the app, add the name and bounds in **Variables**, select it in
 **Model controls** or the experiment/profile solve-for picker, then enter
-`#name` in the matching reaction/species field or the Raw profiles **FITC
-concentration alias** field. Coefficients and exponents also accept `-#name`.
+`#name` in the matching reaction/species field or any Raw profiles concentration
+value. Coefficients and exponents also accept `-#name`.
 The **Model controls** tab edits controls held in memory, initially loaded
 from the selected database. Navigation and closing remain available while editing.
 **Run** asks you to accept changed controls; unchanged controls run without a prompt.
