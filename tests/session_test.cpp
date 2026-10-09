@@ -209,9 +209,16 @@ TEST(RunSession, ProfileSamplingReportsTheExperimentBeforeReadingPastItsEnd)
     p.row_count = 0; // Isolate profile preparation; no transient workers.
     p.experiment_runs.resize(1);
     p.experiment_runs.front().name = "sample-run";
+    p.experiment_runs.front().FITC = 0;
+    p.experiment_runs.front().species.resize(1);
+    p.experiment_runs.front().species.front().name = "FITC";
+    p.experiment_runs.front().species.front().input_units = "mg/ml";
+    p.experiment_runs.front().species.front().model_units = "mg/ml";
     p.experiments.resize(1);
     auto& exp = p.experiments.front();
     exp.run = &p.experiment_runs.front();
+    exp.entrances.resize(1);
+    exp.entrances.front().CONC[&p.experiment_runs.front().species.front()] = 1.0;
     exp.second_name = "sample-profile";
     exp.window_size = 5;
     exp.raw_experimental_profile = {10, 20, 30, 40, 50};

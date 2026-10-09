@@ -27,10 +27,12 @@ foreach(answer IN ITEMS n y)
     endif()
     if(answer STREQUAL "n")
         set(expected 0.75)
+        set(profile_saves 1)
     else()
         set(expected 1)
+        set(profile_saves 2)
     endif()
-    execute_process(COMMAND "${FIXTURE_TOOL}" check "${database}" "${expected}"
+    execute_process(COMMAND "${FIXTURE_TOOL}" check "${database}" "${expected}" "${profile_saves}"
         RESULT_VARIABLE result ERROR_VARIABLE error)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "CLI verification failed (${answer}): ${error}")

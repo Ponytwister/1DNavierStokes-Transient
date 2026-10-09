@@ -40,6 +40,19 @@ struct fixture {
         std::ifstream input(std::filesystem::path(TSENSOR_FIXTURE_DIR) / "workflow.sql");
         if (!input) throw std::runtime_error("Missing workflow fixture");
         sql(db.get(), std::string(std::istreambuf_iterator<char>(input), {}));
+        std::ifstream migration(std::filesystem::path(TSENSOR_FIXTURE_DIR) / "../../migrations/007_profile_history_natural_keys.sql");
+        if (!migration) throw std::runtime_error("Missing profile history migration");
+        sql(db.get(), std::string(std::istreambuf_iterator<char>(migration), {}));
+        // Migration 007 intentionally clears normalized inlet rows and old result history.
+        // Restore the synthetic inputs and unrelated history sentinel for workflow tests.
+        sql(db.get(),
+            "INSERT INTO raw_profile_entrance_concentrations "
+            "SELECT NAME,WT_PERCENT,1,'FITC',0.002,'mg/ml' FROM raw_profile;"
+            "INSERT INTO profile_calculations VALUES(99,'unrelated','keq1','all reactions enabled','none',8,4);"
+            "INSERT INTO profile_records VALUES(99,'unrelated','99',3,4,5,6);"
+            "INSERT INTO profile_record_parameters VALUES(99,'','','keq1',42,'','global');"
+            "INSERT INTO profile_record_samples(RUN_AT_UTC_US,EXPERIMENT_NAME,WT_PERCENT,X,\"Numeric\") "
+            "VALUES(99,'unrelated','99',0,42);");
     }
     ~fixture() { std::error_code error; std::filesystem::remove_all(root, error); }
 };
@@ -91,9 +104,9 @@ TEST(Workflow, NoSelectedParametersEvaluatesAndGeneratesReport) {
             EXPECT_NE(session.generate_report().find("Species:FITC"), std::string::npos);
             EXPECT_GT(std::filesystem::file_size(session.export_results(files.root / "reports")), 0u);
             session.save_model_profiles();
-            near(scalar(session.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 36);
-            near(scalar(session.database(), "SELECT max(abs(Numeric-0.002)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
-            near(scalar(session.database(), "SELECT count(*) FROM parameter_solutions WHERE SOLVE_SETTING_ID<>99"), 0);
+            near(scalar(session.database(), "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 36);
+            near(scalar(session.database(), "SELECT max(abs(\"Numeric\"-0.002)) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
+            near(scalar(session.database(), "SELECT count(*) FROM profile_record_parameters WHERE RUN_AT_UTC_US<>99"), 0);
         }
     }
 }
@@ -351,11 +364,12 @@ TEST(ScatterControl, DatabaseAndInMemoryChoicesReachResiduals) {
                 run_session session(files.database);
                 auto* db = session.database();
                 sql(db, "UPDATE species SET PARTICLE_DIAMETER=" + std::to_string(diameter) +
-                        " WHERE SPECIES_NAME='PS_40nm'; DELETE FROM inlet_conditions WHERE SPECIES_NAME='PS_40nm'");
+                        " WHERE SPECIES_NAME='PS_40nm'; DELETE FROM raw_profile_entrance_concentrations WHERE SPECIES_NAME='PS_40nm'");
                 std::ostringstream beads;
                 beads.precision(17);
-                beads << "INSERT INTO inlet_conditions SELECT INLET_COND_ID," << center
-                      << ",1,'PS_40nm' FROM inlet_conditions WHERE SPECIES_NAME='FITC'";
+                beads << "INSERT INTO raw_profile_entrance_concentrations "
+                      << "SELECT NAME,WT_PERCENT,ENTRANCE_NUMBER,'PS_40nm'," << center
+                      << ",'wt%' FROM raw_profile_entrance_concentrations WHERE SPECIES_NAME='FITC'";
                 sql(db, beads.str());
                 sql(db, "UPDATE model_controls SET value='" +
                         (in_memory ? (choice == "none" ? std::string("NS_ND") : std::string("none")) : choice) +
@@ -457,6 +471,9 @@ TEST(ChannelDimensions, MixedExperimentsUseIndependentGeometryAndUniformAnalytic
             "INSERT INTO experiments SELECT * FROM second; "
             "CREATE TEMP TABLE profiles AS SELECT * FROM raw_profile; UPDATE profiles SET NAME='wide'; "
             "INSERT INTO raw_profile SELECT * FROM profiles; "
+            "INSERT INTO raw_profile_entrance_concentrations "
+            "SELECT 'wide',WT_PERCENT,ENTRANCE_NUMBER,SPECIES_NAME,CONCENTRATION,UNITS "
+            "FROM raw_profile_entrance_concentrations WHERE NAME='uniform'; "
             "UPDATE model_controls SET value='uniform wide' WHERE criterion='experiment_name'");
     migrate_channels(db);
     sql(db, "UPDATE experiments SET CHANNEL_WIDTH=.001, CHANNEL_HEIGHT=.00008, CHANNEL_LENGTH=.05 WHERE NAME='wide'");
@@ -488,7 +505,7 @@ TEST(ChannelDimensions, MixedExperimentsUseIndependentGeometryAndUniformAnalytic
     ASSERT_EQ(last_positions.size(), 2u);
     near(last_positions[0], 437.5); near(last_positions[1], 875);
     session.save_model_profiles();
-    near(scalar(db, "SELECT MAX(X) FROM model_profile JOIN solutions USING(SOLUTION_ID) WHERE EXPERIMENT_NAME='wide'"), 1000);
+    near(scalar(db, "SELECT MAX(X) FROM profile_record_samples WHERE EXPERIMENT_NAME='wide'"), 1000);
 }
 
 TEST(ChannelDimensions, RejectsPartialAndInvalidSchemasBeforeCreatingSolutionRecords) {
@@ -497,13 +514,13 @@ TEST(ChannelDimensions, RejectsPartialAndInvalidSchemasBeforeCreatingSolutionRec
         run_session session(files.database);
         sql(session.database(), "ALTER TABLE experiments ADD COLUMN CHANNEL_WIDTH REAL");
         EXPECT_THROW(session.load_inputs(), workflow_error);
-        near(scalar(session.database(), "SELECT count(*) FROM solutions"), 1);
+        near(scalar(session.database(), "SELECT count(*) FROM profile_calculations"), 1);
     }
     {
         run_session session(files.database);
         sql(session.database(), "ALTER TABLE experiments ADD COLUMN CHANNEL_HEIGHT REAL; ALTER TABLE experiments ADD COLUMN CHANNEL_LENGTH REAL");
         EXPECT_THROW(session.load_inputs(), workflow_error);
-        near(scalar(session.database(), "SELECT count(*) FROM solutions"), 1);
+        near(scalar(session.database(), "SELECT count(*) FROM profile_calculations"), 1);
     }
 }
 
@@ -535,7 +552,7 @@ void verify_solution(run_session& session, const run_result& result)
 void verify_persistence(run_session& session, const std::filesystem::path& directory)
 {
     auto* db = session.database();
-    near(scalar(db, "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+    near(scalar(db, "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
     near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
     auto path = session.export_results(directory);
     EXPECT_EQ(path.parent_path(), directory);
@@ -558,18 +575,18 @@ void verify_persistence(run_session& session, const std::filesystem::path& direc
     EXPECT_EQ(dye_rows, 4);
     for (int repeat = 0; repeat < 2; ++repeat) {
         session.save_model_profiles();
-        near(scalar(db, "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 36);
-        near(scalar(db, "SELECT count(*) FROM parameter_solutions WHERE SOLVE_SETTING_ID<>99"), 1);
-        near(scalar(db, "SELECT max(abs(Free_Dye-0.002)) FROM model_profile WHERE SOLUTION_ID<>99 AND Free_Dye<>''"), 0);
-        near(scalar(db, "SELECT max(abs(Numeric-0.002)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
-        near(scalar(db, "SELECT max(abs(Error)) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(db, "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 36 * (repeat + 1));
+        near(scalar(db, "SELECT count(*) FROM profile_record_parameters WHERE RUN_AT_UTC_US<>99"), repeat + 1);
+        near(scalar(db, "SELECT max(abs(Free_Dye-0.002)) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99 AND Free_Dye<>''"), 0);
+        near(scalar(db, "SELECT max(abs(\"Numeric\"-0.002)) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
+        near(scalar(db, "SELECT max(abs(Error)) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
     }
     near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
     session.save_fitted_parameters();
     near(scalar(db, "SELECT [INITIAL VALUE] FROM alglib_input"), session.parameters().initial_values_alglib[0]);
-    near(scalar(db, "SELECT Numeric FROM model_profile WHERE SOLUTION_ID=99"), 42);
-    near(scalar(db, "SELECT VALUE FROM parameter_solutions WHERE SOLUTION_ID=99"), 42);
-    near(scalar(db, "SELECT MODEL_DA FROM solutions WHERE SOLUTION_ID=99"), 4);
+    near(scalar(db, "SELECT \"Numeric\" FROM profile_record_samples WHERE RUN_AT_UTC_US=99"), 42);
+    near(scalar(db, "SELECT VALUE FROM profile_record_parameters WHERE RUN_AT_UTC_US=99"), 42);
+    near(scalar(db, "SELECT MODEL_DA FROM profile_records WHERE RUN_AT_UTC_US=99"), 4);
 }
 
 TEST(Workflow, InitialParameterSnapshotPrecedesSolveAndOwnsStartingValues)
@@ -639,8 +656,8 @@ TEST(Workflow, SynchronousLoadSolveExportSaveAndReload)
     run_session again(files.database);
     again.load_inputs();
     verify_solution(again, again.run());
-    near(scalar(again.database(), "SELECT count(*) FROM solve_settings"), 2);
-    near(scalar(again.database(), "SELECT count(*) FROM solutions"), 5);
+    near(scalar(again.database(), "SELECT count(*) FROM profile_calculations"), 3);
+    near(scalar(again.database(), "SELECT count(*) FROM profile_records"), 9);
 }
 
 TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
@@ -742,7 +759,7 @@ TEST(Workflow, CancelDuringRealSolveThenRunAgain)
     catch (const workflow_error& error) { EXPECT_EQ(error.code, error_code::cancelled); }
     {
         run_session inspect(files.database);
-        near(scalar(inspect.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(inspect.database(), "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
         near(scalar(inspect.database(), "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
     }
     runner.start(files.database);
@@ -774,7 +791,7 @@ TEST(Workflow, InvalidInputsFailWithoutResultsAndAllowFreshRun)
     }
     {
         run_session edit(files.database);
-        near(scalar(edit.database(), "SELECT count(*) FROM model_profile WHERE SOLUTION_ID<>99"), 0);
+        near(scalar(edit.database(), "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 0);
         near(scalar(edit.database(), "SELECT [INITIAL VALUE] FROM alglib_input"), .75);
         sql(edit.database(), "UPDATE alglib_input SET SCALE=1");
     }
