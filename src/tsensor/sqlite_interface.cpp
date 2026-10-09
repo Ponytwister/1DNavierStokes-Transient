@@ -883,6 +883,11 @@ synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_va
             run.dye_conc = run.dye_conc_mgml * unit_conversion(&run, run.FITC,
                 run.species.at(run.FITC).input_units, run.species.at(run.FITC).model_units);
         }
+        if (!std::isfinite(run.dye_conc_mgml) || run.dye_conc_mgml <= 0.0 ||
+            !std::isfinite(run.dye_conc) || run.dye_conc <= 0.0) {
+            throw std::invalid_argument("Experiment '" + run.name +
+                "' has no positive FITC inlet concentration. Check its raw_profile ENTRANCE_CONC values.");
+        }
     }
 }
 

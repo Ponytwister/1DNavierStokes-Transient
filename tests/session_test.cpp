@@ -119,6 +119,31 @@ TEST(RunSession, InletLoaderOwnsZeroInitializedConcentrationBuffers)
     }
 }
 
+TEST(RunSession, ZeroFitcConcentrationFailsWithInputError)
+{
+    run_session session(":memory:");
+    auto& p = session.parameters();
+    p.experiment_runs.emplace_back();
+    auto& run = p.experiment_runs.back();
+    run.name = "zero_dye";
+    run.FITC = 0;
+    run.species.emplace_back();
+    run.species.front().name = "FITC";
+    run.species.front().input_units = "mg/ml";
+    run.species.front().model_units = "mg/ml";
+    p.experiments.emplace_back();
+    p.experiments.back().run = &run;
+    p.experiments.back().entrances.resize(1);
+
+    try {
+        read_alglib_values_from_db(p, session.database());
+        FAIL() << "Expected zero FITC concentration to be rejected";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_NE(std::string(error.what()).find("zero_dye"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("positive FITC inlet concentration"), std::string::npos);
+    }
+}
+
 TEST(RunSession, FailedLoadCannotBeReusedOrSaved)
 {
     run_session session(":memory:");
