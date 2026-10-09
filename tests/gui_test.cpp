@@ -562,9 +562,9 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QLineEdit>(*editor, "entranceConcValue_1_2")->setText("0.05");
         auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
         EXPECT_EQ(choices->count(), model_controls::solvableParameters(input.database).size());
-        widget<QLineEdit>(*editor, "entranceConcAlias")->setText("#missing");
+        widget<QLineEdit>(*editor, "entranceConcValue_1_0")->setText("#missing");
         save->click(); EXPECT_TRUE(error->text().contains("row in Variables")) << error->text().toStdString();
-        widget<QLineEdit>(*editor, "entranceConcAlias")->setText("#inlet_fit");
+        widget<QLineEdit>(*editor, "entranceConcValue_1_0")->setText("0.25#inlet_fit");
         choices->findItems("inlet_fit", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         choices->findItems("left_edge", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
         choices->findItems("width", Qt::MatchExactly).front()->setCheckState(Qt::Checked);
@@ -577,9 +577,9 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
     EXPECT_EQ(input.execute("SELECT OMIT IS NULL FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INTENSITY_ARRAY=('1'||char(9)||'2'||char(9)||'3') FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width inlet_fit' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
-    EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC='#inlet_fit' AND ENTRANCE_CONC_UNITS='umol' FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
+    EXPECT_EQ(input.execute("SELECT ENTRANCE_CONC IS NULL AND ENTRANCE_CONC_UNITS IS NULL FROM raw_profile WHERE WT_PERCENT='5.0'"), 1);
     EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 1);
-    EXPECT_DOUBLE_EQ(input.execute("SELECT CONCENTRATION FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 0.25);
+    EXPECT_EQ(input.execute("SELECT CONCENTRATION='0.25#inlet_fit' FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 1);
     EXPECT_EQ(input.execute("SELECT UNITS='umol' FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1"), 1);
     EXPECT_EQ(input.execute("SELECT count(*) FROM raw_profile_entrance_concentrations WHERE WT_PERCENT='5.0'"), 3);
     QTimer::singleShot(0, &window, [&] {
@@ -599,7 +599,7 @@ TEST(Gui, RawProfilesAddValidateAndModifyCompositeIdentity)
         widget<QComboBox>(*editor, "NAME")->setCurrentText("second");
         widget<QLineEdit>(*editor, "WT_PERCENT")->setText("6");
         widget<QLineEdit>(*editor, "CHANNEL_RIGHT_EDGE")->setText("2"); // Below sample count is allowed.
-        widget<QLineEdit>(*editor, "entranceConcAlias")->clear();
+        widget<QLineEdit>(*editor, "entranceConcValue_1_0")->clear();
         widget<QComboBox>(*editor, "OMIT")->setCurrentText("true");
         auto* choices = widget<QListWidget>(*editor, "rawProfileParameterChoices");
         for (int i = 0; i < choices->count(); ++i) choices->item(i)->setCheckState(Qt::Unchecked);

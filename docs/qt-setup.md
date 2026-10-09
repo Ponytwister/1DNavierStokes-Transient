@@ -353,9 +353,10 @@ a short-lived read-only connection without initializing a model or writing data.
 Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
 Columns appear in this order: `NAME`, `WT_PERCENT`,
-`INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`, `ENTRANCE_CONC`,
-`ENTRANCE_CONC_UNITS`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
-Absent optional columns are skipped; additional database columns follow at the end.
+`INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`,
+`CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
+Legacy `ENTRANCE_CONC` and `ENTRANCE_CONC_UNITS` columns are hidden. Absent optional
+columns are skipped; additional database columns follow at the end.
 The Add and Modify editors present the editable fields in this order.
 Inlet concentrations are stored per profile and inlet in
 `raw_profile_entrance_concentrations`.
@@ -383,15 +384,19 @@ moves existing concentration rows to inlet 1. Migration 005 permits alias
 strings in the per-species concentration column. Migration 006 treats each
 legacy matrix line as one inlet, maps the first three values to species order,
 discards a fourth value, and assigns units from `SPECIE_INLET_CONC_UNITS`. It
-also stores these values in the per-species table. The legacy concentration
-columns remain the source for profiles whose normalized concentration rows are
-empty. Saved calculations are grouped by `RUN_AT_UTC_US` (UTC epoch
+also stores these values in the per-species table. After migration 007, run
+`python migrations/008_move_legacy_raw_profile_concentrations.py DATABASE` once.
+It moves any remaining legacy scalar or matrix values into
+`raw_profile_entrance_concentrations` (normalized rows win on conflicts), clears
+both legacy columns, and sets `user_version` to 4. Runtime concentration lookup
+uses only the normalized table. Saved calculations are grouped by `RUN_AT_UTC_US` (UTC epoch
 microseconds) in
 `profile_calculations`; `profile_records`, `profile_record_parameters`, and
 `profile_record_samples` link metrics, parameter values, and plotted samples by
 experiment name and weight percent. Apply migration 007 after migration 006.
 Migration 007 clears saved history and normalized concentration rows while
-leaving `raw_profile` unchanged.
+leaving `raw_profile` unchanged; migration 008 then normalizes its remaining
+concentration values without changing other raw profile fields.
 
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is

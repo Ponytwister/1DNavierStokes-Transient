@@ -169,7 +169,7 @@ TEST(Workflow, ReactionKsAliasesMustBeSelectedForSolving) {
     EXPECT_THROW(session.load_inputs(), std::runtime_error);
 }
 
-TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
+TEST(Workflow, LegacyRawProfileConcentrationDoesNotOverrideNormalizedRow) {
     fixture files;
     run_session session(files.database);
     sql(session.database(), "UPDATE raw_profile SET ENTRANCE_CONC=5, ENTRANCE_CONC_UNITS='umol' WHERE WT_PERCENT='1.0'");
@@ -182,9 +182,7 @@ TEST(Workflow, RawProfileEntranceConcentrationOverridesLegacyInletId) {
     auto* fitc = &profile->run->species.at(profile->run->FITC);
     ASSERT_FALSE(profile->entrances.empty());
     ASSERT_TRUE(profile->entrances.front().CONC.contains(fitc));
-    // 5 umol of a 100 g/mol molecule is 0.0005 mg/ml; this replaces ID 1's 0.002 mg/ml.
-    EXPECT_NEAR(profile->entrances.front().CONC.at(fitc), 0.0005,
-                1e-12 + 1e-10 * 0.0005);
+    EXPECT_DOUBLE_EQ(profile->entrances.front().CONC.at(fitc), 0.002);
 }
 
 TEST(Workflow, NormalizedFitcConcentrationOverridesLegacyZero)
@@ -193,7 +191,7 @@ TEST(Workflow, NormalizedFitcConcentrationOverridesLegacyZero)
     run_session session(files.database);
     sql(session.database(),
         "UPDATE raw_profile SET ENTRANCE_CONC=0, ENTRANCE_CONC_UNITS='umol' WHERE WT_PERCENT='1.0';"
-        "INSERT INTO raw_profile_entrance_concentrations "
+        "INSERT OR REPLACE INTO raw_profile_entrance_concentrations "
         "(NAME,WT_PERCENT,ENTRANCE_NUMBER,SPECIES_NAME,CONCENTRATION,UNITS) "
         "VALUES('uniform','1.0',1,'FITC',0.00336,'mg/ml')");
     migrate_channels(session.database());
@@ -214,8 +212,10 @@ TEST(Workflow, RawProfileEntranceConcentrationCanUseSolveForAlias) {
     sql(session.database(),
         "ALTER TABLE raw_profile ADD COLUMN INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT;"
         "UPDATE model_controls SET value='keq1' WHERE criterion='universal_solve_for';"
-        "UPDATE raw_profile SET ENTRANCE_CONC='#inlet_fit', ENTRANCE_CONC_UNITS='umol', "
-        "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='inlet_fit' WHERE WT_PERCENT='1.0';"
+        "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='inlet_fit' WHERE WT_PERCENT='1.0';"
+        "INSERT OR REPLACE INTO raw_profile_entrance_concentrations "
+        "(NAME,WT_PERCENT,ENTRANCE_NUMBER,SPECIES_NAME,CONCENTRATION,UNITS) "
+        "VALUES('uniform','1.0',1,'FITC','#inlet_fit','umol');"
         "INSERT INTO alglib_input VALUES('inlet_fit',5,0,10,1)");
     migrate_channels(session.database());
     session.load_inputs();
@@ -227,7 +227,7 @@ TEST(Workflow, RawProfileEntranceConcentrationCanUseSolveForAlias) {
     auto* fitc = &profile->run->species.at(profile->run->FITC);
     ASSERT_TRUE(profile->entrances.front().CONC.contains(fitc));
     near(profile->entrances.front().CONC.at(fitc), 0.0005);
-    near(profile->run->dye_conc_mgml, 0.002); // Other profiles retain the legacy inlet concentration.
+    near(profile->run->dye_conc_mgml, 0.002); // Other profiles retain the fixture concentration.
 
     std::size_t alias_index = p.solvables.size();
     for (std::size_t i = 0; i < p.solvables.size(); ++i)

@@ -835,25 +835,10 @@ synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_va
     for (auto& experiment : p.experiments) {
         if (experiment.omit) continue;
         auto* run = experiment.run;
-        if (!experiment.entrance_conc_alias.empty()) {
-            if (run->FITC < 0 || run->FITC >= static_cast<ptrdiff_t>(run->species.size()))
-                throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
-            if (experiment.entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
-            const double concentration = profile_alias_value(p, experiment, experiment.entrance_conc_alias,
-                experiment.entrance_conc_override, experiment.entrance_conc_has_paired_value, use_initial_values);
-            if (!std::isfinite(concentration) || concentration < 0.0)
-                throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
-            specie_struct* inlet_species = &run->species.at(run->FITC);
-            const std::string source_units = experiment.entrance_conc_units.empty()
-                ? inlet_species->model_units : experiment.entrance_conc_units;
-            const double input_concentration = concentration *
-                unit_conversion(run, run->FITC, source_units, inlet_species->input_units);
-            if (!std::isfinite(input_concentration))
-                throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-            experiment.entrances.front().CONC[inlet_species] = input_concentration;
-        }
         for (const auto& override : experiment.entrance_concentrations) {
             if (override.alias.empty()) continue;
+            if (override.entrance_number < 1 || override.entrance_number > static_cast<int>(experiment.entrances.size()))
+                throw std::runtime_error("ENTRANCE_CONC refers to an inlet that is missing from ENTRANCE_FLOWRATE.");
             const auto species = specie_index(run, override.species_name);
             auto* inlet_species = &run->species.at(species);
             const double concentration = profile_alias_value(p, experiment, override.alias,
@@ -886,7 +871,7 @@ synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_va
         if (!std::isfinite(run.dye_conc_mgml) || run.dye_conc_mgml <= 0.0 ||
             !std::isfinite(run.dye_conc) || run.dye_conc <= 0.0) {
             throw std::invalid_argument("Experiment '" + run.name +
-                "' has no positive FITC inlet concentration. Check its raw_profile ENTRANCE_CONC values.");
+                "' has no positive FITC inlet concentration. Check its raw_profile_entrance_concentrations rows.");
         }
     }
 }
@@ -1088,32 +1073,6 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             for (; x < exp_ptr->raw_experimental_profile.size(); x++) {
                 exp_ptr->raw_experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(x - 1);
             }
-                } else if (criterion == "ENTRANCE_CONC") {
-            if (!value.empty()) {
-                try {
-                    if (value.find_first_of(" \t\r\n") == std::string::npos) {
-                        const auto parsed = parse_value_alias(value, "Raw profile ENTRANCE_CONC");
-                        if (parsed.alias.empty()) {
-                            if (!parsed.has_value || !std::isfinite(parsed.value) || parsed.value < 0.0)
-                                throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
-                            exp_ptr->entrance_conc_override = parsed.value;
-                            exp_ptr->entrance_conc_has_paired_value = true;
-                            exp_ptr->has_entrance_conc_override = true;
-                        } else {
-                            exp_ptr->entrance_conc_override = parsed.value;
-                            exp_ptr->entrance_conc_has_paired_value = parsed.has_value;
-                            exp_ptr->entrance_conc_alias = parsed.alias;
-                            exp_ptr->has_entrance_conc_override = true;
-                        }
-                    } else {
-                        exp_ptr->legacy_entrance_conc_matrix = raw_value;
-                    }
-                } catch (const std::exception&) {
-                    exp_ptr->legacy_entrance_conc_matrix = raw_value;
-                }
-            }
-        } else if (criterion == "ENTRANCE_CONC_UNITS") {
-            if (!value.empty()) exp_ptr->entrance_conc_units = value;
         } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
             add_report(p, 0, "Value=" + value);
             if (!omit && !value.empty()) {
@@ -1277,73 +1236,19 @@ initialize_profile_entrance_concentrations(parameters_t& p, sqlite3* db)
         //initialize the concentration inlet arrays.
         experiment_struct* exp_ptr = &p.experiments.at(row);
         experiment_run_struct* run_ptr = exp_ptr->run;
-        if (!exp_ptr->entrance_concentrations.empty()) {
+        for (const auto& override : exp_ptr->entrance_concentrations) {
             if (exp_ptr->entrances.empty()) throw std::runtime_error("Per-species ENTRANCE_CONC requires at least one entrance.");
-            for (const auto& override : exp_ptr->entrance_concentrations) {
-                if (!override.alias.empty()) continue;
-                if (override.entrance_number > static_cast<int>(exp_ptr->entrances.size()))
-                    throw std::runtime_error("ENTRANCE_CONC refers to an inlet that is missing from ENTRANCE_FLOWRATE.");
-                const auto specie = specie_index(run_ptr, override.species_name);
-                const auto& inlet_species = run_ptr->species.at(specie);
-                const std::string source_units = override.units.empty() ? inlet_species.model_units : override.units;
-                const double input_concentration = override.concentration *
-                    unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
-                if (!std::isfinite(input_concentration))
-                    throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-                exp_ptr->entrances.at(override.entrance_number - 1).CONC[&run_ptr->species.at(specie)] = input_concentration;
-            }
-        } else if (!exp_ptr->legacy_entrance_conc_matrix.empty()) {
-            if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
-            std::istringstream matrix(exp_ptr->legacy_entrance_conc_matrix);
-            std::string line;
-            std::vector<std::string> units;
-            std::istringstream units_stream(exp_ptr->entrance_conc_units);
-            for (std::string unit; units_stream >> unit;) units.push_back(unit);
-            std::size_t entrance = 0;
-            while (std::getline(matrix, line)) {
-                std::istringstream row(line);
-                std::vector<std::string> values;
-                for (std::string value; row >> value;) values.push_back(value);
-                if (values.empty()) continue;
-                if (entrance >= exp_ptr->entrances.size() || values.size() < run_ptr->species.size() ||
-                    values.size() > run_ptr->species.size() + 1)
-                    throw std::runtime_error("Legacy ENTRANCE_CONC must contain one species row per inlet; an optional fourth value is ignored.");
-                for (std::size_t specie = 0; specie < run_ptr->species.size(); ++specie) {
-                    const auto parsed = parse_value_alias(values[specie], "Raw profile ENTRANCE_CONC");
-                    if ((!parsed.has_value && parsed.alias.empty()) || !std::isfinite(parsed.value) || parsed.value < 0.0)
-                        throw std::runtime_error("Legacy ENTRANCE_CONC contains an invalid concentration.");
-                    auto& inlet_species = run_ptr->species[specie];
-                    const auto& source_units = units.size() == run_ptr->species.size() ? units[specie] : inlet_species.input_units;
-                    if (!parsed.alias.empty()) {
-                        exp_ptr->entrance_concentrations.push_back({static_cast<int>(entrance + 1), inlet_species.name,
-                            parsed.value, source_units, parsed.alias, parsed.has_value});
-                        if (parsed.has_value) {
-                            const double fallback = parsed.value * unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
-                            if (!std::isfinite(fallback)) throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-                            exp_ptr->entrances[entrance].CONC[&inlet_species] = fallback;
-                        }
-                    } else {
-                        const double converted = parsed.value * unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
-                        if (!std::isfinite(converted)) throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-                        exp_ptr->entrances[entrance].CONC[&inlet_species] = converted;
-                    }
-                }
-                ++entrance;
-            }
-            if (entrance != exp_ptr->entrances.size())
-                throw std::runtime_error("Legacy ENTRANCE_CONC must contain one concentration row per inlet.");
-        } else if (exp_ptr->has_entrance_conc_override && exp_ptr->entrance_conc_alias.empty()) {
-            if (run_ptr->FITC < 0 || run_ptr->FITC >= static_cast<ptrdiff_t>(run_ptr->species.size()))
-                throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
-            if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
-            specie_struct* inlet_species = &run_ptr->species.at(run_ptr->FITC);
-            const std::string source_units = exp_ptr->entrance_conc_units.empty()
-                ? inlet_species->model_units : exp_ptr->entrance_conc_units;
-            const double input_concentration = exp_ptr->entrance_conc_override *
-                unit_conversion(run_ptr, run_ptr->FITC, source_units, inlet_species->input_units);
+            if (override.entrance_number < 1 || override.entrance_number > static_cast<int>(exp_ptr->entrances.size()))
+                throw std::runtime_error("ENTRANCE_CONC refers to an inlet that is missing from ENTRANCE_FLOWRATE.");
+            if (!override.alias.empty()) continue;
+            const auto specie = specie_index(run_ptr, override.species_name);
+            const auto& inlet_species = run_ptr->species.at(specie);
+            const std::string source_units = override.units.empty() ? inlet_species.model_units : override.units;
+            const double input_concentration = override.concentration *
+                unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
             if (!std::isfinite(input_concentration))
                 throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
-            exp_ptr->entrances.front().CONC[inlet_species] = input_concentration;
+            exp_ptr->entrances.at(override.entrance_number - 1).CONC[&run_ptr->species.at(specie)] = input_concentration;
         }
         // The inlet and outlet Concentration Arrays.
         exp_ptr->species_out.assign(run_ptr->number_of_species, std::vector<double>(p.X, 0.0));

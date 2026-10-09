@@ -140,14 +140,18 @@ void DatabaseTableTab::load(QString database) {
             table_->horizontalHeaderItem(col)->setData(Qt::UserRole, columns_[col]);
         if (tableKind_ == Table::raw_profile) {
             const QStringList displayOrder = {"NAME", "WT_PERCENT", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR",
-                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "ENTRANCE_CONC_UNITS",
-                "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY"};
+                "OMIT", "LEFT_EDGE", "WIDTH", "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY"};
             int position = 0;
             // Move visual sections only; preserve logical columns for editing and filtering.
             for (const auto& name : displayOrder) {
                 const int column = columns_.indexOf(name);
                 if (column >= 0)
                     table_->horizontalHeader()->moveSection(table_->horizontalHeader()->visualIndex(column), position++);
+            }
+            // Legacy storage columns are retained in old databases but no longer used.
+            for (const auto& name : {QStringLiteral("ENTRANCE_CONC"), QStringLiteral("ENTRANCE_CONC_UNITS")}) {
+                const int column = columns_.indexOf(name);
+                if (column >= 0) table_->setColumnHidden(column, true);
             }
         }
         int rc;

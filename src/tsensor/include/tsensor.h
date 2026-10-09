@@ -210,12 +210,6 @@ struct experiment_struct {
     int end_of_channel;
     int window_size;
     int window_start;
-    bool has_entrance_conc_override = false;
-    bool entrance_conc_has_paired_value = false;
-    double entrance_conc_override = 0.0;
-    std::string legacy_entrance_conc_matrix;
-    std::string entrance_conc_alias;
-    std::string entrance_conc_units;
     struct entrance_concentration_override {
         int entrance_number;
         std::string species_name;
