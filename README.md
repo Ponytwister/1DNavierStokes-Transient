@@ -310,8 +310,9 @@ session.save_model_profiles();
 
 Destruction frees the buffers and closes the database on success or exception;
 there is no manual cleanup call. `save_model_profiles` still respects the loaded
-`save_model_profiles` setting. Loading and saving can write database records;
-cleanup does not undo already committed writes or exported files.
+`save_model_profiles` setting. Loading does not create database identity records.
+Profile history is written in one transaction, so a failed save rolls back the
+calculation's records.
 
 Use a **fresh session for each new run**. A session accepts one load followed by
 one solve, then exports/saves. A failed load/solve marks it failed; further
@@ -377,16 +378,18 @@ that previously only printed a warning and let saving continue.
 
 ## Database writes in the workflow
 
-- Loading may insert missing `solve_settings` and `solutions` identity records.
-  Progress messages identify these insertions. It does not save fitted inputs.
-- `save_model_profiles()` respects its setting and writes `parameter_solutions`,
-  updates `solutions` metrics, and replaces the selected `model_profile` rows.
+- Saved calculations are grouped by `RUN_AT_UTC_US` (UTC epoch microseconds) in
+  `profile_calculations`. `profile_records` uses experiment name and weight
+  percent as its profile key; parameters and plotted samples use the same key.
+- `profile_record_parameters` stores fitted values and `profile_record_samples`
+  stores plotted data. These tables use natural keys rather than generated IDs.
+- Per-profile inlet concentrations live in
+  `raw_profile_entrance_concentrations`; the legacy `inlet_conditions` table is
+  no longer part of the schema.
 - Only an explicit `save_fitted_parameters()` call updates fitted initial inputs
   in `alglib_input`, `species`, `reactions`, `experiments`, and `raw_profile`.
 
-These are existing persistence semantics, now documented for future UI callers.
-No transaction or rollback behavior is added: a failed operation may already have
-committed earlier statements. Use a disposable database for automated checks.
+Saving fitted parameters remains an explicit operation.
 
 ## Background execution and cancellation
 
@@ -438,9 +441,9 @@ A cancelled outcome has `background_state::cancelled` and a `workflow_error` wit
 `error_code::cancelled`, with no usable partial session or result. A request accepted
 before successful completion is published wins that race. A simultaneous unrelated
 failure remains a failure. The runner never exports or saves profiles/fitted inputs
-automatically, on either success or cancellation. Loading may already have created
-identity records; cancellation does not roll those writes back. A completed session
-supports the existing explicit export/save operations. Synchronous callers may also
+automatically, on either success or cancellation. Loading does not create database
+identity records. A completed session supports the existing explicit export/save
+operations. Synchronous callers may also
 pass a `std::stop_token` as the third `run_session` constructor argument.
 
 Tests cover cancellation, active-run exclusion, outcome retrieval/reuse, failure

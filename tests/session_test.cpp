@@ -84,8 +84,6 @@ TEST(RunSession, IndependentInputsBuffersAndParameterLinks)
     EXPECT_TRUE(next.parameters().initial_values_alglib.empty());
     EXPECT_TRUE(next.parameters().state.empty());
     EXPECT_EQ(next.parameters().iterations, 0);
-    EXPECT_EQ(next.parameters().SOLVE_SETTING_ID, 0);
-    EXPECT_FALSE(next.parameters().SOLUTION_ID_RECURSIVE_CALL);
 }
 
 TEST(RunSession, InletLoaderOwnsZeroInitializedConcentrationBuffers)
@@ -110,17 +108,10 @@ TEST(RunSession, InletLoaderOwnsZeroInitializedConcentrationBuffers)
     p.experiments.resize(4);
     for (auto& experiment : p.experiments) {
         experiment.run = &run;
-        experiment.INLET_COND_ID = 1;
-        experiment.has_legacy_inlet_cond_id = true;
         experiment.entrances.resize(1);
+        experiment.entrance_concentrations.push_back({1, "FITC", 2.0, "mg/ml", "", true});
     }
-    execute(session.database(), R"(
-        CREATE TABLE inlet_conditions (
-            INLET_COND_ID INTEGER, SPECIE_CONC REAL,
-            ENTRANCE_NUMBER INTEGER, SPECIES_NAME TEXT);
-        INSERT INTO inlet_conditions VALUES (1, 2.0, 1, 'FITC');
-    )");
-    read_inlet_cond_from_db(p, session.database());
+    initialize_profile_entrance_concentrations(p, session.database());
     for (const auto& experiment : p.experiments) {
         ASSERT_EQ(experiment.species_out.size(), 1u);
         EXPECT_EQ(experiment.species_out.front(), std::vector<double>(4, 0.0));

@@ -145,12 +145,9 @@ void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_value
     initialize_channel_dimensions(p, db);
     lines_from_profile_text(p, db);
     read_exp_parameters_from_db(p, db);
-    get_solve_settings_ID_from_db(p, db);
     read_specie_and_reaction_values_from_db(p, db);
     read_raw_profiles_from_db(p, db);
-    read_inlet_cond_from_db(p, db);
-    get_SOLUTION_IDs_from_db(p, db);
-    //get_solvable_initial_values_from_db(p, db);
+    initialize_profile_entrance_concentrations(p, db);
     read_alglib_values_from_db(p, db);
     progress_event initialized{event_kind::parameters_initialized, operation::load_inputs, {}};
     for (std::size_t i = 0; i < p.solvables.size(); ++i) {

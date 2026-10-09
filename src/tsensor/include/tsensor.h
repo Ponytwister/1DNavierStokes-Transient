@@ -210,12 +210,10 @@ struct experiment_struct {
     int end_of_channel;
     int window_size;
     int window_start;
-    int SOLUTION_ID = 0;
-    int INLET_COND_ID = 0;
-    bool has_legacy_inlet_cond_id = false;
     bool has_entrance_conc_override = false;
     bool entrance_conc_has_paired_value = false;
     double entrance_conc_override = 0.0;
+    std::string legacy_entrance_conc_matrix;
     std::string entrance_conc_alias;
     std::string entrance_conc_units;
     struct entrance_concentration_override {
@@ -273,9 +271,6 @@ typedef struct parameters_struct : channel_dimensions {
     std::stop_token cancellation;
     tsensor_workflow::operation active_operation = tsensor_workflow::operation::none;
     // Model Control Parameters
-    int SOLVE_SETTING_ID = 0;
-    bool SOLVE_SETTING_RECURSIVE_CALL = false;
-    bool SOLUTION_ID_RECURSIVE_CALL = false;
     bool PROFILE_IDs_RECURSIVE_CALL = false;
     int Z = 0, X = 0, exp_left_padding = 0, exp_right_padding = 0;
     alglib::ae_int_t max_iterations = 0;
@@ -342,15 +337,9 @@ int read_model_parameters_db_callback(void *data, int count, char **argv, char *
 void read_model_parameters_from_db(parameters_t& p, sqlite3* db);
 int raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_raw_profiles_from_db(parameters_t& p, sqlite3* db);
-int inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames);
-void read_inlet_cond_from_db(parameters_t& p, sqlite3* db);
-int get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **columnNames);
-void get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db);
+void initialize_profile_entrance_concentrations(parameters_t& p, sqlite3* db);
 int alglib_input_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_alglib_values_from_db(parameters_t& p, sqlite3* db);
-void get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db);
-int get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames);
-void get_solvable_initial_values_from_db(parameters_t& p, sqlite3* db);
 void write_model_profile_to_db(parameters_t& p, sqlite3* db);
 void write_alglib_values_to_db(parameters_t& p, sqlite3* db);
 int specie_db_callback(void *data, int count, char **argv, char **columnNames);

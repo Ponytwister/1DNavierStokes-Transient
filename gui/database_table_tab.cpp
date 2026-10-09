@@ -43,9 +43,6 @@ int maxConfiguredEntranceNumber(sqlite3* db, const QString& experimentName) {
             throw std::runtime_error(sqlite3_errmsg(db));
         maximum = std::max(maximum, sqlite3_column_int(query.get(), 0));
     };
-    readMaximum("SELECT COALESCE(MAX(i.ENTRANCE_NUMBER),0) FROM raw_profile r "
-                "JOIN inlet_conditions i ON i.INLET_COND_ID=r.INLET_COND_ID "
-                "WHERE r.NAME COLLATE BINARY=?");
     readMaximum("SELECT COALESCE(MAX(ENTRANCE_NUMBER),0) FROM raw_profile_entrance_concentrations "
                 "WHERE NAME COLLATE BINARY=?");
     return maximum;
@@ -142,10 +139,8 @@ void DatabaseTableTab::load(QString database) {
         for (int col = 0; col < columns_.size(); ++col)
             table_->horizontalHeaderItem(col)->setData(Qt::UserRole, columns_[col]);
         if (tableKind_ == Table::raw_profile) {
-            const int legacyId = headers.indexOf("INLET_COND_ID");
-            if (legacyId >= 0) table_->horizontalHeaderItem(legacyId)->setText("INLET_COND_ID (deprecated)");
             const QStringList displayOrder = {"NAME", "WT_PERCENT", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR",
-                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "ENTRANCE_CONC_UNITS", "INLET_COND_ID",
+                "OMIT", "LEFT_EDGE", "WIDTH", "ENTRANCE_CONC", "ENTRANCE_CONC_UNITS",
                 "CHANNEL_LEFT_EDGE", "CHANNEL_RIGHT_EDGE", "INTENSITY_ARRAY"};
             int position = 0;
             // Move visual sections only; preserve logical columns for editing and filtering.
@@ -309,18 +304,6 @@ void DatabaseTableTab::deleteRow() {
             if (tableKind_ == Table::raw_profile) {
                 const int nameIndex = columns_.indexOf("NAME");
                 const int weightIndex = columns_.indexOf("WT_PERCENT");
-                const int inletIdIndex = columns_.indexOf("INLET_COND_ID");
-                auto tableExists = [&](const char* name) {
-                    sqlite3_stmt* existsRaw = nullptr;
-                    const int rc = sqlite3_prepare_v2(db.get(),
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", -1, &existsRaw, nullptr);
-                    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> exists(existsRaw, sqlite3_finalize);
-                    check(rc);
-                    check(sqlite3_bind_text(exists.get(), 1, name, -1, SQLITE_STATIC));
-                    const int stepped = sqlite3_step(exists.get());
-                    if (stepped != SQLITE_ROW && stepped != SQLITE_DONE) check(stepped, SQLITE_ROW);
-                    return stepped == SQLITE_ROW;
-                };
                 auto executeCleanup = [&](const QString& cleanupSql, const QVariant& first, const QVariant& second) {
                     sqlite3_stmt* cleanupRaw = nullptr;
                     const int rc = sqlite3_prepare_v2(db.get(), cleanupSql.toUtf8().constData(), -1, &cleanupRaw, nullptr);
@@ -330,14 +313,9 @@ void DatabaseTableTab::deleteRow() {
                     bindValue(db.get(), cleanup.get(), 2, second);
                     check(sqlite3_step(cleanup.get()), SQLITE_DONE);
                 };
-                if (nameIndex >= 0 && weightIndex >= 0 && tableExists("raw_profile_entrance_concentrations")) {
+                if (nameIndex >= 0 && weightIndex >= 0) {
                     executeCleanup("DELETE FROM raw_profile_entrance_concentrations WHERE NAME IS ? AND WT_PERCENT IS ?",
                         original[nameIndex], original[weightIndex]);
-                }
-                if (inletIdIndex >= 0 && original[inletIdIndex].isValid() && tableExists("inlet_conditions")) {
-                    executeCleanup("DELETE FROM inlet_conditions WHERE INLET_COND_ID IS ? AND NOT EXISTS "
-                        "(SELECT 1 FROM raw_profile WHERE INLET_COND_ID IS ?)",
-                        original[inletIdIndex], original[inletIdIndex]);
                 }
             }
             check(sqlite3_exec(db.get(), "COMMIT", nullptr, nullptr, nullptr));

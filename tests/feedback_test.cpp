@@ -174,49 +174,6 @@ TEST(Feedback, WorkerDeliveriesAreSerialized)
     EXPECT_EQ(overlaps, 0);
 }
 
-TEST(Feedback, LoadingIdentityRecordsIsAnExplicitlyReportedWrite)
-{
-    run_session session(":memory:");
-    auto& p = session.parameters();
-    p.active_operation = operation::load_inputs;
-    std::vector<progress_event> events;
-    p.progress = [&](const progress_event& event) { events.push_back(event); };
-    execute(session.database(), R"(
-        CREATE TABLE solve_settings (
-            SOLVE_SETTING_ID INTEGER PRIMARY KEY, ALL_EXP_FITTED TEXT,
-            PARAMETERS_SOLVED_FOR TEXT, REACTIONS_ENABLED TEXT,
-            SCATTER_METHOD TEXT, X_RESOLUTION INTEGER, Z_RESOLUTION INTEGER);
-        CREATE TABLE solutions (SOLUTION_ID INTEGER PRIMARY KEY,
-            SOLVE_SETTING_ID INTEGER, EXPERIMENT_NAME TEXT, INLET_COND_ID INTEGER);
-    )");
-    p.experiment_runs.emplace_back();
-    p.experiment_runs[0].name = "fixture";
-    for (int inlet = 1; inlet <= 4; ++inlet) {
-        p.experiments.emplace_back();
-        p.experiments.back().run = &p.experiment_runs[0];
-        p.experiments.back().INLET_COND_ID = inlet;
-    }
-    get_solve_settings_ID_from_db(p, session.database());
-    get_SOLUTION_IDs_from_db(p, session.database());
-    EXPECT_GT(p.SOLVE_SETTING_ID, 0);
-    EXPECT_GT(p.experiments[0].SOLUTION_ID, 0);
-    EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT count(*) FROM solve_settings;"), 1.0);
-    EXPECT_DOUBLE_EQ(scalar(session.database(), "SELECT count(*) FROM solutions;"), 4.0);
-    const auto creations = std::count_if(events.begin(), events.end(), [](const progress_event& event) {
-        return event.action == operation::load_inputs && event.message.find("Creating ") == 0;
-    });
-    EXPECT_EQ(creations, 2); // One settings message and one summary for all four profiles.
-    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const progress_event& event) {
-        return event.message == "Creating 4 solution records";
-    }), 1);
-    events.clear();
-    get_solve_settings_ID_from_db(p, session.database());
-    get_SOLUTION_IDs_from_db(p, session.database());
-    EXPECT_FALSE(std::any_of(events.begin(), events.end(), [](const progress_event& event) {
-        return event.message.find("Creating ") == 0;
-    }));
-}
-
 TEST(Feedback, DatabaseWriteFailuresHaveSqliteCodes)
 {
     run_session session(":memory:");

@@ -205,6 +205,30 @@ bool editRawProfile(const QString& database, const QStringList& columns,
             const QString defaultUnits = modelUnits(catalog, "FITC");
             const QString savedUnits = old("ENTRANCE_CONC_UNITS").toString();
             originalConcentrations.push_back({1, "FITC", *scalarConcentration(old("ENTRANCE_CONC")), savedUnits.isEmpty() ? defaultUnits : savedUnits, {}, true});
+        } else if (originalConcentrations.empty()) {
+            const auto lines = old("ENTRANCE_CONC").toString().split(QRegularExpression("\\r\\n|\\r|\\n"), Qt::SkipEmptyParts);
+            const auto savedUnits = old("ENTRANCE_CONC_UNITS").toString().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            for (int entrance = 0; entrance < lines.size(); ++entrance) {
+                const auto values = lines[entrance].split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+                if (values.isEmpty()) continue;
+                if (entrance >= catalog.entranceCount || values.size() < catalog.species.size() ||
+                    values.size() > catalog.species.size() + 1)
+                    throw std::runtime_error("Legacy ENTRANCE_CONC must contain one species row per inlet; an optional fourth value is ignored.");
+                for (int specie = 0; specie < catalog.species.size(); ++specie) {
+                    const int marker = values[specie].indexOf('#');
+                    const QString alias = marker < 0 ? QString{} : values[specie].mid(marker + 1);
+                    const QString number = marker < 0 ? values[specie] : values[specie].left(marker);
+                    bool ok = false;
+                    const double concentration = number.isEmpty() ? 0.0 : number.toDouble(&ok);
+                    if ((!number.isEmpty() && (!ok || !std::isfinite(concentration) || concentration < 0.0)) ||
+                        (marker >= 0 && (alias.isEmpty() || alias.contains(QRegularExpression("\\s")))) ||
+                        (marker < 0 && !ok))
+                        throw std::runtime_error("Legacy ENTRANCE_CONC contains an invalid concentration or alias.");
+                    const auto units = savedUnits.size() == catalog.species.size() ? savedUnits[specie]
+                        : (catalog.species[specie].inletUnits.isEmpty() ? catalog.species[specie].modelUnits : catalog.species[specie].inletUnits);
+                    originalConcentrations.push_back({entrance + 1, catalog.species[specie].name, concentration, units, alias, !number.isEmpty()});
+                }
+            }
         }
     } else readConcentrations(catalogDb.get(), QVariant{}, QVariant{});
     auto addField = [&](const QString& field) {
@@ -365,9 +389,9 @@ bool editRawProfile(const QString& database, const QStringList& columns,
                 concentrationByKey.insert(key, value);
                 editedConcentrations.push_back(value);
             }
-            if ((adding || !old("INLET_COND_ID").isValid()) && !allConcentrationsEntered)
+            if (!allConcentrationsEntered)
                 throw std::runtime_error("ENTRANCE_CONC: enter a concentration for every species at every inlet.");
-            if ((adding || !old("INLET_COND_ID").isValid()) && concentrationWidgets.empty())
+            if (concentrationWidgets.empty())
                 throw std::runtime_error("ENTRANCE_CONC: the selected experiment needs species and a flowrate value for every inlet.");
             auto concentrationKey = [](int entrance, const QString& species) {
                 return QString::number(entrance) + QChar(0x1f) + species;

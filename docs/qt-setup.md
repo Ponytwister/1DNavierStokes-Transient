@@ -192,9 +192,8 @@ After a successful run:
 Export and saves run off the UI thread and are serialized with calculations.
 Errors appear in the status and log; a failed export/save keeps results available
 for retry. Nothing is exported or saved automatically after a calculation.
-Loading can still create identity records, as documented for the core workflow.
-Existing partial-write behavior is unchanged: a failing database save does not
-roll back statements already committed.
+Loading does not create database identity records. Profile history writes are
+transactional, so a failed profile save rolls back its database changes.
 
 **Cancel** requests cooperative cancellation. Closing during a calculation
 requests cancellation and defers closing until workers finish; closing during a
@@ -355,11 +354,11 @@ Changing databases clears the previous rows, including when the new database
 cannot be loaded. The tab is disabled during runs and result saves.
 Columns appear in this order: `NAME`, `WT_PERCENT`,
 `INDEPENDENT_PARAMETERS_TO_SOLVE_FOR`, `OMIT`, `LEFT_EDGE`, `WIDTH`, `ENTRANCE_CONC`,
-`ENTRANCE_CONC_UNITS`, `INLET_COND_ID (deprecated)`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
+`ENTRANCE_CONC_UNITS`, `CHANNEL_LEFT_EDGE`, `CHANNEL_RIGHT_EDGE`, `INTENSITY_ARRAY`.
 Absent optional columns are skipped; additional database columns follow at the end.
-The Add and Modify editors present the editable fields in this order. The
-deprecated `INLET_COND_ID` remains visible in the table but is not editable.
-This display order does not alter the database schema.
+The Add and Modify editors present the editable fields in this order.
+Inlet concentrations are stored per profile and inlet in
+`raw_profile_entrance_concentrations`.
 
 The editor lists species in the selected experiment's declared order. It repeats
 that list in a separate **Entrance / inlet** block for each `ENTRANCE_FLOWRATE`
@@ -384,10 +383,15 @@ moves existing concentration rows to inlet 1. Migration 005 permits alias
 strings in the per-species concentration column. Migration 006 treats each
 legacy matrix line as one inlet, maps the first three values to species order,
 discards a fourth value, and assigns units from `SPECIE_INLET_CONC_UNITS`. It
-also stores these values in the per-species table. The old columns remain for compatibility. The legacy
-`INLET_COND_ID` column remains visible and stored for database compatibility,
-but `ENTRANCE_CONC` rows take precedence when present; profiles without them
-continue to use the existing `inlet_conditions` lookup.
+also stores these values in the per-species table. The legacy concentration
+columns remain the source for profiles whose normalized concentration rows are
+empty. Saved calculations are grouped by `RUN_AT_UTC_US` (UTC epoch
+microseconds) in
+`profile_calculations`; `profile_records`, `profile_record_parameters`, and
+`profile_record_samples` link metrics, parameter values, and plotted samples by
+experiment name and weight percent. Apply migration 007 after migration 006.
+Migration 007 clears saved history and normalized concentration rows while
+leaving `raw_profile` unchanged.
 
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is

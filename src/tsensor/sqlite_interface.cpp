@@ -602,92 +602,6 @@ read_exp_parameters_from_db(parameters_t& p, sqlite3* db) //reading data using c
 }
 
 int 
-get_solve_settings_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
-{
-    auto& p = *static_cast<parameters_t*>(data);
-    //1st parameter of this function is received from 4th parameter of sqlite3_exec
-    //count->is the number of columns
-    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
-    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
-    if (argv[0] != NULL) {
-        p.SOLVE_SETTING_ID = std::stoi(argv[0]);
-        add_report(p, 3, "Solve settings ID: " + std::string(argv[0]));
-    }
-    return 0;
-}
-
-void 
-get_solve_settings_ID_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
-{
-    add_report(p, 3, "Retrieving solve settings ID from database");
-    sqlite_error_message errMsg;
-    std::string sqltext;
-
-    std::vector<std::string> Individual_EXP_FITTED;
-    std::string ALL_EXP_FITTED;
-    for (int run = 0; run < p.experiment_runs.size(); run++) {
-        Individual_EXP_FITTED.emplace_back(p.experiment_runs.at(run).name);
-    }
-    sort(Individual_EXP_FITTED.begin(), Individual_EXP_FITTED.end());
-    for (int i = 0; i < Individual_EXP_FITTED.size(); i++) {
-        ALL_EXP_FITTED.append(Individual_EXP_FITTED.at(i));
-        if (i != Individual_EXP_FITTED.size() - 1) {
-            ALL_EXP_FITTED.append(" ");
-        }
-    }
-
-    std::vector<std::string> Individual_PARAMETERS_SOLVED_FOR;
-    std::string PARAMETERS_SOLVED_FOR;
-    for (int index = 0; index < p.global_solve_for.size(); index++) {
-        Individual_PARAMETERS_SOLVED_FOR.emplace_back(p.solve_for[index]);
-    }
-    sort(Individual_PARAMETERS_SOLVED_FOR.begin(), Individual_PARAMETERS_SOLVED_FOR.end());
-    for (int i = 0; i < Individual_PARAMETERS_SOLVED_FOR.size(); i++) {
-        PARAMETERS_SOLVED_FOR.append(Individual_PARAMETERS_SOLVED_FOR.at(i));
-        if (i != Individual_PARAMETERS_SOLVED_FOR.size() - 1) {
-            PARAMETERS_SOLVED_FOR.append(" ");
-        }
-    }
-
-    std::string REACTIONS_ENABLED;
-    if (p.disable_reactions) {
-        REACTIONS_ENABLED = "all reactions disabled";
-    } else if (p.disable_reverse_reactions) {
-        REACTIONS_ENABLED = "all reverse reactions disabled";
-    } else {
-        REACTIONS_ENABLED = "all reactions enabled";
-    }
-
-    std::string X_RESOLUTION = std::to_string(p.X);
-    std::string Z_RESOLUTION = std::to_string(p.Z);
-
-    sqltext.append("SELECT SOLVE_SETTING_ID FROM solve_settings ");
-    sqltext.append("WHERE ALL_EXP_FITTED = '" + ALL_EXP_FITTED + "' ");
-    sqltext.append("AND PARAMETERS_SOLVED_FOR = '" + PARAMETERS_SOLVED_FOR + "' ");
-    sqltext.append("AND REACTIONS_ENABLED = '" + REACTIONS_ENABLED + "' ");
-    sqltext.append("AND SCATTER_METHOD = '" + p.scatter_correction_type + "' ");
-    sqltext.append("AND X_RESOLUTION = '" + X_RESOLUTION + "' ");
-    sqltext.append("AND Z_RESOLUTION = '" + Z_RESOLUTION + "'; ");
-    execute_sql(p, db, sqltext.c_str(), get_solve_settings_ID_from_db_callback, errMsg.out());
-    sqltext.clear();
-
-    if (p.SOLVE_SETTING_ID == 0) {
-        add_report(p, 3, "Creating a solve_settings record");
-        sqltext.append("INSERT INTO solve_settings (ALL_EXP_FITTED, PARAMETERS_SOLVED_FOR, REACTIONS_ENABLED, SCATTER_METHOD, X_RESOLUTION, Z_RESOLUTION)");
-        sqltext.append(" VALUES ('" + ALL_EXP_FITTED + "','" + PARAMETERS_SOLVED_FOR + "','" + REACTIONS_ENABLED + "','" + p.scatter_correction_type + "','" + X_RESOLUTION + "','" + Z_RESOLUTION + "'); ");
-
-        execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-        if (p.SOLVE_SETTING_RECURSIVE_CALL == true) {
-            throw std::runtime_error("SOLVE_SETTING_ID recursively called more than once.");
-        } else {
-            p.SOLVE_SETTING_RECURSIVE_CALL = true;
-            get_solve_settings_ID_from_db(p, db); // recursive call to ensure p.SOLVE_SETTING_ID is set.
-        }
-    }
-
-}
-
-int 
 specie_db_callback(void *data, int count, char **argv, char **columnNames)
 {
     auto& p = *static_cast<parameters_t*>(data);
@@ -1169,32 +1083,28 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             for (; x < exp_ptr->raw_experimental_profile.size(); x++) {
                 exp_ptr->raw_experimental_profile.at(x) = exp_ptr->raw_experimental_profile.at(x - 1);
             }
-        } else if (criterion == "INLET_COND_ID") {
-            add_report(p, 0, "Value=" + value);
+                } else if (criterion == "ENTRANCE_CONC") {
             if (!value.empty()) {
-                exp_ptr->INLET_COND_ID = std::stoi(value);
-                exp_ptr->has_legacy_inlet_cond_id = true;
-            }
-            pop_report(p, 0);
-        } else if (criterion == "ENTRANCE_CONC") {
-            if (!value.empty() && value.find('#') != std::string::npos) {
-                const auto parsed = parse_value_alias(raw_value, "Raw profile ENTRANCE_CONC");
-                exp_ptr->entrance_conc_alias = parsed.alias;
-                exp_ptr->entrance_conc_override = parsed.value;
-                exp_ptr->entrance_conc_has_paired_value = parsed.has_value;
-                exp_ptr->has_entrance_conc_override = true;
-            } else if (!value.empty()) {
                 try {
-                    std::size_t consumed = 0;
-                    const double concentration = std::stod(raw_value, &consumed);
-                    if (consumed == raw_value.size() && std::isfinite(concentration) && concentration >= 0.0) {
-                        exp_ptr->entrance_conc_override = concentration;
-                        exp_ptr->entrance_conc_has_paired_value = true;
-                        exp_ptr->has_entrance_conc_override = true;
+                    if (value.find_first_of(" \t\r\n") == std::string::npos) {
+                        const auto parsed = parse_value_alias(value, "Raw profile ENTRANCE_CONC");
+                        if (parsed.alias.empty()) {
+                            if (!parsed.has_value || !std::isfinite(parsed.value) || parsed.value < 0.0)
+                                throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
+                            exp_ptr->entrance_conc_override = parsed.value;
+                            exp_ptr->entrance_conc_has_paired_value = true;
+                            exp_ptr->has_entrance_conc_override = true;
+                        } else {
+                            exp_ptr->entrance_conc_override = parsed.value;
+                            exp_ptr->entrance_conc_has_paired_value = parsed.has_value;
+                            exp_ptr->entrance_conc_alias = parsed.alias;
+                            exp_ptr->has_entrance_conc_override = true;
+                        }
+                    } else {
+                        exp_ptr->legacy_entrance_conc_matrix = raw_value;
                     }
                 } catch (const std::exception&) {
-                    // Older databases stored concentration matrices in this scalar column.
-                    // Per-species, per-inlet values are read from the normalized table below.
+                    exp_ptr->legacy_entrance_conc_matrix = raw_value;
                 }
             }
         } else if (criterion == "ENTRANCE_CONC_UNITS") {
@@ -1290,7 +1200,6 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
                 throw std::runtime_error("Raw profile ENTRANCE_CONC alias '" + alias +
                     "' must be selected for its profile, experiment, or globally, or include a numeric fallback");
         };
-        validate_alias(experiment.entrance_conc_alias, experiment.entrance_conc_has_paired_value);
         for (const auto& override : experiment.entrance_concentrations)
             validate_alias(override.alias, override.has_paired_value);
     }
@@ -1353,103 +1262,11 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
 }
 
 
-int 
-inlet_cond_db_callback(void *data, int count, char **argv, char **columnNames)
-{
-    auto& p = *static_cast<parameters_t*>(data);
-    add_report(p, 0, "callback_start");
-    //1st parameter of this function is received from 4th parameter of sqlite3_exec
-    //count->is the number of columns
-    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
-    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
-    std::string criterion;
-    std::string s; // variable to store token obtained from the original string
-    std::string value;
-    std::vector<experiment_struct*> exp_ptrs;
-    experiment_struct* exp_ptr;
-    experiment_run_struct* run_ptr;
-    specie_struct* specie_ptr;
-    double SPECIE_CONC;
-    int ENTRANCE_NUMBER;
-    std::string SPECIES_NAME;
-    
-    for(int i = 0; i < count; i++) {
-        criterion = columnNames[i];
-        if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
-        removeSpaces(value);
-        pop_and_add(p, 0, criterion);
-        if (criterion == "INLET_COND_ID") {
-            exp_ptrs.clear();
-            exp_ptrs.shrink_to_fit();
-            for (ptrdiff_t j = 0; j < p.row_count; j++) {
-                if (p.experiments.at(j).INLET_COND_ID == std::stoi(value)) {
-                    exp_ptrs.emplace_back(&p.experiments.at(j));
-                }
-            }
-        } else if (criterion == "SPECIE_CONC") {
-            if (!value.empty()) {
-                SPECIE_CONC = std::stod(value);
-            } else {
-                throw std::runtime_error("NULL in SPECIE_CONC in the inlet_conditions table");
-            }
-        } else if (criterion == "ENTRANCE_NUMBER") {
-            if (!value.empty()) {
-                ENTRANCE_NUMBER = std::stoi(value) - 1; // 1 index to 0 index
-            } else {
-                throw std::runtime_error("NULL in ENTRANCE_NUMBER in the inlet_conditions table");
-            }
-        } else if (criterion == "SPECIES_NAME") {
-            if (!value.empty()) {
-                SPECIES_NAME = value;
-            } else {
-                throw std::runtime_error("NULL in SPECIES_NAME in the inlet_conditions table");
-            }
-        } 
-    };
-
-    for (int sub_row = 0; sub_row < exp_ptrs.size(); sub_row++) {
-        exp_ptr = exp_ptrs.at(sub_row);
-        run_ptr = exp_ptr->run;
-        pop_and_add(p, 0, "setting inlet concs for exp: " + run_ptr->name + " " + exp_ptr->second_name);
-        if (SPECIE_CONC > 0.0d) {
-            exp_ptr->entrances.at(ENTRANCE_NUMBER).CONC.insert({&run_ptr->species.at(specie_index(run_ptr, SPECIES_NAME)), SPECIE_CONC});
-        }
-    }
-    pop_report(p, 0); // clear final criterion
-    return 0;
-}
-
 void 
-read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
+initialize_profile_entrance_concentrations(parameters_t& p, sqlite3* db)
 {
-    add_report(p, 3, "Reading inlet conditions from database:");
-    add_report(p, 1, "reading_db:");
-    sqlite_error_message errMsg;
-    std::string sqltext = "SELECT * FROM 'inlet_conditions' WHERE ";
-    std::vector<int> IDS;
-    for (int row = 0; row < p.row_count; row++) {
-        experiment_struct* exp_ptr = &p.experiments.at(row);
-        if (!exp_ptr->has_legacy_inlet_cond_id) continue;
-        bool insert_ID = true;
-        for (int ID = 0; ID < IDS.size(); ID++) {
-            if (exp_ptr->INLET_COND_ID == IDS.at(ID)) {
-                insert_ID = false;
-                break;
-            }
-        }
-        if (insert_ID) {
-            IDS.emplace_back(exp_ptr->INLET_COND_ID);
-        }
-    }
-    for (int ID = 0; ID < IDS.size(); ID++) {
-        sqltext.append("INLET_COND_ID = '" + std::to_string(IDS.at(ID)) + "'");
-        if (ID != IDS.size() - 1) sqltext.append(" OR ");
-    }
-    if (!IDS.empty()) {
-        sqltext.append(";");
-        execute_sql(p, db, sqltext.c_str(), inlet_cond_db_callback, errMsg.out());
-    }
-    pop_and_add(p, 1, "post_db:");
+    add_report(p, 3, "Initializing profile entrance concentrations:");
+    add_report(p, 1, "profile_values:");
 
     for (int row = 0; row < p.row_count; row++) {
         //initialize the concentration inlet arrays.
@@ -1470,6 +1287,46 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
                     throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
                 exp_ptr->entrances.at(override.entrance_number - 1).CONC[&run_ptr->species.at(specie)] = input_concentration;
             }
+        } else if (!exp_ptr->legacy_entrance_conc_matrix.empty()) {
+            if (exp_ptr->entrances.empty()) throw std::runtime_error("ENTRANCE_CONC requires at least one entrance.");
+            std::istringstream matrix(exp_ptr->legacy_entrance_conc_matrix);
+            std::string line;
+            std::vector<std::string> units;
+            std::istringstream units_stream(exp_ptr->entrance_conc_units);
+            for (std::string unit; units_stream >> unit;) units.push_back(unit);
+            std::size_t entrance = 0;
+            while (std::getline(matrix, line)) {
+                std::istringstream row(line);
+                std::vector<std::string> values;
+                for (std::string value; row >> value;) values.push_back(value);
+                if (values.empty()) continue;
+                if (entrance >= exp_ptr->entrances.size() || values.size() < run_ptr->species.size() ||
+                    values.size() > run_ptr->species.size() + 1)
+                    throw std::runtime_error("Legacy ENTRANCE_CONC must contain one species row per inlet; an optional fourth value is ignored.");
+                for (std::size_t specie = 0; specie < run_ptr->species.size(); ++specie) {
+                    const auto parsed = parse_value_alias(values[specie], "Raw profile ENTRANCE_CONC");
+                    if ((!parsed.has_value && parsed.alias.empty()) || !std::isfinite(parsed.value) || parsed.value < 0.0)
+                        throw std::runtime_error("Legacy ENTRANCE_CONC contains an invalid concentration.");
+                    auto& inlet_species = run_ptr->species[specie];
+                    const auto& source_units = units.size() == run_ptr->species.size() ? units[specie] : inlet_species.input_units;
+                    if (!parsed.alias.empty()) {
+                        exp_ptr->entrance_concentrations.push_back({static_cast<int>(entrance + 1), inlet_species.name,
+                            parsed.value, source_units, parsed.alias, parsed.has_value});
+                        if (parsed.has_value) {
+                            const double fallback = parsed.value * unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
+                            if (!std::isfinite(fallback)) throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+                            exp_ptr->entrances[entrance].CONC[&inlet_species] = fallback;
+                        }
+                    } else {
+                        const double converted = parsed.value * unit_conversion(run_ptr, specie, source_units, inlet_species.input_units);
+                        if (!std::isfinite(converted)) throw std::runtime_error("ENTRANCE_CONC conversion produced a non-finite value.");
+                        exp_ptr->entrances[entrance].CONC[&inlet_species] = converted;
+                    }
+                }
+                ++entrance;
+            }
+            if (entrance != exp_ptr->entrances.size())
+                throw std::runtime_error("Legacy ENTRANCE_CONC must contain one concentration row per inlet.");
         } else if (exp_ptr->has_entrance_conc_override && exp_ptr->entrance_conc_alias.empty()) {
             if (run_ptr->FITC < 0 || run_ptr->FITC >= static_cast<ptrdiff_t>(run_ptr->species.size()))
                 throw std::runtime_error("ENTRANCE_CONC requires the FITC species in the experiment.");
@@ -1499,194 +1356,6 @@ read_inlet_cond_from_db(parameters_t& p, sqlite3* db) //reading data using callb
     }
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
-}
-
-int 
-get_SOLUTION_ID_from_db_callback(void *data, int count, char **argv, char **columnNames)
-{
-    auto& p = *static_cast<parameters_t*>(data);
-    //1st parameter of this function is received from 4th parameter of sqlite3_exec
-    //count->is the number of columns
-    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
-    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
-    std::string criterion;
-    std::string value;
-
-    int SOLUTION_ID = 0;
-    std::string EXPERIMENT_NAME;
-    int INLET_COND_ID;
-
-    for(int i = 0; i < count; i++) {
-        criterion = columnNames[i];
-        if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
-        if (criterion == "SOLUTION_ID") {
-            if (!value.empty()) {
-                SOLUTION_ID = std::stoi(value);
-            }
-        } else if (criterion == "EXPERIMENT_NAME") {
-            if (!value.empty()) {
-                EXPERIMENT_NAME = value;
-            }
-        } else if (criterion == "INLET_COND_ID") {
-            if (!value.empty()) {
-                INLET_COND_ID = std::stoi(value);
-            }
-        }
-    }
-
-    if (SOLUTION_ID != 0) {
-        experiment_run_struct* run_ptr;
-        for (ptrdiff_t j = 0; j < p.experiment_runs.size(); j++) {
-            if (p.experiment_runs.at(j).name == EXPERIMENT_NAME) {
-                run_ptr = &p.experiment_runs.at(j);
-                break;
-            } else if (j == p.experiment_runs.size() - 1) {
-                throw std::runtime_error("Could not find EXPERIMENT_NAME (" + EXPERIMENT_NAME + ") in p.experiment_runs");
-            }
-        }
-
-        experiment_struct* exp_ptr;
-        for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
-            if (p.experiments.at(j).INLET_COND_ID == INLET_COND_ID && run_ptr == p.experiments.at(j).run) {
-                exp_ptr = &p.experiments.at(j);
-                break;
-            } else if (j == p.experiments.size() - 1) {
-                throw std::runtime_error("Could not find INLET_COND_ID in p.experiments second_name that has matching run. while ");
-            }
-        }
-              
-        exp_ptr->SOLUTION_ID = SOLUTION_ID;
-    }
-    return 0;
-}
-
-void 
-get_SOLUTION_IDs_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
-{
-    add_report(p, 3, "Retrieving solution IDs from database");
-    sqlite_error_message errMsg;
-    std::string sqltext;
-
-    struct solution_ID_struct {
-        std::string EXPERIMENT_NAME;
-        std::string INLET_COND_ID;
-        solution_ID_struct(std::string EXPERIMENT_NAME, int INLET_COND_ID) 
-            : EXPERIMENT_NAME(std::move(EXPERIMENT_NAME))
-            , INLET_COND_ID(std::to_string(INLET_COND_ID))
-        {}
-    };
-    std::vector<solution_ID_struct> solutions;
-    for (int row = 0; row < p.experiments.size(); row++) {
-        solutions.emplace_back(p.experiments.at(row).run->name, p.experiments.at(row).INLET_COND_ID);
-    }
-    for (int solution = 0; solution < solutions.size(); solution++) {
-        sqltext.append("SELECT SOLUTION_ID, EXPERIMENT_NAME, INLET_COND_ID FROM solutions ");
-        sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
-        sqltext.append("AND EXPERIMENT_NAME = '" + solutions.at(solution).EXPERIMENT_NAME + "' ");
-        sqltext.append("AND INLET_COND_ID = '" + solutions.at(solution).INLET_COND_ID+ "'; ");
-    }
-
-    execute_sql(p, db, sqltext.c_str(), get_SOLUTION_ID_from_db_callback, errMsg.out());
-    sqltext.clear();
-
-    experiment_struct* exp_ptr;
-    bool recursive_call_required = false;
-    std::size_t records_to_create = 0;
-    for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
-        exp_ptr = &p.experiments.at(j);
-        if (exp_ptr->SOLUTION_ID == 0) {
-            ++records_to_create;
-            recursive_call_required = true;
-            sqltext.append("INSERT INTO solutions (SOLVE_SETTING_ID, EXPERIMENT_NAME, INLET_COND_ID)");
-            sqltext.append(" VALUES ('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + exp_ptr->run->name + "','" + std::to_string(exp_ptr->INLET_COND_ID) + "'); ");
-        }
-    }
-    if (records_to_create)
-        add_report(p, 3, "Creating " + std::to_string(records_to_create) + " solution records");
-    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    if (p.SOLUTION_ID_RECURSIVE_CALL == true && recursive_call_required) {
-        throw std::runtime_error("SOLUTION_ID_RECURSIVE_CALL recursively called more than once.");
-    } else if (recursive_call_required) {
-        p.SOLUTION_ID_RECURSIVE_CALL = true;
-        get_SOLUTION_IDs_from_db(p, db); // recursive call to ensure SOLUTION_ID_RECURSIVE_CALL is set.
-    }
-}
-
-
-int 
-get_solvable_initial_values_from_db_callback(void *data, int count, char **argv, char **columnNames)
-{
-    auto& p = *static_cast<parameters_t*>(data);
-    //1st parameter of this function is received from 4th parameter of sqlite3_exec
-    //count->is the number of columns
-    //columnNames-> array of pointers to strings where each entry represents the name of corresponding result column as obtained
-    //argv->array of pointers to strings obtained as if from [sqlite3_column_text()]
-    std::string criterion;
-    std::string value;
-    experiment_run_struct* run_ptr;
-    experiment_struct* exp_ptr;
-    std::string parameter;
-    std::string source_name;
-    for(int i = 0; i < count; i++) {
-        criterion = columnNames[i];
-        if (argv[i] != NULL) {value = argv[i];} else {value.clear();}
-        if (criterion == "SOURCE") {
-            source_name = value;
-            if (value.empty() || value == "global") {
-                // do nothing
-            } else {
-                for (ptrdiff_t j = 0; j < p.experiment_runs.size(); j++) {
-                    if (p.experiment_runs.at(j).name == value) {
-                        run_ptr = &p.experiment_runs.at(j);
-                        break;
-                    } else if (j == p.experiment_runs.size() - 1) {
-                        throw std::runtime_error("Could not find EXPERIMENT_NAME (" + value + ") in p.experiment_runs");
-                    }
-                }
-            }
-        } else if (criterion == "SOLUTION_ID") {
-            if (!value.empty() && value != "0") {
-                for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
-                    if (std::to_string(p.experiments.at(j).SOLUTION_ID) == value) {
-                        exp_ptr = &p.experiments.at(j);
-                        source_name = exp_ptr->run->name + "_" + exp_ptr->second_name;
-                        break;
-                    } else if (j == p.experiments.size() - 1) {
-                        throw std::runtime_error("Could not find INLET_COND_ID in p.experiments second_name that has matching run. while ");
-                    }
-                }
-            }
-        } else if (criterion == "PARAMETER") {
-            if (!value.empty()) {
-                parameter = value;
-            }
-        } else if (criterion == "VALUE") {
-            if (!value.empty()) {
-                for (int j = 0; j < p.solvables.size(); j++) {
-                    auto& s = p.solvables.at(j);
-                    if (s.name == parameter && s.source_name == source_name) {
-                        s.value() = stod(value);
-                        s.param_init = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-void 
-get_solvable_initial_values_from_db(parameters_t& p, sqlite3* db) //reading data using callback functions
-{
-    add_report(p, 3, "Retrieving initial values from parameter_solutions");
-    sqlite_error_message errMsg;
-    std::string sqltext = "SELECT SOURCE, SOLUTION_ID, PARAMETER, VALUE FROM parameter_solutions ";
-    sqltext.append("WHERE SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "' ");
-    execute_sql(p, db, sqltext.c_str(), get_solvable_initial_values_from_db_callback, errMsg.out());
-    sqltext.clear();
-
-    
 }
 
 int 
@@ -1787,83 +1456,81 @@ void
 write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using callback functions
 {
     add_report(p, 3, "Writing model profiles to database:");
-    add_report(p, 1, "parameter_solutions table");
     sqlite_error_message errMsg;
     std::string sqltext;
-    delete_values_from_db(p, db, "parameter_solutions", "SOLVE_SETTING_ID = '" + std::to_string(p.SOLVE_SETTING_ID) + "'");
-
-    struct parameter_solution_struct {
-        std::string PARAMETER;
-        std::string VALUE;
-        std::string UNITS;
-        std::string SOURCE;
-        std::string SOLUTION_ID;
-        parameter_solution_struct(std::string PARAMETER, std::string VALUE, std::string UNITS, std::string SOURCE, int SOLUTION_ID) 
-            : PARAMETER(std::move(PARAMETER))
-            , VALUE(std::move(VALUE))
-            , UNITS(std::move(UNITS))
-            , SOURCE(std::move(SOURCE))
-            , SOLUTION_ID(std::to_string(SOLUTION_ID))
-        {}
+    struct transaction_guard {
+        sqlite3* db;
+        bool active = true;
+        explicit transaction_guard(sqlite3* connection) : db(connection) {
+            if (sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK)
+                throw std::runtime_error(sqlite3_errmsg(db));
+        }
+        void commit() {
+            if (sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK)
+                throw std::runtime_error(sqlite3_errmsg(db));
+            active = false;
+        }
+        ~transaction_guard() { if (active) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr); }
+    } transaction(db);
+    auto quote = [](const std::string& value) {
+        std::string escaped;
+        escaped.reserve(value.size() + 2);
+        escaped.push_back('\'');
+        for (char c : value) { escaped.push_back(c); if (c == '\'') escaped.push_back('\''); }
+        escaped.push_back('\'');
+        return escaped;
     };
-
-    std::vector<parameter_solution_struct> param_solutions;
-    experiment_run_struct* run_ptr;
-    experiment_struct* exp_ptr;
-    for (int i = 0; i < p.solvables.size(); i++) {
-        auto& s = p.solvables.at(i);
-        int SOLUTION_ID = 0;
-        std::string SOURCE = "global";
-        for (int j = 0; j < p.row_count; j++) {
-            auto& exp = p.experiments.at(j);
-            if (s.source_name == (exp.run->name + "_" + exp.second_name)) {
-                SOLUTION_ID = exp.SOLUTION_ID;
-                SOURCE.clear();
-                break;
-            } else if (s.source_name == (exp.run->name)) {
-                SOURCE = exp.run->name;
-                break;
-            } else if (s.source_name == "global") {
-                break;
-            }
-        }
-        param_solutions.emplace_back(s.name, double_to_string(s.value()), "", SOURCE, SOLUTION_ID);
+    std::string experiments_fitted;
+    for (const auto& run : p.experiment_runs) {
+        if (!experiments_fitted.empty()) experiments_fitted += " ";
+        experiments_fitted += run.name;
     }
-
-    if (param_solutions.size() > 0) {
-        sqltext.append("INSERT INTO parameter_solutions (SOLVE_SETTING_ID, PARAMETER, VALUE, UNITS, SOURCE, SOLUTION_ID) VALUES ");
-        for (int i = 0; i < param_solutions.size(); i++) {
-            auto ps = param_solutions.at(i);
-            sqltext.append("('" + std::to_string(p.SOLVE_SETTING_ID) + "','" + ps.PARAMETER + "','" + ps.VALUE + "','" + ps.UNITS + "','" + ps.SOURCE + "','" + ps.SOLUTION_ID + "') ");
-            if (i != param_solutions.size() - 1) {
-                sqltext.append(", ");
-            } else {
-                sqltext.append("; ");
-            }
-        }
+    std::string parameters_solved;
+    for (const auto& parameter : p.solvables) {
+        if (!parameters_solved.empty()) parameters_solved += " ";
+        parameters_solved += parameter.name;
     }
-    param_solutions.clear();
-    param_solutions.shrink_to_fit();
+    const std::string reactions_enabled = p.disable_reactions ? "all reactions disabled"
+        : p.disable_reverse_reactions ? "all reverse reactions disabled" : "all reactions enabled";
+    const auto run_at_utc_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    sqltext = "INSERT INTO profile_calculations(RUN_AT_UTC_US,ALL_EXP_FITTED,PARAMETERS_SOLVED_FOR,REACTIONS_ENABLED,SCATTER_METHOD,X_RESOLUTION,Z_RESOLUTION) VALUES(" +
+        std::to_string(run_at_utc_us) + "," +
+        quote(experiments_fitted) + "," + quote(parameters_solved) + "," +
+        quote(reactions_enabled) + "," + quote(p.scatter_correction_type) + "," +
+        std::to_string(p.X) + "," + std::to_string(p.Z) + ");";
     execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    sqltext.clear();
-
-    pop_and_add(p, 1, "solutions table");
-    for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
-        exp_ptr = &p.experiments.at(j);
-        sqltext.append("UPDATE solutions SET ");
-        sqltext.append("EXP_DA = '" +               double_to_string(exp_ptr->exp_DA) + "', ");
-        sqltext.append("MODEL_DA = '" +             double_to_string(exp_ptr->model_DA) + "', ");
-        sqltext.append("EXP_INTEGRAL = '" +         double_to_string(exp_ptr->exp_integral) + "', ");
-        sqltext.append("MODEL_INTEGRAL = '" +       double_to_string(exp_ptr->model_integral) + "', ");
-        sqltext.append("SECOND_NAME = '" +          exp_ptr->second_name + "' ");
-        sqltext.append("WHERE SOLUTION_ID = '" +    std::to_string(exp_ptr->SOLUTION_ID) + "'; ");
+    for (std::size_t row = 0; row < p.experiments.size(); ++row) {
+        const auto& exp = p.experiments[row];
+        sqltext = "INSERT INTO profile_records(RUN_AT_UTC_US,EXPERIMENT_NAME,WT_PERCENT,EXP_DA,MODEL_DA,EXP_INTEGRAL,MODEL_INTEGRAL) VALUES(" +
+            std::to_string(run_at_utc_us) + "," + quote(exp.run->name) + "," + quote(exp.second_name) + "," +
+            quote(double_to_string(exp.exp_DA)) + "," + quote(double_to_string(exp.model_DA)) + "," +
+            quote(double_to_string(exp.exp_integral)) + "," + quote(double_to_string(exp.model_integral)) + ");";
+        execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     }
-    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
-    sqltext.clear();
+    for (auto& s : p.solvables) {
+        std::string source = "global";
+        std::string experiment_name;
+        std::string wt_percent;
+        for (std::size_t row = 0; row < p.experiments.size(); ++row) {
+            const auto& exp = p.experiments[row];
+            if (s.source_name == exp.run->name + "_" + exp.second_name) {
+                source.clear(); experiment_name = exp.run->name; wt_percent = exp.second_name; break;
+            }
+            if (s.source_name == exp.run->name) { source = exp.run->name; break; }
+        }
+        sqltext = "INSERT INTO profile_record_parameters(RUN_AT_UTC_US,EXPERIMENT_NAME,WT_PERCENT,PARAMETER,VALUE,UNITS,SOURCE) VALUES(" +
+            std::to_string(run_at_utc_us) + "," + quote(experiment_name) + "," + quote(wt_percent) + "," +
+            quote(s.name) + "," + quote(double_to_string(s.value())) + ",NULL," + quote(source) + ");";
+        execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
+    }
 
-    pop_and_add(p, 1, "preparing items into model_profiles table");
+    sqltext.clear();
+    pop_and_add(p, 1, "preparing items into profile_record_samples table");
     struct model_profile_struct {
-        std::string SOLUTION_ID;
+        std::string RUN_AT_UTC_US;
+        std::string EXPERIMENT_NAME;
+        std::string WT_PERCENT;
         std::string X;
         std::string Free_Dye;
         std::string Bound_Dye;
@@ -1878,18 +1545,20 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         std::string Error;
         std::string experimental_difference;
         std::string numeric_difference;
-        model_profile_struct(int SOLUTION_ID, double X) 
-            : SOLUTION_ID(std::to_string(SOLUTION_ID))
+        model_profile_struct(sqlite3_int64 RUN_AT_UTC_US, std::string EXPERIMENT_NAME, std::string WT_PERCENT, double X)
+            : RUN_AT_UTC_US(std::to_string(RUN_AT_UTC_US))
+            , EXPERIMENT_NAME(std::move(EXPERIMENT_NAME))
+            , WT_PERCENT(std::move(WT_PERCENT))
             , X(double_to_string(X)) 
         {}
     };
     std::vector<model_profile_struct> model_profiles;
+    experiment_run_struct* run_ptr;
+    experiment_struct* exp_ptr;
     for (int row = 0; row < p.row_count; row++) {
         add_report(p, 0, "row:" + std::to_string(row));
         add_report(p, 0, "pre-while loop");
         exp_ptr = &p.experiments.at(row);
-        int ID = exp_ptr->SOLUTION_ID;
-        delete_values_from_db(p, db, "model_profile", "SOLUTION_ID = '" + std::to_string(ID) + "'");
         run_ptr = exp_ptr->run;
         const double inv_dye_conc = 1.0 / run_ptr->dye_conc;
         ptrdiff_t FITC = run_ptr->FITC;
@@ -1928,7 +1597,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
             data_match = X_model >= X_data;
             if ( (model_match && model_x < p.X) || (data_match && data_x < exp_ptr->window_size)) {
                 if (std::min(X_data, X_model) != last_X) {
-                    model_profiles.emplace_back(ID, std::min(X_data, X_model));
+                    model_profiles.emplace_back(run_at_utc_us, run_ptr->name, exp_ptr->second_name, std::min(X_data, X_model));
                     last_X = std::min(X_data, X_model);
                 }
             }
@@ -1964,13 +1633,18 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         pop_report(p, 0);
         pop_report(p, 0);
     }
-    pop_and_add(p, 1, "model_profile table");
+    pop_and_add(p, 1, "profile_record_samples table");
     if (model_profiles.size() > 0) {
-        sqltext.append("INSERT INTO model_profile (SOLUTION_ID, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES ");
+        sqltext.append("INSERT INTO profile_record_samples (RUN_AT_UTC_US, EXPERIMENT_NAME, WT_PERCENT, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES ");
         model_profile_struct* mp;
         for (int sol = 0; sol < model_profiles.size(); sol++) {
             mp = &model_profiles.at(sol);
-            sqltext.append("('" + mp->SOLUTION_ID + "','" + mp->X + "','" +  mp->Free_Dye + "','" +  mp->Bound_Dye + "','" +  mp->Total_Dye + "','" +  mp->Unbound_Beads + "','" +  mp->Bound_Beads + "','" +  mp->Total_Beads + "','" +  mp->Experimental_Derivative + "','" +  mp->Numeric_Derivative + "','" +  mp->Experimental + "','" +  mp->Numeric + "','" +  mp->Error + "','" +  mp->experimental_difference + "','" +  mp->numeric_difference + "') ");
+            sqltext.append("(" + mp->RUN_AT_UTC_US + "," + quote(mp->EXPERIMENT_NAME) + "," + quote(mp->WT_PERCENT) + "," +
+                quote(mp->X) + "," + quote(mp->Free_Dye) + "," + quote(mp->Bound_Dye) + "," + quote(mp->Total_Dye) + "," +
+                quote(mp->Unbound_Beads) + "," + quote(mp->Bound_Beads) + "," + quote(mp->Total_Beads) + "," +
+                quote(mp->Experimental_Derivative) + "," + quote(mp->Numeric_Derivative) + "," + quote(mp->Experimental) + "," +
+                quote(mp->Numeric) + "," + quote(mp->Error) + "," + quote(mp->experimental_difference) + "," +
+                quote(mp->numeric_difference) + ") ");
             if (sol != model_profiles.size() - 1) {
                 sqltext.append(", ");
             } else {
@@ -1982,6 +1656,7 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
 
     execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
+    transaction.commit();
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
 }
