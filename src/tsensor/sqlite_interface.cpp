@@ -22,6 +22,15 @@ public:
 
 using row_callback = int (*)(void*, int, char**, char**);
 
+std::string sql_diagnostic(const char* sql)
+{
+    constexpr std::size_t maximum_length = 2048;
+    const std::string statement = sql ? sql : "";
+    if (statement.size() <= maximum_length) return statement;
+    return statement.substr(0, maximum_length) + "\n... [" +
+        std::to_string(statement.size() - maximum_length) + " SQL characters omitted]";
+}
+
 struct value_alias_token { double value = 0.0d; std::string alias; double sign = 1.0d; bool has_value = false; };
 value_alias_token parse_value_alias(const std::string& token, const std::string& description)
 {
@@ -83,7 +92,7 @@ void execute_sql(parameters_t& p, sqlite3* db, const char* sql,
         throw tsensor_workflow::workflow_error(p.active_operation,
             tsensor_workflow::error_code::database,
             std::string("Error in executing SQL: ") + (error && *error ? *error : sqlite3_errmsg(db))
-                + "\n" + sql, rc);
+                + "\n" + sql_diagnostic(sql), rc);
     }
 }
 } // namespace
@@ -1459,7 +1468,11 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
             : RUN_AT_UTC_US(std::to_string(RUN_AT_UTC_US))
             , EXPERIMENT_NAME(std::move(EXPERIMENT_NAME))
             , WT_PERCENT(std::move(WT_PERCENT))
-            , X(double_to_string(X)) 
+            , X([&] {
+                std::ostringstream formatted;
+                formatted << std::setprecision(std::numeric_limits<double>::max_digits10) << X;
+                return formatted.str();
+            }())
         {}
     };
     std::vector<model_profile_struct> model_profiles;
@@ -1545,27 +1558,58 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     pop_and_add(p, 1, "profile_record_samples table");
     if (model_profiles.size() > 0) {
-        sqltext.append("INSERT INTO profile_record_samples (RUN_AT_UTC_US, EXPERIMENT_NAME, WT_PERCENT, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES ");
-        model_profile_struct* mp;
-        for (int sol = 0; sol < model_profiles.size(); sol++) {
-            mp = &model_profiles.at(sol);
-            sqltext.append("(" + mp->RUN_AT_UTC_US + "," + quote(mp->EXPERIMENT_NAME) + "," + quote(mp->WT_PERCENT) + "," +
-                quote(mp->X) + "," + quote(mp->Free_Dye) + "," + quote(mp->Bound_Dye) + "," + quote(mp->Total_Dye) + "," +
-                quote(mp->Unbound_Beads) + "," + quote(mp->Bound_Beads) + "," + quote(mp->Total_Beads) + "," +
-                quote(mp->Experimental_Derivative) + "," + quote(mp->Numeric_Derivative) + "," + quote(mp->Experimental) + "," +
-                quote(mp->Numeric) + "," + quote(mp->Error) + "," + quote(mp->experimental_difference) + "," +
-                quote(mp->numeric_difference) + ") ");
-            if (sol != model_profiles.size() - 1) {
-                sqltext.append(", ");
-            } else {
-                sqltext.append("; ");
-            }
+        static constexpr const char* insert_samples =
+            "INSERT INTO profile_record_samples (RUN_AT_UTC_US, EXPERIMENT_NAME, WT_PERCENT, X, Free_Dye, Bound_Dye, Total_Dye, Unbound_Beads, Bound_Beads, Total_Beads, Experimental_Derivative, Numeric_Derivative, Experimental, Numeric, Error, Experimental_Difference, Numeric_Difference) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        sqlite3_stmt* insert_statement = nullptr;
+        int rc = sqlite3_prepare_v2(db, insert_samples, -1, &insert_statement, nullptr);
+        if (rc != SQLITE_OK) {
+            throw tsensor_workflow::workflow_error(p.active_operation,
+                tsensor_workflow::error_code::database,
+                std::string("Error preparing profile sample insert: ") + sqlite3_errmsg(db), rc);
         }
-        //model_profiles.clear();
-        //model_profiles.shrink_to_fit();
+        struct statement_guard {
+            sqlite3_stmt* statement;
+            ~statement_guard() { sqlite3_finalize(statement); }
+        } insert_guard{insert_statement};
+        auto bind_text = [&](int index, const std::string& value) {
+            return sqlite3_bind_text(insert_statement, index, value.c_str(),
+                static_cast<int>(value.size()), SQLITE_TRANSIENT);
+        };
+        for (const auto& profile : model_profiles) {
+            rc = sqlite3_bind_int64(insert_statement, 1, std::stoll(profile.RUN_AT_UTC_US));
+            if (rc == SQLITE_OK) rc = bind_text(2, profile.EXPERIMENT_NAME);
+            if (rc == SQLITE_OK) rc = bind_text(3, profile.WT_PERCENT);
+            if (rc == SQLITE_OK) rc = bind_text(4, profile.X);
+            if (rc == SQLITE_OK) rc = bind_text(5, profile.Free_Dye);
+            if (rc == SQLITE_OK) rc = bind_text(6, profile.Bound_Dye);
+            if (rc == SQLITE_OK) rc = bind_text(7, profile.Total_Dye);
+            if (rc == SQLITE_OK) rc = bind_text(8, profile.Unbound_Beads);
+            if (rc == SQLITE_OK) rc = bind_text(9, profile.Bound_Beads);
+            if (rc == SQLITE_OK) rc = bind_text(10, profile.Total_Beads);
+            if (rc == SQLITE_OK) rc = bind_text(11, profile.Experimental_Derivative);
+            if (rc == SQLITE_OK) rc = bind_text(12, profile.Numeric_Derivative);
+            if (rc == SQLITE_OK) rc = bind_text(13, profile.Experimental);
+            if (rc == SQLITE_OK) rc = bind_text(14, profile.Numeric);
+            if (rc == SQLITE_OK) rc = bind_text(15, profile.Error);
+            if (rc == SQLITE_OK) rc = bind_text(16, profile.experimental_difference);
+            if (rc == SQLITE_OK) rc = bind_text(17, profile.numeric_difference);
+            if (rc == SQLITE_OK) rc = sqlite3_step(insert_statement);
+            if (rc != SQLITE_DONE) {
+                throw tsensor_workflow::workflow_error(p.active_operation,
+                    tsensor_workflow::error_code::database,
+                    std::string("Error saving profile sample at X=") + profile.X + ": " + sqlite3_errmsg(db) +
+                        "\n" + insert_samples, rc);
+            }
+            rc = sqlite3_reset(insert_statement);
+            if (rc != SQLITE_OK) {
+                throw tsensor_workflow::workflow_error(p.active_operation,
+                    tsensor_workflow::error_code::database,
+                    std::string("Error resetting profile sample insert: ") + sqlite3_errmsg(db), rc);
+            }
+            sqlite3_clear_bindings(insert_statement);
+        }
     }
 
-    execute_sql(p, db, sqltext.c_str(), 0, errMsg.out());
     transaction.commit();
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
