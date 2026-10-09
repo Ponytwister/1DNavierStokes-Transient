@@ -18,6 +18,7 @@
 #include <QMenuBar>
 #include <QMetaObject>
 #include <QKeySequence>
+#include <QSettings>
 #include <QWidgetAction>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -322,7 +323,11 @@ void MainWindow::savePreset(bool saveAs) {
 
 void MainWindow::openSetup() {
     if (work_ != Work::idle || closing_) return;
-    const auto filename = QFileDialog::getOpenFileName(this, "Open setup", {}, "Navier setup (*.navier.json);;JSON files (*.json)");
+    QSettings settings("Navier", "Navier");
+    auto startingDirectory = settings.value("lastPresetDirectory").toString();
+    if (!QDir(startingDirectory).exists()) startingDirectory.clear();
+    const auto filename = QFileDialog::getOpenFileName(this, "Open setup", startingDirectory,
+        "Navier setup (*.navier.json);;JSON files (*.json)");
     if (filename.isEmpty()) return;
     try {
         const auto setup = setup_file::load(filename);
@@ -344,6 +349,8 @@ void MainWindow::openSetup() {
         reactionsPage_->experimentFilter()->apply();
         speciesPage_->experimentFilter()->apply();
         alglibPage_->experimentFilter()->apply();
+        settings.setValue("lastPresetDirectory", QFileInfo(filename).absolutePath());
+        settings.sync();
         setStatus("Setup opened: " + filename);
     } catch (...) { reportFailure(std::current_exception()); }
 }
