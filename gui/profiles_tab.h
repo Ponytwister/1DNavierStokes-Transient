@@ -21,7 +21,9 @@ public:
                  const QVector<double>& x, const QVector<double>& y);
     void setAppearance(const QColor& line, const QColor& fill, bool filled, bool grid,
                        bool ticks, bool autoRange, double xmin, double xmax, double ymin, double ymax,
-                       int xTickCount, int yTickCount, const QString& xLabel, const QString& yLabel);
+                       int xTickCount, int yTickCount, const QString& xLabel, const QString& yLabel,
+                       const QString& title, double aspectRatio);
+    void setFillEnabled(bool enabled);
 protected:
     void paintEvent(QPaintEvent* event) override;
 private:
@@ -30,6 +32,7 @@ private:
     QColor lineColor_, fillColor_;
     bool filled_ = false, grid_ = true, ticks_ = true, autoRange_ = true;
     double xmin_ = 0, xmax_ = 1, ymin_ = 0, ymax_ = 1;
+    double aspectRatio_ = 1.6;
     int xTickCount_ = 5, yTickCount_ = 5;
 };
 
@@ -49,8 +52,9 @@ private:
     QLabel* status_;
     QPushButton* openReport_;
     QPushButton *exportImage_, *lineColorButton_, *fillColorButton_;
-    QLineEdit *xLabel_, *yLabel_;
+    QLineEdit *title_, *xLabel_, *yLabel_;
     QDoubleSpinBox *xMin_, *xMax_, *yMin_, *yMax_;
+    QDoubleSpinBox* aspectRatio_;
     QSpinBox *xTicks_, *yTicks_;
     QCheckBox *autoRange_, *grid_, *ticks_, *fill_;
     ProfilePlot* plot_;

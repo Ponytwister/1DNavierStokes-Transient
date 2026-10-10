@@ -33,20 +33,40 @@ void ProfilePlot::setData(const QString& title, const QString& xLabel, const QSt
 
 void ProfilePlot::setAppearance(const QColor& line, const QColor& fill, bool filled, bool grid,
                                 bool ticks, bool autoRange, double xmin, double xmax, double ymin, double ymax,
-                                int xTickCount, int yTickCount, const QString& xLabel, const QString& yLabel)
+                                int xTickCount, int yTickCount, const QString& xLabel, const QString& yLabel,
+                                const QString& title, double aspectRatio)
 {
     lineColor_ = line; fillColor_ = fill; filled_ = filled; grid_ = grid; ticks_ = ticks;
     autoRange_ = autoRange; xmin_ = xmin; xmax_ = xmax; ymin_ = ymin; ymax_ = ymax;
-    xTickCount_ = xTickCount; yTickCount_ = yTickCount;
+    xTickCount_ = xTickCount; yTickCount_ = yTickCount; aspectRatio_ = aspectRatio;
     if (!xLabel.isEmpty()) xLabel_ = xLabel;
     if (!yLabel.isEmpty()) yLabel_ = yLabel;
+    if (!title.isEmpty()) title_ = title;
+    update();
+}
+
+void ProfilePlot::setFillEnabled(bool enabled)
+{
+    filled_ = enabled;
     update();
 }
 
 void ProfilePlot::paintEvent(QPaintEvent*)
 {
     QPainter painter(this); painter.fillRect(rect(), palette().base()); painter.setRenderHint(QPainter::Antialiasing);
-    const QRectF area(76, 42, width() - 108, height() - 104);
+    QRectF area(76, 42, width() - 108, height() - 104);
+    if (aspectRatio_ > 0 && area.width() > 0 && area.height() > 0) {
+        const double availableRatio = area.width() / area.height();
+        if (availableRatio > aspectRatio_) {
+            const double plotWidth = area.height() * aspectRatio_;
+            area.setLeft(area.center().x() - plotWidth / 2);
+            area.setWidth(plotWidth);
+        } else {
+            const double plotHeight = area.width() / aspectRatio_;
+            area.setTop(area.center().y() - plotHeight / 2);
+            area.setHeight(plotHeight);
+        }
+    }
     painter.setPen(palette().text().color()); painter.drawText(QRectF(8, 8, width() - 16, 24), Qt::AlignCenter, title_);
     if (x_.size() < 2 || x_.size() != y_.size() || area.width() <= 0 || area.height() <= 0) {
         painter.drawText(area, Qt::AlignCenter, "Select profile data to plot"); return;
@@ -121,9 +141,10 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     auto spin = [](const char* name, double value) {
         auto* box = new QDoubleSpinBox; box->setObjectName(name); box->setDecimals(6); box->setRange(-1e12, 1e12); box->setSingleStep(0.1); box->setValue(value); box->setKeyboardTracking(false); return box;
     };
+    title_ = new QLineEdit; title_->setObjectName("profileGraphTitle"); title_->setPlaceholderText("Graph title (automatic)");
     xLabel_ = new QLineEdit; xLabel_->setObjectName("profileXLabel"); xLabel_->setPlaceholderText("X axis label (automatic)");
     yLabel_ = new QLineEdit; yLabel_->setObjectName("profileYLabel"); yLabel_->setPlaceholderText("Y axis label (automatic)");
-    options->addWidget(xLabel_, 1); options->addWidget(yLabel_, 1);
+    options->addWidget(title_, 1); options->addWidget(xLabel_, 1); options->addWidget(yLabel_, 1);
     autoRange_ = new QCheckBox("Auto range"); autoRange_->setObjectName("profileAutoRange"); autoRange_->setChecked(true);
     grid_ = new QCheckBox("Grid"); grid_->setObjectName("profileGrid"); grid_->setChecked(true);
     ticks_ = new QCheckBox("Tick marks"); ticks_->setObjectName("profileTicks"); ticks_->setChecked(true);
@@ -137,23 +158,29 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     xMin_ = spin("profileXMin", 0); xMax_ = spin("profileXMax", 1); yMin_ = spin("profileYMin", 0); yMax_ = spin("profileYMax", 1);
     xTicks_ = new QSpinBox; xTicks_->setObjectName("profileXTickCount"); xTicks_->setRange(2, 12); xTicks_->setValue(5);
     yTicks_ = new QSpinBox; yTicks_->setObjectName("profileYTickCount"); yTicks_->setRange(2, 12); yTicks_->setValue(5);
+    aspectRatio_ = spin("profileAspectRatio", 1.6); aspectRatio_->setRange(.25, 4); aspectRatio_->setDecimals(2); aspectRatio_->setSingleStep(.1);
     ranges->addWidget(new QLabel("X min")); ranges->addWidget(xMin_); ranges->addWidget(new QLabel("X max")); ranges->addWidget(xMax_);
     ranges->addWidget(new QLabel("Y min")); ranges->addWidget(yMin_); ranges->addWidget(new QLabel("Y max")); ranges->addWidget(yMax_);
+    ranges->addWidget(new QLabel("Aspect W:H")); ranges->addWidget(aspectRatio_);
     ranges->addWidget(new QLabel("X ticks")); ranges->addWidget(xTicks_); ranges->addWidget(new QLabel("Y ticks")); ranges->addWidget(yTicks_);
     layout->addLayout(ranges);
     status_ = new QLabel("Choose a database or open a report file."); status_->setObjectName("profilesStatus"); status_->setWordWrap(true); layout->addWidget(status_);
     plot_ = new ProfilePlot; plot_->setObjectName("profilePlot"); layout->addWidget(plot_, 1);
+    connect(fill_, &QCheckBox::toggled, plot_, &ProfilePlot::setFillEnabled);
+    connect(fill_, &QCheckBox::toggled, this, [this] { updatePlot(); });
+    connect(aspectRatio_, &QDoubleSpinBox::valueChanged, this, [this] { updatePlot(); });
     connect(source_, &QComboBox::currentIndexChanged, this, [this] { openReport_->setEnabled(source_->currentIndex() == 1); if (source_->currentIndex() == 0) loadDatabase(); else if (!reportFile_.isEmpty()) loadReport(reportFile_); });
     connect(openReport_, &QPushButton::clicked, this, [this] { const auto f = QFileDialog::getOpenFileName(this, "Open profile report", reportFile_, "Reports (*.txt *.csv *.tsv);;All files (*)"); if (!f.isEmpty()) loadReport(f); });
     connect(block_, &QComboBox::currentIndexChanged, this, [this] { updatePlot(); });
     connect(profile_, &QComboBox::currentIndexChanged, this, [this] { updatePlot(); });
-    const QList<QWidget*> settingWidgets{autoRange_, grid_, ticks_, fill_, xMin_, xMax_, yMin_, yMax_, xTicks_, yTicks_};
+    const QList<QWidget*> settingWidgets{autoRange_, grid_, ticks_, xMin_, xMax_, yMin_, yMax_, xTicks_, yTicks_};
     for (auto* widget : settingWidgets)
         if (auto* check = qobject_cast<QCheckBox*>(widget)) connect(check, &QCheckBox::toggled, this, [this] { updatePlot(); });
         else if (auto* real = qobject_cast<QDoubleSpinBox*>(widget)) connect(real, &QDoubleSpinBox::valueChanged, this, [this] { updatePlot(); });
         else if (auto* integer = qobject_cast<QSpinBox*>(widget)) connect(integer, &QSpinBox::valueChanged, this, [this] { updatePlot(); });
     connect(xLabel_, &QLineEdit::textChanged, this, [this] { updatePlot(); });
     connect(yLabel_, &QLineEdit::textChanged, this, [this] { updatePlot(); });
+    connect(title_, &QLineEdit::textChanged, this, [this] { updatePlot(); });
     connect(lineColorButton_, &QPushButton::clicked, this, [this] { chooseLineColor(); });
     connect(fillColorButton_, &QPushButton::clicked, this, [this] { chooseFillColor(); });
     connect(exportImage_, &QPushButton::clicked, this, [this] {
@@ -179,7 +206,7 @@ void ProfilesTab::chooseFillColor() {
 }
 
 QJsonObject ProfilesTab::settings() const {
-    return {{"block", block_->currentIndex()}, {"profile", profile_->currentText()},
+    return {{"block", block_->currentIndex()}, {"profile", profile_->currentText()}, {"title", title_->text()}, {"aspectRatio", aspectRatio_->value()},
         {"xLabel", xLabel_->text()}, {"yLabel", yLabel_->text()}, {"autoRange", autoRange_->isChecked()},
         {"xMin", xMin_->value()}, {"xMax", xMax_->value()}, {"yMin", yMin_->value()}, {"yMax", yMax_->value()},
         {"xTicks", xTicks_->value()}, {"yTicks", yTicks_->value()}, {"grid", grid_->isChecked()}, {"ticks", ticks_->isChecked()},
@@ -187,6 +214,8 @@ QJsonObject ProfilesTab::settings() const {
 }
 
 void ProfilesTab::setSettings(const QJsonObject& value) {
+    title_->setText(value.value("title").toString());
+    aspectRatio_->setValue(value.value("aspectRatio").toDouble(1.6));
     xLabel_->setText(value.value("xLabel").toString()); yLabel_->setText(value.value("yLabel").toString());
     autoRange_->setChecked(value.value("autoRange").toBool(true));
     xMin_->setValue(value.value("xMin").toDouble(0)); xMax_->setValue(value.value("xMax").toDouble(1));
@@ -256,8 +285,10 @@ void ProfilesTab::updatePlot()
     const auto setAppearance = [this](const QString& xLabel, const QString& yLabel) {
         plot_->setAppearance(lineColor_, fillColor_, fill_->isChecked(), grid_->isChecked(), ticks_->isChecked(), autoRange_->isChecked(),
             xMin_->value(), xMax_->value(), yMin_->value(), yMax_->value(), xTicks_->value(), yTicks_->value(),
-            xLabel_->text().isEmpty() ? xLabel : xLabel_->text(), yLabel_->text().isEmpty() ? yLabel : yLabel_->text());
+            xLabel_->text().isEmpty() ? xLabel : xLabel_->text(), yLabel_->text().isEmpty() ? yLabel : yLabel_->text(),
+            title_->text().trimmed(), aspectRatio_->value());
     };
+    plot_->setFillEnabled(fill_->isChecked());
     if (block_->count() == 0 || profile_->count() == 0) return;
     const QString type = profile_->currentText();
     if (source_->currentIndex() == 1) {
