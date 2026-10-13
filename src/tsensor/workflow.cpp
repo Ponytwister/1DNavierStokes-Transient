@@ -109,6 +109,14 @@ std::filesystem::path run_session::export_results(const std::filesystem::path& d
     });
 }
 
+std::filesystem::path run_session::export_results_as(const std::filesystem::path& output_file)
+{
+    return perform(parameters_, operation::export_results, [&] {
+        require_state(session_state::completed, operation::export_results);
+        return tsensor_workflow::export_results_as(parameters_, output_file);
+    });
+}
+
 void run_session::save_model_profiles()
 {
     perform(parameters_, operation::save_model_profiles, [&] {
@@ -274,13 +282,24 @@ std::filesystem::path export_results(parameters_t& p, const std::filesystem::pat
     }
     std::filesystem::create_directories(output_directory);
     const auto output_path = output_directory / (p.output_file_name + ".txt");
+    return export_results_as(p, output_path);
+}
+
+std::filesystem::path export_results_as(parameters_t& p, const std::filesystem::path& output_file)
+{
+    if (output_file.empty() || output_file.filename().empty()) {
+        throw std::invalid_argument("Output file must not be empty");
+    }
+    const auto output_directory = output_file.parent_path();
+    if (!output_directory.empty())
+        std::filesystem::create_directories(output_directory);
     try {
-        save_excel_output(p, output_path);
+        save_excel_output(p, output_file);
     } catch (const std::ios_base::failure& error) {
         throw workflow_error(p.active_operation, error_code::io,
-                             "Cannot export results to " + output_path.string() + ": " + error.what());
+                             "Cannot export results to " + output_file.string() + ": " + error.what());
     }
-    return output_path;
+    return output_file;
 }
 
 void save_model_profiles(parameters_t& p, sqlite3* db)

@@ -38,6 +38,9 @@ update at ALGLIB reporting points (including the initial point and internal step
 The original sum stays visible for comparison with the current value during fitting,
 and both original and final values appear in the final summary. The GUI warns if the
 final sum is greater than the original sum.
+Export legacy report opens a save dialog in the configured output directory and
+suggests the generated experiment-based filename; choose a different location or name
+before saving if needed.
 This is ALGLIB's least-squares objective, `sum(fi[i]^2)`, with signed residuals
 `fi = (model * scatter / dye_conc - experimental) * !omit`. ALGLIB performs the
 squaring once. Earlier versions supplied squared discrepancies, minimizing their

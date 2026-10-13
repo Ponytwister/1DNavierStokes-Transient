@@ -35,6 +35,12 @@ using namespace tsensor_workflow;
 namespace {
 std::filesystem::path path(const QString& value) { return std::filesystem::path(value.toStdWString()); }
 QString text(const std::string& value) { return QString::fromUtf8(value.data(), static_cast<int>(value.size())); }
+QString legacyReportFilename(const parameters_t& parameters) {
+    QString filename;
+    for (const auto& run : parameters.experiment_runs)
+        filename += text(run.name) + ",";
+    return filename + ".txt";
+}
 }
 
 MainWindow::MainWindow()
@@ -533,14 +539,23 @@ void MainWindow::reportFailure(std::exception_ptr failure)
 void MainWindow::save(operation requested)
 {
     if (work_ != Work::idle || !session_ || closing_) return;
-    auto directory = path(output_->text().trimmed());
-    if (requested == operation::export_results && directory.empty()) return;
+    std::filesystem::path outputFile;
+    if (requested == operation::export_results) {
+        const auto outputDirectory = output_->text().trimmed();
+        if (outputDirectory.isEmpty()) return;
+        const auto suggestedPath = QDir(outputDirectory).filePath(legacyReportFilename(session_->parameters()));
+        auto selected = QFileDialog::getSaveFileName(this, "Export legacy report", suggestedPath,
+            "Text files (*.txt);;All files (*)");
+        if (selected.isEmpty()) return;
+        if (QFileInfo(selected).suffix().isEmpty()) selected += ".txt";
+        outputFile = path(selected);
+    }
     try {
-        action_ = std::async(std::launch::async, [session = session_.get(), requested, directory] {
+        action_ = std::async(std::launch::async, [session = session_.get(), requested, outputFile] {
             ActionResult result;
             try {
                 if (requested == operation::export_results) {
-                    auto written = session->export_results(directory);
+                    auto written = session->export_results_as(outputFile);
                     result.reportFile = QString::fromStdWString(written.wstring());
                     result.message = "Exported report: " + QString::fromStdWString(written.wstring());
                 } else if (requested == operation::save_model_profiles) {

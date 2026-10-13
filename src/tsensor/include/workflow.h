@@ -33,6 +33,7 @@ run_result run(parameters_t& p);
 // experiment-based filename. Returns the written path; reports I/O errors by
 // exception. Relative paths are relative to the caller's working directory.
 std::filesystem::path export_results(parameters_t& p, const std::filesystem::path& output_directory);
+std::filesystem::path export_results_as(parameters_t& p, const std::filesystem::path& output_file);
 
 // Save profiles only when p.save_model_profiles is enabled.
 void save_model_profiles(parameters_t& p, sqlite3* db);
@@ -59,6 +60,7 @@ public:
     void load_inputs(const std::optional<control_values>& controls = std::nullopt);
     run_result run();
     std::filesystem::path export_results(const std::filesystem::path& directory);
+    std::filesystem::path export_results_as(const std::filesystem::path& output_file);
     // Completed-run snapshot, including analytical zero, true bound beads and
     // every species in model units. No file/database writes.
     std::string generate_report();
