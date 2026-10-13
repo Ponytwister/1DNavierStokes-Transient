@@ -33,10 +33,11 @@ Pause requests termination at the next ALGLIB optimizer reporting point and reta
 that partial result for report export, profile saving/plotting, or saving fitted inputs
 for a later run. The optimizer cannot currently be resumed from that point. Pause is
 available during fitting; a single model evaluation has no intermediate optimizer point.
-During fitting, the parameter **Value** column and **Sum of squared residuals**
+During fitting, the parameter **Value** column and current sum of squared residuals
 update at ALGLIB reporting points (including the initial point and internal steps).
-Initial values remain visible for comparison. The latest reported residual sum stays
-visible during trial model evaluations and is included in the final GUI/terminal summary.
+The original sum stays visible for comparison with the current value during fitting,
+and both original and final values appear in the final summary. The GUI warns if the
+final sum is greater than the original sum.
 This is ALGLIB's least-squares objective, `sum(fi[i]^2)`, with signed residuals
 `fi = (model * scatter / dye_conc - experimental) * !omit`. ALGLIB performs the
 squaring once. Earlier versions supplied squared discrepancies, minimizing their

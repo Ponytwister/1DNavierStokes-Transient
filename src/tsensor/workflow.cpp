@@ -209,6 +209,8 @@ run_result run(parameters_t& p)
             auto& context = *static_cast<progress_context*>(ptr);
             auto& p = context.parameters;
             check_cancellation(p);
+            if (!context.result.original_sum_squared_residuals)
+                context.result.original_sum_squared_residuals = objective;
             context.result.sum_squared_residuals = objective;
             progress_event event{event_kind::optimizer_progress, operation::solve, {}};
             event.evaluations = p.iterations;
@@ -244,6 +246,7 @@ run_result run(parameters_t& p)
         double objective = 0;
         for (alglib::ae_int_t i = 0; i < residuals.length(); ++i)
             objective += residuals[i] * residuals[i];
+        result.original_sum_squared_residuals = objective;
         result.sum_squared_residuals = objective;
     }
     check_cancellation(p);

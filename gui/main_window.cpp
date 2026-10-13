@@ -439,6 +439,7 @@ void MainWindow::clearResult()
 {
     reportPage_->clearGenerated();
     session_.reset(); activeDatabase_.clear(); values_->setRowCount(0); summary_->clear(); resultDatabase_->clear();
+    originalResidualSum_.reset();
     latestResidualSum_.reset();
     status_->setText("Choose a database, then run the calculation.");
     updateControls();
@@ -593,11 +594,14 @@ void MainWindow::poll()
             else if (event.kind == event_kind::evaluation || event.kind == event_kind::optimizer_progress) {
                 if (event.kind == event_kind::optimizer_progress) {
                     showParameters(event.parameters, true);
+                    if (!originalResidualSum_) originalResidualSum_ = event.sum_squared_residuals;
                     latestResidualSum_ = event.sum_squared_residuals;
                 }
                 QString summary = "Completed model evaluations: " + QString::number(event.evaluations.value_or(0));
+                if (originalResidualSum_)
+                    summary += " · Original sum of squared residuals: " + QString::number(*originalResidualSum_, 'g', 15);
                 if (latestResidualSum_)
-                    summary += " · Sum of squared residuals: " + QString::number(*latestResidualSum_, 'g', 15);
+                    summary += " · Current sum of squared residuals: " + QString::number(*latestResidualSum_, 'g', 15);
                 summary_->setText(summary);
             }
             else if (event.kind != event_kind::message || event.detail_level >= 3)
@@ -616,13 +620,29 @@ void MainWindow::poll()
                     .arg(result.termination_type ? QString::number(*result.termination_type) : "Not run"));
                 resultDatabase_->setText("Results from: " + activeDatabase_);
                 if (result.sum_squared_residuals)
-                    summary_->setText(summary_->text() + " · Sum of squared residuals: " +
+                    summary_->setText(summary_->text() + " · Final sum of squared residuals: " +
                                       QString::number(*result.sum_squared_residuals, 'g', 15));
+                originalResidualSum_ = result.original_sum_squared_residuals;
+                if (originalResidualSum_)
+                    summary_->setText(summary_->text() + " · Original sum of squared residuals: " +
+                                      QString::number(*originalResidualSum_, 'g', 15));
                 showParameters(result.parameters, true);
+                const bool residualSumIncreased = result.original_sum_squared_residuals &&
+                    result.sum_squared_residuals &&
+                    *result.sum_squared_residuals > *result.original_sum_squared_residuals;
                 if (result.paused)
                     setStatus("Paused at an optimizer iteration. Review or export the partial results, save profiles, or save fitted inputs for a later run.");
+                else if (residualSumIncreased)
+                    setStatus("Run finished with a higher residual sum than it started with.");
                 else
                     setStatus("Run finished. Review the termination code and results before saving.");
+                if (residualSumIncreased && !closing_) {
+                    const auto original = QString::number(*result.original_sum_squared_residuals, 'g', 15);
+                    const auto final = QString::number(*result.sum_squared_residuals, 'g', 15);
+                    QMessageBox::warning(this, "Residual sum increased",
+                        "The final sum of squared residuals is greater than the original value.\n\n"
+                        "Original: " + original + "\nFinal: " + final);
+                }
             }
             updateControls();
         }
