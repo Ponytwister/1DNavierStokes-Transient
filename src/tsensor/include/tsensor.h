@@ -263,6 +263,7 @@ typedef struct parameters_struct : channel_dimensions {
     tsensor_workflow::progress_callback progress;
     std::exception_ptr progress_failure;
     std::stop_token cancellation;
+    std::stop_token pause_request;
     tsensor_workflow::operation active_operation = tsensor_workflow::operation::none;
     // Model Control Parameters
     bool PROFILE_IDs_RECURSIVE_CALL = false;

@@ -5,7 +5,7 @@
 
 namespace tsensor_workflow {
 
-enum class background_state { idle, running, completed, cancelled, failed };
+enum class background_state { idle, running, paused, completed, cancelled, failed };
 
 struct background_result {
     std::unique_ptr<run_session> session;
@@ -24,6 +24,7 @@ public:
     void start(const std::filesystem::path& database, progress_callback observer = {},
                std::optional<control_values> controls = std::nullopt);
     bool request_cancel();
+    bool request_pause();
     background_state status() const;
     std::vector<progress_event> drain_events();
     void wait(); // Blocking; do not use on a GUI event loop while running.
@@ -33,6 +34,7 @@ private:
     mutable std::mutex mutex_;
     background_state state_ = background_state::idle;
     std::stop_source cancellation_;
+    std::stop_source pause_request_;
     std::deque<progress_event> events_;
     background_result outcome_;
     std::jthread worker_; // Joined before any members it uses are destroyed.

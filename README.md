@@ -28,7 +28,11 @@ The optional desktop UI uses Qt 6.10.3 Widgets with Qt's MinGW 13.1.0 64-bit kit
 See [Qt kit setup](docs/qt-setup.md) for installation, build/launch commands, and
 licensing. Use the `qt-mingw-debug` or `qt-mingw-release` presets to build the
 `NavierGui` application alongside the terminal executable. It provides database
-and output selection, Run/Cancel, progress, parameter results, and explicit saves.
+and output selection, Run/Pause/Cancel, progress, parameter results, and explicit saves.
+Pause requests termination at the next ALGLIB optimizer reporting point and retains
+that partial result for report export, profile saving/plotting, or saving fitted inputs
+for a later run. The optimizer cannot currently be resumed from that point. Pause is
+available during fitting; a single model evaluation has no intermediate optimizer point.
 During fitting, the parameter **Value** column and **Sum of squared residuals**
 update at ALGLIB reporting points (including the initial point and internal steps).
 Initial values remain visible for comparison. The latest reported residual sum stays

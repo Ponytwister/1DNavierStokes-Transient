@@ -177,8 +177,9 @@ MainWindow::MainWindow()
     note->setWordWrap(true); layout->addWidget(note);
     auto* controls = new QHBoxLayout;
     run_ = new QPushButton("Run"); run_->setObjectName("runButton");
+    pause_ = new QPushButton("Pause"); pause_->setObjectName("pauseButton");
     cancel_ = new QPushButton("Cancel"); cancel_->setObjectName("cancelButton");
-    controls->addWidget(run_); controls->addWidget(cancel_); controls->addStretch();
+    controls->addWidget(run_); controls->addWidget(pause_); controls->addWidget(cancel_); controls->addStretch();
     layout->addLayout(controls);
     status_ = new QLabel("Choose a database to begin."); status_->setObjectName("runStatus");
     status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true); layout->addWidget(status_);
@@ -221,6 +222,12 @@ MainWindow::MainWindow()
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
+    connect(pause_, &QPushButton::clicked, this, [this] {
+        if (runner_.request_pause()) {
+            pause_->setEnabled(false);
+            setStatus("Pause requested. Finishing the current optimizer iteration…");
+        }
+    });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_) return;
         const QFileInfo input(database_->text().trimmed());
@@ -463,6 +470,7 @@ void MainWindow::updateControls()
     alglibPage_->setEditingEnabled(idle);
     rawProfilesPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
+    pause_->setEnabled(work_ == Work::solve && runner_.status() == background_state::running && !closing_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     reportPage_->setRunAvailable(idle && session_);
     findChild<QPushButton*>("prepareRunReportButton")->setEnabled(idle && session_);
@@ -535,7 +543,7 @@ void MainWindow::save(operation requested)
                     result.reportFile = QString::fromStdWString(written.wstring());
                     result.message = "Exported report: " + QString::fromStdWString(written.wstring());
                 } else if (requested == operation::save_model_profiles) {
-                    session->save_model_profiles(); result.message = "Profiles saved.";
+                    session->save_model_profiles(); result.reloadTables = true; result.message = "Profiles saved. Open Profiles to plot the saved model profiles.";
                 } else {
                     session->save_fitted_parameters(); result.reloadTables = true; result.message = "Fitted inputs saved.";
                 }
@@ -611,7 +619,10 @@ void MainWindow::poll()
                     summary_->setText(summary_->text() + " · Sum of squared residuals: " +
                                       QString::number(*result.sum_squared_residuals, 'g', 15));
                 showParameters(result.parameters, true);
-                setStatus("Run finished. Review the termination code and results before saving.");
+                if (result.paused)
+                    setStatus("Paused at an optimizer iteration. Review or export the partial results, save profiles, or save fitted inputs for a later run.");
+                else
+                    setStatus("Run finished. Review the termination code and results before saving.");
             }
             updateControls();
         }
@@ -622,7 +633,10 @@ void MainWindow::poll()
             closing_ = false;
             reportFailure(result.error);
         } else {
-            if (result.reloadTables) reloadTables();
+            if (result.reloadTables) {
+                reloadTables();
+                profilesPage_->setDatabase(activeDatabase_);
+            }
             if (!result.reportFile.isEmpty()) {
                 reportPage_->loadFile(result.reportFile);
                 if (!closing_) tabs_->setCurrentWidget(reportPage_);

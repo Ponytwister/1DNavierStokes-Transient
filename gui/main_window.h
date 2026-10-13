@@ -58,7 +58,7 @@ private:
     std::future<ActionResult> action_;
     QLineEdit *database_, *output_;
     QAction *newDatabase_, *openSetup_, *saveSetup_;
-    QPushButton *browseDatabase_, *browseOutput_, *run_, *cancel_, *export_, *profiles_, *inputs_;
+    QPushButton *browseDatabase_, *browseOutput_, *run_, *pause_, *cancel_, *export_, *profiles_, *inputs_;
     QLabel *status_, *summary_, *resultDatabase_;
     std::optional<double> latestResidualSum_;
     QPlainTextEdit* log_;

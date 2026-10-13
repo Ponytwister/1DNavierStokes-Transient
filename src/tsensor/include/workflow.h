@@ -9,6 +9,7 @@ namespace tsensor_workflow {
 
 struct run_result {
     bool optimizer_ran = false;
+    bool paused = false;
     int residual_evaluations = 0;
     std::optional<alglib::ae_int_t> optimizer_iterations;
     std::optional<alglib::ae_int_t> termination_type;
@@ -47,7 +48,7 @@ enum class session_state { empty, loaded, completed, failed };
 class run_session {
 public:
     explicit run_session(const std::filesystem::path& database_path, progress_callback progress = {},
-                         std::stop_token cancellation = {});
+                         std::stop_token cancellation = {}, std::stop_token pause_request = {});
     ~run_session() = default;
     run_session(const run_session&) = delete;
     run_session& operator=(const run_session&) = delete;

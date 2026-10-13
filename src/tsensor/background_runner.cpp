@@ -23,11 +23,12 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
                              "Take the previous outcome before starting another run");
     }
     cancellation_ = std::stop_source{};
+    pause_request_ = std::stop_source{};
     events_.clear();
     state_ = background_state::running;
     try {
         worker_ = std::jthread([this, path, observer = std::move(observer), controls = std::move(controls),
-                               token = cancellation_.get_token()] {
+                               token = cancellation_.get_token(), pause = pause_request_.get_token()] {
             background_result outcome;
             auto state = background_state::completed;
             try {
@@ -40,7 +41,7 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
                     }
                     if (observer) observer(event);
                 };
-                auto session = std::make_unique<run_session>(path, std::move(progress), token);
+                auto session = std::make_unique<run_session>(path, std::move(progress), token, pause);
                 session->load_inputs(controls);
                 outcome.result = session->run();
                 // The session can outlive this runner; remove its capturing callback.
@@ -65,7 +66,8 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
             }
             if (outcome.session) outcome.session->parameters().cancellation = {};
             outcome_ = std::move(outcome);
-            state_ = state;
+            state_ = state == background_state::completed && outcome_.result && outcome_.result->paused
+                   ? background_state::paused : state;
         });
     } catch (...) {
         state_ = background_state::idle;
@@ -77,6 +79,12 @@ bool background_runner::request_cancel()
 {
     std::lock_guard lock(mutex_);
     return state_ == background_state::running && cancellation_.request_stop();
+}
+
+bool background_runner::request_pause()
+{
+    std::lock_guard lock(mutex_);
+    return state_ == background_state::running && pause_request_.request_stop();
 }
 
 background_state background_runner::status() const

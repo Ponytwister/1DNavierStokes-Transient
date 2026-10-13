@@ -51,9 +51,10 @@ auto perform(parameters_t& p, operation action, Action&& work)
 } // namespace
 
 run_session::run_session(const std::filesystem::path& database_path, progress_callback progress,
-                         std::stop_token cancellation)
+                         std::stop_token cancellation, std::stop_token pause_request)
 {
     parameters_.cancellation = cancellation;
+    parameters_.pause_request = pause_request;
     parameters_.progress = std::move(progress);
     perform(parameters_, operation::open_database, [&] {
         if (database_path.empty()) {
@@ -199,7 +200,8 @@ run_result run(parameters_t& p)
             parameters_t& parameters;
             run_result& result;
             const std::vector<double>& initial_values;
-        } context{p, result, initial_values};
+            alglib::minlmstate* state;
+        } context{p, result, initial_values, &state};
         const auto evaluate = [](const alglib::real_1d_array& x, alglib::real_1d_array& fi, void* ptr) {
             alglib_solver(x, fi, &static_cast<progress_context*>(ptr)->parameters);
         };
@@ -216,6 +218,10 @@ run_result run(parameters_t& p)
                 event.parameters.push_back({parameter.source_name, parameter.name, x[i], context.initial_values[i]});
             }
             publish_event(p, std::move(event));
+            // ALGLIB permits a termination request from another thread. Apply it
+            // at a reporting point so the returned vector and profile are a
+            // complete optimizer iterate, not a finite-difference trial.
+            if (p.pause_request.stop_requested()) alglib::minlmrequesttermination(*context.state);
         };
         // Reports include the initial point and internal optimizer steps, not
         // finite-difference trial evaluations. The objective is sum(fi[i]^2).
@@ -225,6 +231,7 @@ run_result run(parameters_t& p)
         result.optimizer_ran = true;
         result.optimizer_iterations = rep.iterationscount;
         result.termination_type = rep.terminationtype;
+        result.paused = p.pause_request.stop_requested() && rep.terminationtype == 8;
 
         for (int index = 0; index < p.solvables.size(); index++) {
             p.initial_values_alglib[index] = control_parameters[index];
