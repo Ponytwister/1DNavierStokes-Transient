@@ -1411,8 +1411,26 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     }
     const std::string reactions_enabled = p.disable_reactions ? "all reactions disabled"
         : p.disable_reverse_reactions ? "all reverse reactions disabled" : "all reactions enabled";
-    const auto run_at_utc_us = std::chrono::duration_cast<std::chrono::microseconds>(
+    const auto clock_run_at_utc_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+    sqlite3_stmt* latest_calculation = nullptr;
+    int latest_rc = sqlite3_prepare_v2(db,
+        "SELECT MAX(RUN_AT_UTC_US) FROM profile_calculations", -1, &latest_calculation, nullptr);
+    if (latest_rc != SQLITE_OK)
+        throw std::runtime_error(std::string("Error reading latest profile calculation: ") + sqlite3_errmsg(db));
+    const int latest_step = sqlite3_step(latest_calculation);
+    const sqlite3_int64 previous_run_at_utc_us = latest_step == SQLITE_ROW &&
+        sqlite3_column_type(latest_calculation, 0) != SQLITE_NULL
+        ? sqlite3_column_int64(latest_calculation, 0) : 0;
+    sqlite3_finalize(latest_calculation);
+    if (latest_step != SQLITE_ROW)
+        throw std::runtime_error(std::string("Error reading latest profile calculation: ") + sqlite3_errmsg(db));
+    if (previous_run_at_utc_us == std::numeric_limits<sqlite3_int64>::max())
+        throw std::runtime_error("Profile calculation timestamp is out of range.");
+    // The viewer selects MAX(RUN_AT_UTC_US) for each profile. Keep IDs strictly
+    // increasing even when two saves share a clock tick or the wall clock moves back.
+    const auto run_at_utc_us = std::max<sqlite3_int64>(
+        static_cast<sqlite3_int64>(clock_run_at_utc_us), previous_run_at_utc_us + 1);
     sqltext = "INSERT INTO profile_calculations(RUN_AT_UTC_US,ALL_EXP_FITTED,PARAMETERS_SOLVED_FOR,REACTIONS_ENABLED,SCATTER_METHOD,X_RESOLUTION,Z_RESOLUTION) VALUES(" +
         std::to_string(run_at_utc_us) + "," +
         quote(experiments_fitted) + "," + quote(parameters_solved) + "," +

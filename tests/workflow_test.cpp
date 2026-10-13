@@ -23,6 +23,16 @@ double scalar(sqlite3* db, const char* query)
     return sqlite3_column_double(raw, 0);
 }
 
+sqlite3_int64 scalar_int(sqlite3* db, const char* query)
+{
+    sqlite3_stmt* raw = nullptr;
+    const int rc = sqlite3_prepare_v2(db, query, -1, &raw, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(raw, sqlite3_finalize);
+    if (rc != SQLITE_OK || sqlite3_step(raw) != SQLITE_ROW)
+        throw std::runtime_error(sqlite3_errmsg(db));
+    return sqlite3_column_int64(raw, 0);
+}
+
 struct fixture {
     std::filesystem::path root, database;
     fixture() {
@@ -573,8 +583,15 @@ void verify_persistence(run_session& session, const std::filesystem::path& direc
         }
     }
     EXPECT_EQ(dye_rows, 4);
+    sqlite3_int64 previous_save_timestamp = 99;
     for (int repeat = 0; repeat < 2; ++repeat) {
         session.save_model_profiles();
+        const auto latest_save_timestamp = scalar_int(db,
+            "SELECT MAX(RUN_AT_UTC_US) FROM profile_calculations WHERE RUN_AT_UTC_US<>99");
+        EXPECT_GT(latest_save_timestamp, previous_save_timestamp);
+        previous_save_timestamp = latest_save_timestamp;
+        near(scalar(db,
+            "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US=(SELECT MAX(RUN_AT_UTC_US) FROM profile_calculations)"), 36);
         near(scalar(db, "SELECT count(*) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99"), 36 * (repeat + 1));
         near(scalar(db, "SELECT count(*) FROM profile_record_parameters WHERE RUN_AT_UTC_US<>99"), repeat + 1);
         near(scalar(db, "SELECT max(abs(Free_Dye-0.002)) FROM profile_record_samples WHERE RUN_AT_UTC_US<>99 AND Free_Dye<>''"), 0);
