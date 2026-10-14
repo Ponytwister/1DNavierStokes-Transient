@@ -2,6 +2,7 @@
 
 #include <tsensor.h>
 #include <memory>
+#include <map>
 
 // Low-level operations take explicit state. For an application run, prefer
 // run_session below, which owns state/connection and enforces operation order.
@@ -22,6 +23,13 @@ struct run_result {
 // Load in the established order, including solve-settings/solution-ID creation
 // (which can write to the database), then normalize the profiles.
 using control_values = std::vector<std::pair<std::string, std::optional<std::string>>>;
+struct single_profile_selection {
+    std::string experiment_name;
+    std::string dataset_name;
+    std::vector<std::string> variables;
+    std::map<std::string, double> initial_values;
+    bool run_solver = true;
+};
 // A supplied snapshot replaces database controls, including NULL/skip values.
 void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_values>& controls = std::nullopt);
 
@@ -50,7 +58,9 @@ enum class session_state { empty, loaded, completed, failed };
 class run_session {
 public:
     explicit run_session(const std::filesystem::path& database_path, progress_callback progress = {},
-                         std::stop_token cancellation = {}, std::stop_token pause_request = {});
+                         std::stop_token cancellation = {}, std::stop_token pause_request = {},
+                         bool capture_live_profiles = false,
+                         std::optional<single_profile_selection> single_profile = std::nullopt);
     ~run_session() = default;
     run_session(const run_session&) = delete;
     run_session& operator=(const run_session&) = delete;

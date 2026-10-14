@@ -122,7 +122,7 @@ The result table lists parameter source, name, initial value, and result value.
 Initial values populate after input loading, before solving; result values appear
 only after successful completion. Initial values remain visible if solving fails
 or is cancelled, and are cleared when starting another run or changing databases. The summary reports
-optimizer iterations and the termination code; "finished" does not imply a
+optimizer iterations and a labeled termination reason with its code; "finished" does not imply a
 converged fit. The result database is displayed above the table. Choosing another
 database clears the old results to prevent saving them to the wrong destination.
 Starting a new run also replaces the previous result session.
@@ -189,6 +189,23 @@ After a successful run:
 - **Save fitted inputs...** asks for confirmation before replacing fitted initial
   inputs in that database. It is separate from saving result profiles.
 
+While a run is active, the **Profiles** tab shows a live preview of the latest
+completed model evaluation. It plots the experimental profile and numeric model
+profile for each experiment and refreshes as evaluations finish. This preview
+also remains available after the run, but it is not saved to the database until
+**Save profiles** is chosen. The Database and Report file sources remain
+available for browsing saved data.
+
+The **Run one profile** region in Profiles stays visible while you work. Choose
+an experiment from those selected in Model controls, then choose one of its
+datasets and variables. You can edit the starting values and immediately run
+again; the selected experiment, dataset, variable choices, and starting values
+remain in place after a run. Starting-value edits apply to that run only and
+must be within the bounds configured in Variables. The **Run solver** checkbox
+defaults to Model controls; clear it to evaluate once at the starting values
+without fitting. The result appears in the same live preview and normal run
+result controls.
+
 Export and saves run off the UI thread and are serialized with calculations.
 Errors appear in the status and log; a failed export/save keeps results available
 for retry. Nothing is exported or saved automatically after a calculation.
@@ -201,7 +218,7 @@ save lets that save finish. If saving fails, the window stays open with the erro
 and results available for retry; close again to exit without retrying.
 The event loop continues in both cases. Cancellation
 latency depends on the existing core checkpoints. Fitted-parameter input editing
-and plotting are not yet included.
+is not available while a calculation is active.
 
 `Application.GuiStartup` tests window construction and the event loop with Qt's
 offscreen plugin. GUI integration tests use disposable synthetic databases

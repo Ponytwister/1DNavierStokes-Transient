@@ -51,11 +51,20 @@ auto perform(parameters_t& p, operation action, Action&& work)
 } // namespace
 
 run_session::run_session(const std::filesystem::path& database_path, progress_callback progress,
-                         std::stop_token cancellation, std::stop_token pause_request)
+                         std::stop_token cancellation, std::stop_token pause_request,
+                         bool capture_live_profiles,
+                         std::optional<single_profile_selection> single_profile)
 {
     parameters_.cancellation = cancellation;
     parameters_.pause_request = pause_request;
     parameters_.progress = std::move(progress);
+    parameters_.capture_live_profiles = capture_live_profiles;
+    if (single_profile) {
+        parameters_.single_profile_experiment = std::move(single_profile->experiment_name);
+        parameters_.single_profile_dataset = std::move(single_profile->dataset_name);
+        parameters_.single_profile_variables = std::move(single_profile->variables);
+        parameters_.single_profile_initial_values = std::move(single_profile->initial_values);
+    }
     perform(parameters_, operation::open_database, [&] {
         if (database_path.empty()) {
             throw std::invalid_argument("Database path must not be empty");
@@ -153,6 +162,8 @@ void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_value
     } else read_model_parameters_from_db(p, db);
     initialize_channel_dimensions(p, db);
     lines_from_profile_text(p, db);
+    if (p.single_profile_experiment && p.experiments.size() != 1)
+        throw std::runtime_error("The selected experiment dataset is no longer available.");
     read_exp_parameters_from_db(p, db);
     read_specie_and_reaction_values_from_db(p, db);
     read_raw_profiles_from_db(p, db);

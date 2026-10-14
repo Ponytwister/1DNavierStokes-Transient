@@ -2,6 +2,7 @@
 #include <QString>
 #include <QStringList>
 #include <optional>
+#include <map>
 #include <vector>
 
 namespace model_controls {
@@ -30,6 +31,12 @@ QStringList variableNames(const QString& database);
 QStringList solvableParameters(const QString& database);
 // Selected global/experiment variables and non-omitted profile-local variables.
 QStringList selectedVariables(const QString& database, const Snapshot& controls);
+QStringList profileDatasets(const QString& database, const QString& experiment);
+QStringList applicableProfileVariables(const QString& database, const Snapshot& controls,
+                                      const QString& experiment, const QString& dataset);
+std::optional<double> profileVariableInitialValue(const QString& database, const Snapshot& controls,
+                                                 const QString& experiment, const QString& dataset,
+                                                 const QString& variable);
 // Compare against the original snapshot under a write transaction. Only changed
 // values are written; any conflict or failure rolls the entire transaction back.
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited);

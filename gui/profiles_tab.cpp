@@ -11,6 +11,7 @@
 #include <QColorDialog>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QDoubleValidator>
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -19,6 +20,9 @@
 #include <QGridLayout>
 #include <QFontMetrics>
 #include <QFileInfo>
+#include <QMessageBox>
+#include <QDateTime>
+#include <QTimeZone>
 #include <QRegularExpression>
 #include <QImage>
 #include <QJsonArray>
@@ -206,10 +210,30 @@ void ProfilePlot::paintEvent(QPaintEvent*)
 ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this); auto* controls = new QHBoxLayout;
-    source_ = new QComboBox; source_->setObjectName("profilesSource"); source_->addItems({"Database", "Report file"});
+    source_ = new QComboBox; source_->setObjectName("profilesSource"); source_->addItems({"Database", "Report file", "Live run"});
     openReport_ = new QPushButton("Open report..."); openReport_->setObjectName("openProfileReportButton");
     exportImage_ = new QPushButton("Export image..."); exportImage_->setObjectName("exportProfileImageButton");
     controls->addWidget(new QLabel("Source:")); controls->addWidget(source_); controls->addStretch(); controls->addWidget(openReport_); controls->addWidget(exportImage_); layout->addLayout(controls);
+    singleRunGroup_ = new QGroupBox("Run one profile"); singleRunGroup_->setObjectName("singleProfileRunRegion");
+    auto* singleRunLayout = new QGridLayout(singleRunGroup_);
+    singleRunExperiment_ = new QComboBox; singleRunExperiment_->setObjectName("singleRunExperiment");
+    singleRunDataset_ = new QComboBox; singleRunDataset_->setObjectName("singleRunDataset");
+    singleRunSolver_ = new QCheckBox("Run solver (fit selected variables)"); singleRunSolver_->setObjectName("singleRunSolverToggle"); singleRunSolver_->setChecked(true);
+    singleRunVariables_ = new QTableWidget(0, 3); singleRunVariables_->setObjectName("singleRunVariables");
+    singleRunVariables_->setHorizontalHeaderLabels({"Variable", "Fit", "Starting value"});
+    singleRunVariables_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    singleRunVariables_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    singleRunVariables_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    singleRunVariables_->verticalHeader()->hide(); singleRunVariables_->setMinimumHeight(110); singleRunVariables_->setMaximumHeight(180);
+    singleRunButton_ = new QPushButton("Run selected profile"); singleRunButton_->setObjectName("singleRunStartButton");
+    singleRunStatus_ = new QLabel("Choose an experiment and dataset to configure a profile run."); singleRunStatus_->setObjectName("singleRunStatus");
+    singleRunLayout->addWidget(new QLabel("Experiment"), 0, 0); singleRunLayout->addWidget(singleRunExperiment_, 0, 1);
+    singleRunLayout->addWidget(new QLabel("Dataset"), 0, 2); singleRunLayout->addWidget(singleRunDataset_, 0, 3);
+    singleRunLayout->addWidget(singleRunSolver_, 1, 0, 1, 4);
+    singleRunLayout->addWidget(singleRunVariables_, 2, 0, 1, 4);
+    singleRunLayout->addWidget(singleRunStatus_, 3, 0, 1, 3); singleRunLayout->addWidget(singleRunButton_, 3, 3);
+    layout->addWidget(singleRunGroup_);
+    singleRunGroup_->setEnabled(false);
     auto spin = [](const char* name, double value) { auto* box = new QDoubleSpinBox; box->setObjectName(name); box->setDecimals(6); box->setRange(-1e12, 1e12); box->setSingleStep(.1); box->setValue(value); box->setKeyboardTracking(false); return box; };
     title_ = new QLineEdit; title_->setObjectName("profileGraphTitle"); title_->setPlaceholderText("Graph title (automatic)");
     xLabel_ = new QLineEdit; xLabel_->setObjectName("profileXLabel"); xLabel_->setPlaceholderText("X axis title (automatic)");
@@ -228,7 +252,7 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
 
     auto* seriesGroup = new QGroupBox("Profiles to plot"); auto* seriesLayout = new QVBoxLayout(seriesGroup);
     seriesTable_ = new QTableWidget(0, 8); seriesTable_->setObjectName("profileSeriesTable");
-    seriesTable_->setHorizontalHeaderLabels({"Dataset", "Profile", "Y axis", "Line", "Fill", "Fill under curve", "Legend name", ""});
+    seriesTable_->setHorizontalHeaderLabels({"Dataset / saved version", "Profile", "Y axis", "Line", "Fill", "Fill under curve", "Legend name", ""});
     seriesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch); seriesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch); seriesTable_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch); seriesTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents); seriesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents); seriesTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents); seriesTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents); seriesTable_->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents); seriesTable_->verticalHeader()->hide(); seriesTable_->setMinimumHeight(116);
     addSeriesButton_ = new QPushButton("Add profile"); addSeriesButton_->setObjectName("addProfileSeriesButton"); seriesLayout->addWidget(seriesTable_); seriesLayout->addWidget(addSeriesButton_, 0, Qt::AlignLeft);
     auto* graphGroup = new QGroupBox("Graph"); auto* graphLayout = new QGridLayout(graphGroup);
@@ -256,8 +280,16 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     y2Group->setEnabled(false); auto* y2AxisWithToggle = new QVBoxLayout; y2AxisWithToggle->addWidget(useSecondYAxis_); y2AxisWithToggle->addWidget(y2Group); auto* y2Wrap = new QWidget; y2Wrap->setLayout(y2AxisWithToggle); axes->addWidget(y2Wrap); layout->addLayout(axes);
     status_ = new QLabel("Choose a database or open a report file."); status_->setObjectName("profilesStatus"); status_->setWordWrap(true); layout->addWidget(status_);
     plot_ = new ProfilePlot; plot_->setObjectName("profilePlot"); layout->addWidget(plot_, 1);
-    connect(source_, &QComboBox::currentIndexChanged, this, [this] { openReport_->setEnabled(source_->currentIndex() == 1); if (source_->currentIndex() == 0) loadDatabase(); else if (!reportFile_.isEmpty()) loadReport(reportFile_); });
+    connect(source_, &QComboBox::currentIndexChanged, this, [this] {
+        openReport_->setEnabled(source_->currentIndex() == 1);
+        if (source_->currentIndex() == 0) loadDatabase();
+        else if (source_->currentIndex() == 1 && !reportFile_.isEmpty()) loadReport(reportFile_);
+        else if (source_->currentIndex() == 2) showLiveProfiles();
+    });
     connect(openReport_, &QPushButton::clicked, this, [this] { const auto f = QFileDialog::getOpenFileName(this, "Open profile report", reportFile_, "Reports (*.txt *.csv *.tsv);;All files (*)"); if (!f.isEmpty()) loadReport(f); });
+    connect(singleRunExperiment_, &QComboBox::currentTextChanged, this, [this] { refreshSingleRunDatasets(); });
+    connect(singleRunDataset_, &QComboBox::currentTextChanged, this, [this] { refreshSingleRunVariables(); });
+    connect(singleRunButton_, &QPushButton::clicked, this, [this] { requestSingleRun(); });
     connect(addSeriesButton_, &QPushButton::clicked, this, [this] { addSeriesRow(); updatePlot(); });
     connect(useSecondYAxis_, &QCheckBox::toggled, y2Group, &QWidget::setEnabled);
     connect(useSecondYAxis_, &QCheckBox::toggled, this, [this](bool enabled) { for (auto* row : seriesRows_) row->yAxis->setEnabled(enabled); updatePlot(); });
@@ -269,6 +301,93 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     connect(exportImage_, &QPushButton::clicked, this, [this] { QString name = plot_->displayTitle().trimmed(); if (name.isEmpty()) name = "profile-graph"; name.replace(QRegularExpression("[<>:\"/\\\\|?*\\x00-\\x1f]"), "_"); while (name.endsWith('.') || name.endsWith(' ')) name.chop(1); const auto filename = QFileDialog::getSaveFileName(this, "Export profile graph", name + ".png", "PNG image (*.png)"); if (filename.isEmpty()) return; QImage image(plot_->size(), QImage::Format_ARGB32_Premultiplied); image.fill(Qt::transparent); plot_->render(&image); QString output = filename; if (QFileInfo(output).suffix().isEmpty()) output += ".png"; status_->setText(image.save(output, "PNG") ? "Graph image exported: " + output : "Could not export graph image: " + output); });
     connect(source_, &QComboBox::currentIndexChanged, this, [this] { if (seriesRows_.isEmpty()) addSeriesRow(); });
     loadDatabase();
+}
+
+void ProfilesTab::setSingleRunEnabled(bool enabled)
+{
+    singleRunGroup_->setEnabled(enabled);
+    if (enabled && singleRunStatus_->text() == "Run started…")
+        singleRunStatus_->setText("Ready to run. Adjust selections or starting values and run again.");
+}
+
+void ProfilesTab::setSingleRunContext(const QString& filename, const model_controls::Snapshot& controls)
+{
+    const auto previousExperiment = singleRunExperiment_->currentText();
+    const auto previousDataset = singleRunDataset_->currentText();
+    const bool unchanged = singleRunDatabase_ == filename && singleRunControls_ == controls;
+    singleRunDatabase_ = filename;
+    singleRunControls_ = controls;
+    if (unchanged) return;
+
+    QStringList experiments;
+    for (const auto& row : controls.rows)
+        if (row.name == "experiment_name") experiments = row.value.value_or(QString{}).split(' ', Qt::SkipEmptyParts);
+    experiments.removeDuplicates();
+    singleRunExperiment_->blockSignals(true);
+    singleRunExperiment_->clear(); singleRunExperiment_->addItems(experiments);
+    int experimentIndex = singleRunExperiment_->findText(previousExperiment);
+    if (experimentIndex < 0 && !experiments.isEmpty()) experimentIndex = 0;
+    singleRunExperiment_->setCurrentIndex(experimentIndex);
+    singleRunExperiment_->blockSignals(false);
+
+    bool solver = true;
+    for (const auto& row : controls.rows)
+        if (row.name == "run_solver") solver = row.value.value_or("true") == "true";
+    singleRunSolver_->setChecked(solver);
+    refreshSingleRunDatasets(previousDataset);
+}
+
+void ProfilesTab::refreshSingleRunDatasets(const QString& preferredDataset)
+{
+    const auto wanted = preferredDataset.isEmpty() ? singleRunDataset_->currentText() : preferredDataset;
+    const auto datasets = model_controls::profileDatasets(singleRunDatabase_, singleRunExperiment_->currentText());
+    singleRunDataset_->blockSignals(true);
+    singleRunDataset_->clear(); singleRunDataset_->addItems(datasets);
+    int index = singleRunDataset_->findText(wanted);
+    if (index < 0 && !datasets.isEmpty()) index = 0;
+    singleRunDataset_->setCurrentIndex(index);
+    singleRunDataset_->blockSignals(false);
+    singleRunStatus_->setText(datasets.isEmpty() ? "This experiment has no profile datasets." : QString{});
+    singleRunButton_->setEnabled(!datasets.isEmpty());
+    refreshSingleRunVariables();
+}
+
+void ProfilesTab::refreshSingleRunVariables()
+{
+    singleRunVariables_->setRowCount(0);
+    if (singleRunDatabase_.isEmpty() || singleRunExperiment_->currentText().isEmpty() || singleRunDataset_->currentText().isEmpty()) return;
+    for (const auto& name : model_controls::applicableProfileVariables(singleRunDatabase_, singleRunControls_, singleRunExperiment_->currentText(), singleRunDataset_->currentText())) {
+        const int row = singleRunVariables_->rowCount(); singleRunVariables_->insertRow(row);
+        auto* nameItem = new QTableWidgetItem(name); nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable); singleRunVariables_->setItem(row, 0, nameItem);
+        auto* fitItem = new QTableWidgetItem; fitItem->setFlags((fitItem->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable); fitItem->setCheckState(Qt::Checked); singleRunVariables_->setItem(row, 1, fitItem);
+        auto* startValue = new QLineEdit(singleRunVariables_); startValue->setObjectName("singleRunStartValue_" + name);
+        auto* validator = new QDoubleValidator(-1e300, 1e300, 15, startValue); validator->setNotation(QDoubleValidator::ScientificNotation); startValue->setValidator(validator);
+        const auto initialValue = model_controls::profileVariableInitialValue(singleRunDatabase_, singleRunControls_, singleRunExperiment_->currentText(), singleRunDataset_->currentText(), name);
+        if (initialValue) startValue->setText(QString::number(*initialValue, 'g', 15));
+        startValue->setProperty("singleRunInitialValue", initialValue ? QVariant::fromValue(*initialValue) : QVariant{});
+        singleRunVariables_->setCellWidget(row, 2, startValue);
+    }
+}
+
+void ProfilesTab::requestSingleRun()
+{
+    if (singleRunExperiment_->currentText().isEmpty() || singleRunDataset_->currentText().isEmpty()) return;
+    SingleProfileRunRequest request;
+    request.experiment = singleRunExperiment_->currentText(); request.dataset = singleRunDataset_->currentText();
+    request.runSolver = singleRunSolver_->isChecked();
+    for (int row = 0; row < singleRunVariables_->rowCount(); ++row) {
+        if (singleRunVariables_->item(row, 1)->checkState() != Qt::Checked) continue;
+        const auto variable = singleRunVariables_->item(row, 0)->text();
+        auto* startValue = qobject_cast<QLineEdit*>(singleRunVariables_->cellWidget(row, 2));
+        bool ok = false; const double value = startValue ? startValue->text().toDouble(&ok) : 0.0;
+        if (!ok || !std::isfinite(value)) {
+            QMessageBox::warning(this, "Invalid starting value", "Enter a finite starting value for " + variable + "."); return;
+        }
+        request.variables.push_back(variable);
+        const QVariant original = startValue->property("singleRunInitialValue");
+        if (!original.isValid() || value != original.toDouble()) request.initialValues[variable.toStdString()] = value;
+    }
+    if (singleRunRequested) { singleRunStatus_->setText("Run started…"); singleRunRequested(request); }
 }
 
 void ProfilesTab::addSeriesRow(const QJsonObject& value)
@@ -306,7 +425,19 @@ void ProfilesTab::refreshSeriesRows()
     for (auto* row : seriesRows_) {
         const QString dsId = row->dataset->currentData().toString(); const QString profile = row->profile->currentText();
         row->dataset->blockSignals(true); row->dataset->clear(); for (int i = 0; i < datasetIds_.size(); ++i) row->dataset->addItem(datasetLabels_.value(i), datasetIds_[i]);
-        int ds = row->dataset->findData(dsId); row->dataset->setCurrentIndex(ds >= 0 ? ds : (datasetIds_.isEmpty() ? -1 : 0)); row->dataset->blockSignals(false);
+        int ds = row->dataset->findData(dsId);
+        // Presets saved before version browsing stored only experiment and weight.
+        // Dataset versions are ordered newest first within that pair.
+        if (ds < 0) {
+            const auto legacyKey = dsId.split(QChar(0x1f));
+            if (legacyKey.size() == 2) {
+                const QString prefix = dsId + QChar(0x1f);
+                for (int i = 0; i < datasetIds_.size(); ++i) {
+                    if (datasetIds_[i].startsWith(prefix)) { ds = i; break; }
+                }
+            }
+        }
+        row->dataset->setCurrentIndex(ds >= 0 ? ds : (datasetIds_.isEmpty() ? -1 : 0)); row->dataset->blockSignals(false);
         row->profile->blockSignals(true); row->profile->clear(); row->profile->addItems(profiles_); int p = row->profile->findText(profile.isEmpty() ? row->lastProfile : profile); row->profile->setCurrentIndex(p >= 0 ? p : (profiles_.isEmpty() ? -1 : 0)); row->profile->blockSignals(false);
         row->lastProfile = row->profile->currentText();
     }
@@ -336,7 +467,47 @@ void ProfilesTab::setSettings(const QJsonObject& value)
     updatePlot();
 }
 
-void ProfilesTab::setDatabase(const QString& filename) { database_ = filename; if (source_->currentIndex() == 0) loadDatabase(); }
+void ProfilesTab::setDatabase(const QString& filename)
+{
+    if (database_ != filename) {
+        liveProfiles_.clear();
+        if (source_->currentIndex() == 2) source_->setCurrentIndex(0);
+    }
+    database_ = filename;
+    if (source_->currentIndex() == 0) loadDatabase();
+}
+
+void ProfilesTab::beginLiveRun()
+{
+    liveProfiles_.clear();
+    source_->setCurrentIndex(2);
+    showLiveProfiles();
+}
+
+void ProfilesTab::setLiveProfiles(std::vector<tsensor_workflow::live_profile_snapshot> profiles)
+{
+    liveProfiles_ = std::move(profiles);
+    if (source_->currentIndex() == 2) showLiveProfiles();
+}
+
+void ProfilesTab::showLiveProfiles()
+{
+    datasetLabels_.clear(); datasetIds_.clear();
+    profiles_ = {"Experimental", "Numeric model"};
+    for (const auto& profile : liveProfiles_) {
+        const QString name = QString::fromStdString(profile.experiment_name);
+        const QString wt = QString::fromStdString(profile.weight_percent);
+        const QString id = name + QChar(0x1f) + wt;
+        if (datasetIds_.contains(id)) continue;
+        const QString profileName = wt.isEmpty() ? name : name + " · " + wt;
+        datasetLabels_ << profileName + " · live";
+        datasetIds_ << id;
+    }
+    refreshSeriesRows();
+    if (seriesRows_.isEmpty() && !datasetIds_.isEmpty()) addSeriesRow();
+    status_->setText(datasetIds_.isEmpty() ? "Waiting for the first model evaluation…" : "Live preview of the latest completed evaluation; save profiles after the run to keep them.");
+    updatePlot();
+}
 
 void ProfilesTab::loadDatabase()
 {
@@ -344,10 +515,22 @@ void ProfilesTab::loadDatabase()
     if (database_.isEmpty()) { status_->setText("Choose a database file."); refreshSeriesRows(); updatePlot(); return; }
     sqlite3* raw = nullptr; const auto encoded = database_.toUtf8(); if (sqlite3_open_v2(encoded.constData(), &raw, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) { const QString error = raw ? QString::fromUtf8(sqlite3_errmsg(raw)) : "Cannot open database"; if (raw) sqlite3_close(raw); status_->setText(error); return; }
     std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(raw, sqlite3_close); sqlite3_stmt* statement = nullptr;
-    const char* query = "SELECT DISTINCT EXPERIMENT_NAME, WT_PERCENT FROM profile_record_samples ORDER BY EXPERIMENT_NAME, WT_PERCENT";
+    const char* query = "SELECT EXPERIMENT_NAME, WT_PERCENT, RUN_AT_UTC_US FROM profile_records ORDER BY EXPERIMENT_NAME, WT_PERCENT, RUN_AT_UTC_US DESC";
     if (sqlite3_prepare_v2(db.get(), query, -1, &statement, nullptr) != SQLITE_OK) { status_->setText("No saved model profiles are available in this database."); return; }
     std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> stmt(statement, sqlite3_finalize);
-    while (sqlite3_step(stmt.get()) == SQLITE_ROW) { const QString name = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0))); const QString wt = QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1))); datasetLabels_ << (wt.isEmpty() ? name : name + " · " + wt); datasetIds_ << name + QChar(0x1f) + wt; }
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        const auto* rawName = sqlite3_column_text(stmt.get(), 0);
+        const auto* rawWt = sqlite3_column_text(stmt.get(), 1);
+        const QString name = rawName ? QString::fromUtf8(reinterpret_cast<const char*>(rawName)) : QString{};
+        const QString wt = rawWt ? QString::fromUtf8(reinterpret_cast<const char*>(rawWt)) : QString{};
+        const sqlite3_int64 runAtUtcUs = sqlite3_column_int64(stmt.get(), 2);
+        const auto savedAt = QDateTime::fromMSecsSinceEpoch(runAtUtcUs / 1000, QTimeZone::UTC);
+        const QString fractionalMicroseconds = QString::number(std::abs(runAtUtcUs % 1000)).rightJustified(3, '0');
+        const QString version = savedAt.toString("yyyy-MM-dd HH:mm:ss.zzz") + fractionalMicroseconds + " UTC";
+        const QString profileName = wt.isEmpty() ? name : name + " · " + wt;
+        datasetLabels_ << (profileName + " · " + version);
+        datasetIds_ << name + QChar(0x1f) + wt + QChar(0x1f) + QString::number(runAtUtcUs);
+    }
     profiles_ = {"Experimental", "Numeric model", "Experimental derivative", "Numeric derivative", "Experimental difference", "Numeric difference", "Free dye", "Bound dye", "Total dye", "Unbound beads", "Bound beads", "Total beads", "Error"};
     refreshSeriesRows(); if (seriesRows_.isEmpty() && !datasetIds_.isEmpty()) addSeriesRow(); status_->setText(datasetIds_.isEmpty() ? "No saved model profiles are available in this database." : "Saved profiles from the selected database."); updatePlot();
 }
@@ -375,12 +558,33 @@ void ProfilesTab::updatePlot()
             for (const auto& row : rows) { if (row.isEmpty()) continue; if (row[0] == "res_time") { currentAxis.clear(); for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); currentAxis << (ok ? v : std::numeric_limits<double>::quiet_NaN()); } } else if (row[0] == "sec") { blocks.push_back({}); block = &blocks.back(); block->x = currentAxis; } else if (block && row.size() >= 10) { auto& values = block->y[row[8]]; for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); values << (ok ? v : std::numeric_limits<double>::quiet_NaN()); } } }
             for (auto* row : seriesRows_) { bool ok = false; int b = row->dataset->currentData().toInt(&ok); if (!ok || b < 0 || b >= blocks.size()) continue; const QString profile = row->profile->currentText(); auto values = blocks[b].y.value(profile); int n = std::min(blocks[b].x.size(), values.size()); if (n < 2) continue; ProfileSeriesData data; data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed(); data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fill->isChecked(); data.yAxis = row->yAxis->currentIndex(); data.x = blocks[b].x; data.y = values; data.x.resize(n); data.y.resize(n); series << data; }
         } catch (...) {}
+    } else if (source_->currentIndex() == 2) {
+        for (auto* row : seriesRows_) {
+            const auto key = row->dataset->currentData().toString().split(QChar(0x1f));
+            const int col = profiles_.indexOf(row->profile->currentText());
+            if (key.size() != 2 || (col != 0 && col != 1)) continue;
+            const auto found = std::find_if(liveProfiles_.begin(), liveProfiles_.end(), [&](const auto& profile) {
+                return QString::fromStdString(profile.experiment_name) == key[0] &&
+                       QString::fromStdString(profile.weight_percent) == key[1];
+            });
+            if (found == liveProfiles_.end()) continue;
+            const auto& values = col == 0 ? found->experimental : found->numeric;
+            const int count = static_cast<int>(std::min(found->x.size(), values.size()));
+            if (count < 2) continue;
+            ProfileSeriesData data;
+            const QString profile = row->profile->currentText();
+            data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed();
+            data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fill->isChecked(); data.yAxis = row->yAxis->currentIndex();
+            data.x.reserve(count); data.y.reserve(count);
+            for (int i = 0; i < count; ++i) { data.x << found->x[static_cast<std::size_t>(i)]; data.y << values[static_cast<std::size_t>(i)]; }
+            series << data;
+        }
     } else {
         static const char* columns[] = {"Experimental", "Numeric", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Difference", "Numeric_Difference", "Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads", "Bound_Beads", "Total_Beads", "Error"};
         sqlite3* db = nullptr; const auto encoded = database_.toUtf8(); if (sqlite3_open_v2(encoded.constData(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
-            for (auto* row : seriesRows_) { const auto key = row->dataset->currentData().toString().split(QChar(0x1f)); const int col = profiles_.indexOf(row->profile->currentText()); if (key.size() != 2 || col < 0 || col >= int(std::size(columns))) continue;
-                const QByteArray query = QByteArray("SELECT X,") + columns[col] + " FROM profile_record_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=? AND RUN_AT_UTC_US=(SELECT MAX(RUN_AT_UTC_US) FROM profile_record_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=?) ORDER BY X"; sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, query.constData(), -1, &stmt, nullptr) != SQLITE_OK) continue;
-                const auto e = key[0].toUtf8(), w = key[1].toUtf8(); sqlite3_bind_text(stmt, 1, e.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 2, w.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 3, e.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 4, w.constData(), -1, SQLITE_TRANSIENT);
+            for (auto* row : seriesRows_) { const auto key = row->dataset->currentData().toString().split(QChar(0x1f)); const int col = profiles_.indexOf(row->profile->currentText()); if (key.size() != 3 || col < 0 || col >= int(std::size(columns))) continue;
+                const QByteArray query = QByteArray("SELECT X,") + columns[col] + " FROM profile_record_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=? AND RUN_AT_UTC_US=? ORDER BY X"; sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, query.constData(), -1, &stmt, nullptr) != SQLITE_OK) continue;
+                const auto e = key[0].toUtf8(), w = key[1].toUtf8(), timestamp = key[2].toUtf8(); sqlite3_bind_text(stmt, 1, e.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 2, w.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_int64(stmt, 3, timestamp.toLongLong());
                 ProfileSeriesData data; const QString profile = row->profile->currentText(); data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed(); data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fill->isChecked(); data.yAxis = row->yAxis->currentIndex();
                 while (sqlite3_step(stmt) == SQLITE_ROW) { if (sqlite3_column_type(stmt, 1) == SQLITE_NULL) continue; const auto* txt = sqlite3_column_text(stmt, 1); bool valid = false; const double y = txt ? QString::fromUtf8(reinterpret_cast<const char*>(txt)).trimmed().toDouble(&valid) : 0; const double x = sqlite3_column_double(stmt, 0); if (valid && std::isfinite(x) && std::isfinite(y)) { data.x << x; data.y << y; } }
                 sqlite3_finalize(stmt); if (data.x.size() >= 2) series << data;
@@ -388,5 +592,5 @@ void ProfilesTab::updatePlot()
         }
     }
     plot_->setData(title_->text().trimmed().isEmpty() ? autoTitle : title_->text().trimmed(), xLabel_->text().isEmpty() ? "X (µm)" : xLabel_->text(), yLabel_->text().isEmpty() ? yAuto : yLabel_->text(), series);
-    if (!seriesRows_.isEmpty() && series.isEmpty()) status_->setText("No numeric samples are available for the selected profiles.");
+    if (!seriesRows_.isEmpty() && !datasetIds_.isEmpty() && series.isEmpty()) status_->setText("No numeric samples are available for the selected profiles.");
 }

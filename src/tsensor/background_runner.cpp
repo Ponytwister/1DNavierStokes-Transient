@@ -8,7 +8,9 @@ background_runner::~background_runner()
     wait();
 }
 
-void background_runner::start(const std::filesystem::path& database, progress_callback observer, std::optional<control_values> controls)
+void background_runner::start(const std::filesystem::path& database, progress_callback observer,
+                              std::optional<control_values> controls, bool capture_live_profiles,
+                              std::optional<single_profile_selection> single_profile)
 {
     // Resolve before dispatch so a later process working-directory change cannot
     // change which database the worker opens.
@@ -25,9 +27,11 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
     cancellation_ = std::stop_source{};
     pause_request_ = std::stop_source{};
     events_.clear();
+    live_profiles_.reset();
     state_ = background_state::running;
     try {
-        worker_ = std::jthread([this, path, observer = std::move(observer), controls = std::move(controls),
+        worker_ = std::jthread([this, path, observer = std::move(observer), controls = std::move(controls), capture_live_profiles,
+                               single_profile = std::move(single_profile),
                                token = cancellation_.get_token(), pause = pause_request_.get_token()] {
             background_result outcome;
             auto state = background_state::completed;
@@ -35,13 +39,19 @@ void background_runner::start(const std::filesystem::path& database, progress_ca
                 auto progress = [this, observer](const progress_event& event) mutable {
                     {
                         std::lock_guard lock(mutex_);
+                        auto queued_event = event;
+                        if (!queued_event.live_profiles.empty()) {
+                            live_profiles_ = std::move(queued_event.live_profiles);
+                            queued_event.live_profiles.clear();
+                        }
                         // Bounded recent history; final outcome is stored separately.
                         if (events_.size() == 512) events_.pop_front();
-                        events_.push_back(event);
+                        events_.push_back(std::move(queued_event));
                     }
                     if (observer) observer(event);
                 };
-                auto session = std::make_unique<run_session>(path, std::move(progress), token, pause);
+                auto session = std::make_unique<run_session>(path, std::move(progress), token, pause,
+                                                             capture_live_profiles, std::move(single_profile));
                 session->load_inputs(controls);
                 outcome.result = session->run();
                 // The session can outlive this runner; remove its capturing callback.
@@ -99,6 +109,14 @@ std::vector<progress_event> background_runner::drain_events()
     std::vector<progress_event> events(events_.begin(), events_.end());
     events_.clear();
     return events;
+}
+
+std::optional<std::vector<live_profile_snapshot>> background_runner::take_live_profiles()
+{
+    std::lock_guard lock(mutex_);
+    auto profiles = std::move(live_profiles_);
+    live_profiles_.reset();
+    return profiles;
 }
 
 void background_runner::wait()

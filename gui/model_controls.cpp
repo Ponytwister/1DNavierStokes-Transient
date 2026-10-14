@@ -213,6 +213,97 @@ QStringList selectedVariables(const QString& database, const Snapshot& controls)
     names.removeDuplicates();
     return names;
 }
+QStringList profileDatasets(const QString& database, const QString& experiment) {
+    auto db = open(database, false);
+    auto statement = prepare(db.get(),
+        "SELECT DISTINCT WT_PERCENT FROM raw_profile WHERE NAME=?1 AND WT_PERCENT IS NOT NULL "
+        "ORDER BY CAST(WT_PERCENT AS REAL), WT_PERCENT");
+    const auto encoded = experiment.toUtf8();
+    if (sqlite3_bind_text(statement.get(), 1, encoded.constData(), encoded.size(), SQLITE_TRANSIENT) != SQLITE_OK)
+        fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    QStringList datasets;
+    int rc;
+    while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        const auto value = column(statement.get(), 0);
+        if (!value.isEmpty()) datasets.push_back(value);
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    return datasets;
+}
+QStringList applicableProfileVariables(const QString& database, const Snapshot& controls,
+                                      const QString& experiment, const QString& dataset) {
+    QStringList names;
+    for (const auto& row : controls.rows)
+        if (row.name == "universal_solve_for") names.append(row.value.value_or(QString{}).split(' ', Qt::SkipEmptyParts));
+    auto db = open(database, false);
+    auto appendSelected = [&](const QString& table, const QString& valueField, bool matchDataset) {
+        auto statement = prepare(db.get(), "SELECT * FROM " + table + " WHERE NAME=?1" +
+            (matchDataset ? " AND WT_PERCENT=?2" : ""));
+        const auto encodedExperiment = experiment.toUtf8();
+        if (sqlite3_bind_text(statement.get(), 1, encodedExperiment.constData(), encodedExperiment.size(), SQLITE_TRANSIENT) != SQLITE_OK)
+            fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        if (matchDataset) {
+            const auto encodedDataset = dataset.toUtf8();
+            if (sqlite3_bind_text(statement.get(), 2, encodedDataset.constData(), encodedDataset.size(), SQLITE_TRANSIENT) != SQLITE_OK)
+                fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        }
+        int valueIndex = -1;
+        for (int i = 0; i < sqlite3_column_count(statement.get()); ++i)
+            if (QString::fromUtf8(sqlite3_column_name(statement.get(), i)) == valueField) valueIndex = i;
+        if (valueIndex < 0) return;
+        int rc;
+        while ((rc = sqlite3_step(statement.get())) == SQLITE_ROW)
+            names.append(column(statement.get(), valueIndex).split(' ', Qt::SkipEmptyParts));
+        if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    };
+    appendSelected("experiments", "PARAMETERS_TO_SOLVE_FOR", false);
+    appendSelected("raw_profile", "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR", true);
+    names.removeDuplicates();
+    return names;
+}
+std::optional<double> profileVariableInitialValue(const QString& database, const Snapshot& controls,
+                                                 const QString& experiment, const QString& dataset,
+                                                 const QString& variable) {
+    auto db = open(database, false);
+    if (variable == "left_edge" || variable == "width") {
+        auto statement = prepare(db.get(),
+            "SELECT LEFT_EDGE, WIDTH FROM raw_profile WHERE NAME=?1 AND WT_PERCENT=?2 LIMIT 1");
+        const auto encodedExperiment = experiment.toUtf8();
+        const auto encodedDataset = dataset.toUtf8();
+        if (sqlite3_bind_text(statement.get(), 1, encodedExperiment.constData(), encodedExperiment.size(), SQLITE_TRANSIENT) != SQLITE_OK ||
+            sqlite3_bind_text(statement.get(), 2, encodedDataset.constData(), encodedDataset.size(), SQLITE_TRANSIENT) != SQLITE_OK)
+            fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        const int rc = sqlite3_step(statement.get());
+        if (rc == SQLITE_ROW) {
+            const int index = variable == "left_edge" ? 0 : 1;
+            if (sqlite3_column_type(statement.get(), index) == SQLITE_NULL) return std::nullopt;
+            double value = sqlite3_column_double(statement.get(), index);
+            if (variable == "left_edge") {
+                for (const auto& row : controls.rows) if (row.name == "exp_left_padding" && row.value) {
+                    bool ok = false;
+                    const int padding = row.value->toInt(&ok);
+                    if (ok) value += padding;
+                }
+                value = std::max(value, 0.0);
+            }
+            return value;
+        }
+        if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        return std::nullopt;
+    }
+    auto statement = prepare(db.get(),
+        "SELECT \"INITIAL VALUE\" FROM alglib_input WHERE VARIABLE=?1 LIMIT 1");
+    const auto encodedVariable = variable.toUtf8();
+    if (sqlite3_bind_text(statement.get(), 1, encodedVariable.constData(), encodedVariable.size(), SQLITE_TRANSIENT) != SQLITE_OK)
+        fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    const int rc = sqlite3_step(statement.get());
+    if (rc == SQLITE_ROW) {
+        if (sqlite3_column_type(statement.get(), 0) == SQLITE_NULL) return std::nullopt;
+        return sqlite3_column_double(statement.get(), 0);
+    }
+    if (rc != SQLITE_DONE) fail(QString::fromUtf8(sqlite3_errmsg(db.get())));
+    return std::nullopt;
+}
 Snapshot load(const QString& database) { auto db = open(database, false); return read(db.get()); }
 void save(const QString& database, const Snapshot& original, const std::vector<Row>& edited) {
     if (edited.size() != original.rows.size()) fail("Control rows cannot be added or removed here.");

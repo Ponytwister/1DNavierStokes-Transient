@@ -21,6 +21,14 @@ struct parameter_value {
     double initial_value;
 };
 
+struct live_profile_snapshot {
+    std::string experiment_name;
+    std::string weight_percent;
+    std::vector<double> x;
+    std::vector<double> experimental;
+    std::vector<double> numeric;
+};
+
 struct progress_event {
     event_kind kind;
     operation action;
@@ -33,6 +41,8 @@ struct progress_event {
     // Owned parameter snapshot, delivered at initialization and optimizer reports.
     std::vector<parameter_value> parameters;
     std::optional<double> sum_squared_residuals;
+    // Owned copy of the completed model curves at this evaluation, when available.
+    std::vector<live_profile_snapshot> live_profiles;
 };
 
 using progress_callback = std::function<void(const progress_event&)>;

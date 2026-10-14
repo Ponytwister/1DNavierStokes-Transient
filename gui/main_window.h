@@ -29,7 +29,7 @@ private:
     enum class Work { idle, solve, save };
     struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; QString reportFile; QString reportText; };
     void prepareReport();
-    void startRun();
+    void startRun(std::optional<tsensor_workflow::single_profile_selection> selection = std::nullopt);
     void saveSetup();
     void openSetup();
     void createDatabase();

@@ -22,11 +22,14 @@ public:
     // Rejects an active run or an outcome not yet taken. The optional observer
     // has the same non-reentrant, short-running contract as run_session.
     void start(const std::filesystem::path& database, progress_callback observer = {},
-               std::optional<control_values> controls = std::nullopt);
+               std::optional<control_values> controls = std::nullopt,
+               bool capture_live_profiles = false,
+               std::optional<single_profile_selection> single_profile = std::nullopt);
     bool request_cancel();
     bool request_pause();
     background_state status() const;
     std::vector<progress_event> drain_events();
+    std::optional<std::vector<live_profile_snapshot>> take_live_profiles();
     void wait(); // Blocking; do not use on a GUI event loop while running.
     background_result take_result(); // Rejects running/idle; resets to idle.
 
@@ -36,6 +39,7 @@ private:
     std::stop_source cancellation_;
     std::stop_source pause_request_;
     std::deque<progress_event> events_;
+    std::optional<std::vector<live_profile_snapshot>> live_profiles_;
     background_result outcome_;
     std::jthread worker_; // Joined before any members it uses are destroyed.
 };

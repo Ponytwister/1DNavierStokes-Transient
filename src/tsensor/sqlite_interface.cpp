@@ -399,6 +399,8 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
         } else {p.use_alglib_init_values = false;}
     } else if (criterion == "universal_solve_for") {
         while (getline(ss, s, ' ')) {
+            if (p.single_profile_experiment &&
+                std::find(p.single_profile_variables.begin(), p.single_profile_variables.end(), s) == p.single_profile_variables.end()) continue;
             if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats
                 p.global_solve_for.push_back(s);
                 p.solve_for.push_back(s);
@@ -463,6 +465,8 @@ raw_profile_row_count_db_callback(void *data, int count, char **argv, char **col
             }
         } else if (criterion == "WT_PERCENT") {
             assert(!value.empty());
+            if (p.single_profile_experiment &&
+                (run_ptr->name != *p.single_profile_experiment || value != *p.single_profile_dataset)) continue;
             p.experiments.emplace_back();
             p.experiments.back().second_name = value;
             p.experiments.back().run = run_ptr;
@@ -529,6 +533,8 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
             run_ptr->high_ref_end = std::stoi(col_val);
         } else if (criterion == "PARAMETERS_TO_SOLVE_FOR") {
             while (getline(ss, s, ' ')) {
+                if (p.single_profile_experiment &&
+                    std::find(p.single_profile_variables.begin(), p.single_profile_variables.end(), s) == p.single_profile_variables.end()) continue;
                 if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
                     p.solve_for.push_back(s);
                 }
@@ -1020,18 +1026,26 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
         std::stringstream ss(value); // constructing stream from the string
         pop_and_add(p, 0, criterion);
         if (criterion == "NAME") {
+            if (p.single_profile_experiment && value != *p.single_profile_experiment) {
+                pop_report(p, 0);
+                return 0;
+            }
             for (ptrdiff_t j = 0; j < p.experiment_runs.size(); j++) {
                 if (p.experiment_runs.at(j).name == value) {
                     run_ptr = &p.experiment_runs.at(j);
                 }
             }
         } else if (criterion == "WT_PERCENT") {
+            if (p.single_profile_dataset && value != *p.single_profile_dataset) {
+                pop_report(p, 0);
+                return 0;
+            }
             if (!value.empty()) {
                 for (ptrdiff_t j = 0; j < p.experiments.size(); j++) {
                     if (p.experiments.at(j).second_name == value && run_ptr == p.experiments.at(j).run) {
                         row = j;
                         exp_ptr = &p.experiments.at(j);
-                        exp_ptr->omit = omit;
+                        exp_ptr->omit = p.single_profile_experiment ? false : omit;
                         break;
                     } else if (j == p.experiments.size() - 1) {
                         pop_report(p, 0); // clear criterion
@@ -1084,8 +1098,10 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             }
         } else if (criterion == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR") {
             add_report(p, 0, "Value=" + value);
-            if (!omit && !value.empty()) {
+            if ((!omit || p.single_profile_experiment) && !value.empty()) {
                 while (getline(ss, s, ' ')) {
+                    if (p.single_profile_experiment &&
+                        std::find(p.single_profile_variables.begin(), p.single_profile_variables.end(), s) == p.single_profile_variables.end()) continue;
                     if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
                         p.solve_for.push_back(s);
                     }
@@ -1364,6 +1380,16 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         p.low_bound[i] = p.low_bound_map.at(s.name);
         p.up_bound[i] = p.up_bound_map.at(s.name); 
         p.scale[i] = p.scale_map.at(s.name);
+
+        if (p.single_profile_experiment) {
+            const auto requested = p.single_profile_initial_values.find(s.name);
+            if (requested != p.single_profile_initial_values.end()) {
+                if (!std::isfinite(requested->second) || requested->second < p.low_bound[i] || requested->second > p.up_bound[i])
+                    throw std::runtime_error("Starting value for '" + s.name + "' must be finite and within its configured bounds");
+                p.initial_values_alglib[i] = requested->second;
+                s.value() = requested->second;
+            }
+        }
 
     }
 
@@ -2466,6 +2492,29 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
         }
     }
     p.iterations = p.iterations + 1;
-    publish_event(p, {tsensor_workflow::event_kind::evaluation, p.active_operation,
-                      "Residual evaluation completed", 3, p.iterations});
+    tsensor_workflow::progress_event event{tsensor_workflow::event_kind::evaluation, p.active_operation,
+                      "Residual evaluation completed", 3, p.iterations};
+    if (p.capture_live_profiles) {
+        for (const auto& experiment : p.experiments) {
+            auto* run = experiment.run;
+            if (!run || run->FITC < 0 || run->FITC >= static_cast<std::ptrdiff_t>(run->species.size())) continue;
+            const auto& fitc = run->species.at(run->FITC);
+            const double numeric_unit = unit_conversion(run, run->FITC, fitc.model_units, fitc.input_units);
+            const auto sample_count = std::min({experiment.channel_position.size(),
+                experiment.experimental_profile.size(), experiment.model_profile.size()});
+            tsensor_workflow::live_profile_snapshot snapshot;
+            snapshot.experiment_name = run->name;
+            snapshot.weight_percent = experiment.second_name;
+            snapshot.x.reserve(sample_count);
+            snapshot.experimental.reserve(sample_count);
+            snapshot.numeric.reserve(sample_count);
+            for (std::size_t sample = 0; sample < sample_count; ++sample) {
+                snapshot.x.push_back(experiment.channel_position[sample]);
+                snapshot.experimental.push_back(experiment.experimental_profile[sample] * run->dye_conc_mgml);
+                snapshot.numeric.push_back(experiment.model_profile[sample] * numeric_unit);
+            }
+            event.live_profiles.push_back(std::move(snapshot));
+        }
+    }
+    publish_event(p, std::move(event));
 }

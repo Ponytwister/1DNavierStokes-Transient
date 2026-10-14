@@ -5,10 +5,16 @@
 #include <QStringList>
 #include <QJsonObject>
 #include <QColor>
+#include <feedback.h>
+#include <model_controls.h>
+#include <functional>
+#include <map>
+#include <vector>
 
 class QComboBox;
 class QCheckBox;
 class QDoubleSpinBox;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -23,6 +29,14 @@ struct ProfileSeriesData {
     QColor fillColor;
     bool filled = false;
     int yAxis = 0;
+};
+
+struct SingleProfileRunRequest {
+    QString experiment;
+    QString dataset;
+    QStringList variables;
+    std::map<std::string, double> initialValues;
+    bool runSolver = true;
 };
 
 class ProfilePlot : public QWidget {
@@ -54,6 +68,11 @@ class ProfilesTab : public QWidget {
 public:
     explicit ProfilesTab(QWidget* parent = nullptr);
     void setDatabase(const QString& filename);
+    void setSingleRunContext(const QString& filename, const model_controls::Snapshot& controls);
+    void setSingleRunEnabled(bool enabled);
+    std::function<void(const SingleProfileRunRequest&)> singleRunRequested;
+    void beginLiveRun();
+    void setLiveProfiles(std::vector<tsensor_workflow::live_profile_snapshot> profiles);
     QJsonObject settings() const;
     void setSettings(const QJsonObject& settings);
 private:
@@ -70,6 +89,10 @@ private:
     };
     void loadDatabase();
     void loadReport(const QString& filename);
+    void showLiveProfiles();
+    void refreshSingleRunDatasets(const QString& preferredDataset = {});
+    void refreshSingleRunVariables();
+    void requestSingleRun();
     void updatePlot();
     void addSeriesRow(const QJsonObject& settings = {});
     void removeSeriesRow(SeriesRow* row);
@@ -79,6 +102,14 @@ private:
     QComboBox* source_;
     QTableWidget* seriesTable_;
     QPushButton* addSeriesButton_;
+    QGroupBox* singleRunGroup_;
+    QComboBox *singleRunExperiment_, *singleRunDataset_;
+    QTableWidget* singleRunVariables_;
+    QCheckBox* singleRunSolver_;
+    QPushButton* singleRunButton_;
+    QLabel* singleRunStatus_;
+    model_controls::Snapshot singleRunControls_;
+    QString singleRunDatabase_;
     QLabel* status_;
     QPushButton* openReport_;
     QPushButton *exportImage_;
@@ -92,4 +123,5 @@ private:
     QString database_, reportFile_;
     QStringList datasetLabels_, datasetIds_, profiles_;
     QVector<SeriesRow*> seriesRows_;
+    std::vector<tsensor_workflow::live_profile_snapshot> liveProfiles_;
 };

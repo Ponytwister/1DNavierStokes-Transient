@@ -262,6 +262,11 @@ typedef struct parameters_struct : channel_dimensions {
     std::recursive_mutex report_mutex; // Shared by the existing model workers.
     tsensor_workflow::progress_callback progress;
     std::exception_ptr progress_failure;
+    bool capture_live_profiles = false;
+    std::optional<std::string> single_profile_experiment;
+    std::optional<std::string> single_profile_dataset;
+    std::vector<std::string> single_profile_variables;
+    std::map<std::string, double> single_profile_initial_values;
     std::stop_token cancellation;
     std::stop_token pause_request;
     tsensor_workflow::operation active_operation = tsensor_workflow::operation::none;

@@ -12,6 +12,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
+#include <QDialog>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -24,7 +25,6 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QTableWidget>
 #include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -35,6 +35,19 @@ using namespace tsensor_workflow;
 namespace {
 std::filesystem::path path(const QString& value) { return std::filesystem::path(value.toStdWString()); }
 QString text(const std::string& value) { return QString::fromUtf8(value.data(), static_cast<int>(value.size())); }
+QString terminationLabel(const std::optional<alglib::ae_int_t>& code) {
+    if (!code) return "Not run";
+    switch (*code) {
+    case -8: return "-8 — Numerical failure (NaN/Inf in the function or Jacobian)";
+    case -5: return "-5 — Inappropriate optimizer configuration";
+    case -3: return "-3 — Inconsistent constraints";
+    case 2: return "2 — Relative step reached the EpsX tolerance";
+    case 5: return "5 — Maximum iterations reached";
+    case 7: return "7 — Further improvement is impossible under the stopping conditions";
+    case 8: return "8 — Stopped by a user termination request";
+    default: return QString::number(*code) + " — Unrecognized termination code";
+    }
+}
 QString legacyReportFilename(const parameters_t& parameters) {
     QString filename;
     for (const auto& run : parameters.experiment_runs)
@@ -71,6 +84,15 @@ MainWindow::MainWindow()
     reportPage_->generateRequested = [this] { prepareReport(); };
     tabs_->addTab(reportPage_, "Report");
     profilesPage_ = new ProfilesTab;
+    profilesPage_->singleRunRequested = [this](const SingleProfileRunRequest& request) {
+        tsensor_workflow::single_profile_selection selection;
+        selection.experiment_name = request.experiment.toStdString();
+        selection.dataset_name = request.dataset.toStdString();
+        for (const auto& variable : request.variables) selection.variables.push_back(variable.toStdString());
+        selection.initial_values = request.initialValues;
+        selection.run_solver = request.runSolver;
+        startRun(std::move(selection));
+    };
     tabs_->addTab(profilesPage_, "Profiles");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
@@ -235,6 +257,15 @@ MainWindow::MainWindow()
         }
     });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (tabs_->widget(index) == profilesPage_ && !controlsEditor_ && work_ == Work::idle && !closing_) {
+            const QFileInfo input(database_->text().trimmed());
+            if (input.isFile()) {
+                try {
+                    loadControls();
+                    profilesPage_->setSingleRunContext(input.absoluteFilePath(), *modelControls_);
+                } catch (...) { reportFailure(std::current_exception()); }
+            }
+        }
         if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {
@@ -252,6 +283,7 @@ MainWindow::MainWindow()
         connect(editor, &QDialog::finished, this, [this, editor](int result) {
             if (result == QDialog::Accepted) {
                 modelControls_ = editor->values();
+                profilesPage_->setSingleRunContext(database_->text().trimmed(), *modelControls_);
                 applyTableFilters();
                 clearResult();
             }
@@ -361,6 +393,7 @@ void MainWindow::openSetup() {
         database_->setText(setup.database); output_->setText(setup.outputDirectory);
         profilesPage_->setSettings(setup.profiles);
         modelControls_ = original; modelControls_->rows = setup.controls;
+        profilesPage_->setSingleRunContext(setup.database, *modelControls_);
         presetFilename_ = filename;
         tabs_->setCurrentIndex(0);
         experimentsPage_->experimentFilter()->apply();
@@ -460,6 +493,7 @@ void MainWindow::updateControls()
     database_->setEnabled(idle); browseDatabase_->setEnabled(idle);
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
+    profilesPage_->setSingleRunEnabled(idle && !database_->text().trimmed().isEmpty());
     tabs_->setTabEnabled(1, idle && !database_->text().trimmed().isEmpty());
     controlsPage_->setEnabled(work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(2, work_ == Work::idle && !closing_);
@@ -492,7 +526,7 @@ void MainWindow::loadControls() {
     if (!modelControls_) modelControls_ = model_controls::load(database_->text().trimmed());
 }
 
-void MainWindow::startRun()
+void MainWindow::startRun(std::optional<tsensor_workflow::single_profile_selection> selection)
 {
     if (work_ != Work::idle || closing_) return;
     const QFileInfo input(database_->text().trimmed());
@@ -518,11 +552,23 @@ void MainWindow::startRun()
     try {
         loadControls();
         control_values controls;
-        for (const auto& row : modelControls_->rows)
+        bool hasRunSolverControl = false;
+        for (const auto& row : modelControls_->rows) {
             // Desktop profile saving is an explicit button action, never a model control.
-            if (row.name != "save_model_profiles" && row.name != "save_normalized_profiles")
-                controls.emplace_back(row.name.toStdString(), row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt);
-        runner_.start(path(activeDatabase_), {}, std::move(controls));
+            if (row.name != "save_model_profiles" && row.name != "save_normalized_profiles") {
+                auto value = row.value ? std::optional<std::string>(row.value->toStdString()) : std::nullopt;
+                if (selection && row.name == "experiment_name") value = selection->experiment_name;
+                if (selection && row.name == "run_solver") {
+                    value = selection->run_solver ? "true" : "false";
+                    hasRunSolverControl = true;
+                }
+                controls.emplace_back(row.name.toStdString(), std::move(value));
+            }
+        }
+        if (selection && !hasRunSolverControl)
+            controls.emplace_back("run_solver", selection->run_solver ? "true" : "false");
+        runner_.start(path(activeDatabase_), {}, std::move(controls), true, std::move(selection));
+        profilesPage_->beginLiveRun();
         cancelling_ = false; work_ = Work::solve; setStatus("Running…"); updateControls();
     } catch (...) { reportFailure(std::current_exception()); }
 }
@@ -622,6 +668,8 @@ void MainWindow::poll()
             else if (event.kind != event_kind::message || event.detail_level >= 3)
                 log_->appendPlainText(text(event.message));
         }
+        if (auto liveProfiles = runner_.take_live_profiles())
+            profilesPage_->setLiveProfiles(std::move(*liveProfiles));
         if (state != background_state::running) {
             auto outcome = runner_.take_result(); work_ = Work::idle;
             if (state == background_state::cancelled) { summary_->clear(); setStatus("Run cancelled. No results were saved."); }
@@ -629,10 +677,10 @@ void MainWindow::poll()
             else {
                 session_ = std::move(outcome.session);
                 const auto& result = *outcome.result;
-                summary_->setText(QString("Model evaluations: %1 · Optimizer iterations: %2 · Termination code: %3")
+                summary_->setText(QString("Model evaluations: %1 · Optimizer iterations: %2 · Termination: %3")
                     .arg(result.residual_evaluations)
                     .arg(result.optimizer_iterations ? QString::number(*result.optimizer_iterations) : "Not run")
-                    .arg(result.termination_type ? QString::number(*result.termination_type) : "Not run"));
+                    .arg(terminationLabel(result.termination_type)));
                 resultDatabase_->setText("Results from: " + activeDatabase_);
                 if (result.sum_squared_residuals)
                     summary_->setText(summary_->text() + " · Final sum of squared residuals: " +
@@ -650,7 +698,7 @@ void MainWindow::poll()
                 else if (residualSumIncreased)
                     setStatus("Run finished with a higher residual sum than it started with.");
                 else
-                    setStatus("Run finished. Review the termination code and results before saving.");
+                    setStatus("Run finished. Review the termination reason and results before saving.");
                 if (residualSumIncreased && !closing_) {
                     const auto original = QString::number(*result.original_sum_squared_residuals, 'g', 15);
                     const auto final = QString::number(*result.sum_squared_residuals, 'g', 15);
