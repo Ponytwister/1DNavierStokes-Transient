@@ -18,6 +18,7 @@
 #include <QHeaderView>
 #include <QGroupBox>
 #include <QGridLayout>
+#include <QScrollArea>
 #include <QFontMetrics>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -209,7 +210,12 @@ void ProfilePlot::paintEvent(QPaintEvent*)
 
 ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this); auto* controls = new QHBoxLayout;
+    auto* outer = new QVBoxLayout(this);
+    auto* scrollArea = new QScrollArea(this); scrollArea->setWidgetResizable(true);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* content = new QWidget; auto* layout = new QVBoxLayout(content);
+    outer->addWidget(scrollArea); scrollArea->setWidget(content);
+    auto* controls = new QHBoxLayout;
     source_ = new QComboBox; source_->setObjectName("profilesSource"); source_->addItems({"Database", "Report file", "Live run"});
     openReport_ = new QPushButton("Open report..."); openReport_->setObjectName("openProfileReportButton");
     exportImage_ = new QPushButton("Export image..."); exportImage_->setObjectName("exportProfileImageButton");
@@ -225,15 +231,21 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     singleRunVariables_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     singleRunVariables_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     singleRunVariables_->verticalHeader()->hide(); singleRunVariables_->setMinimumHeight(110); singleRunVariables_->setMaximumHeight(180);
-    singleRunButton_ = new QPushButton("Run selected profile"); singleRunButton_->setObjectName("singleRunStartButton");
+    singleRunButton_ = new QPushButton("Run"); singleRunButton_->setObjectName("singleRunStartButton");
+    singleRunPause_ = new QPushButton("Pause"); singleRunPause_->setObjectName("singleRunPauseButton");
+    singleRunStop_ = new QPushButton("Stop"); singleRunStop_->setObjectName("singleRunStopButton");
+    singleRunSaveInputs_ = new QPushButton("Save fitted inputs…"); singleRunSaveInputs_->setObjectName("singleRunSaveInputsButton");
     singleRunStatus_ = new QLabel("Choose an experiment and dataset to configure a profile run."); singleRunStatus_->setObjectName("singleRunStatus");
     singleRunLayout->addWidget(new QLabel("Experiment"), 0, 0); singleRunLayout->addWidget(singleRunExperiment_, 0, 1);
     singleRunLayout->addWidget(new QLabel("Dataset"), 0, 2); singleRunLayout->addWidget(singleRunDataset_, 0, 3);
     singleRunLayout->addWidget(singleRunSolver_, 1, 0, 1, 4);
     singleRunLayout->addWidget(singleRunVariables_, 2, 0, 1, 4);
-    singleRunLayout->addWidget(singleRunStatus_, 3, 0, 1, 3); singleRunLayout->addWidget(singleRunButton_, 3, 3);
-    layout->addWidget(singleRunGroup_);
-    singleRunGroup_->setEnabled(false);
+    singleRunLayout->addWidget(singleRunStatus_, 3, 0, 1, 4);
+    singleRunLayout->addWidget(singleRunButton_, 4, 0); singleRunLayout->addWidget(singleRunPause_, 4, 1);
+    singleRunLayout->addWidget(singleRunStop_, 4, 2); singleRunLayout->addWidget(singleRunSaveInputs_, 4, 3);
+    singleRunExperiment_->setEnabled(false); singleRunDataset_->setEnabled(false);
+    singleRunSolver_->setEnabled(false); singleRunVariables_->setEnabled(false); singleRunButton_->setEnabled(false);
+    singleRunPause_->setEnabled(false); singleRunStop_->setEnabled(false); singleRunSaveInputs_->setEnabled(false);
     auto spin = [](const char* name, double value) { auto* box = new QDoubleSpinBox; box->setObjectName(name); box->setDecimals(6); box->setRange(-1e12, 1e12); box->setSingleStep(.1); box->setValue(value); box->setKeyboardTracking(false); return box; };
     title_ = new QLineEdit; title_->setObjectName("profileGraphTitle"); title_->setPlaceholderText("Graph title (automatic)");
     xLabel_ = new QLineEdit; xLabel_->setObjectName("profileXLabel"); xLabel_->setPlaceholderText("X axis title (automatic)");
@@ -280,6 +292,7 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     y2Group->setEnabled(false); auto* y2AxisWithToggle = new QVBoxLayout; y2AxisWithToggle->addWidget(useSecondYAxis_); y2AxisWithToggle->addWidget(y2Group); auto* y2Wrap = new QWidget; y2Wrap->setLayout(y2AxisWithToggle); axes->addWidget(y2Wrap); layout->addLayout(axes);
     status_ = new QLabel("Choose a database or open a report file."); status_->setObjectName("profilesStatus"); status_->setWordWrap(true); layout->addWidget(status_);
     plot_ = new ProfilePlot; plot_->setObjectName("profilePlot"); layout->addWidget(plot_, 1);
+    layout->addWidget(singleRunGroup_);
     connect(source_, &QComboBox::currentIndexChanged, this, [this] {
         openReport_->setEnabled(source_->currentIndex() == 1);
         if (source_->currentIndex() == 0) loadDatabase();
@@ -290,6 +303,13 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
     connect(singleRunExperiment_, &QComboBox::currentTextChanged, this, [this] { refreshSingleRunDatasets(); });
     connect(singleRunDataset_, &QComboBox::currentTextChanged, this, [this] { refreshSingleRunVariables(); });
     connect(singleRunButton_, &QPushButton::clicked, this, [this] { requestSingleRun(); });
+    connect(singleRunPause_, &QPushButton::clicked, this, [this] { if (pauseRequested) pauseRequested(); });
+    connect(singleRunStop_, &QPushButton::clicked, this, [this] { if (stopRequested) stopRequested(); });
+    connect(singleRunSaveInputs_, &QPushButton::clicked, this, [this] { if (saveFittedInputsRequested) saveFittedInputsRequested(); });
+    connect(singleRunVariables_, &QTableWidget::cellDoubleClicked, this, [this](int row, int column) {
+        if (column == 0 && row >= 0 && singleRunVariables_->item(row, 0) && variableEditRequested)
+            variableEditRequested(singleRunVariables_->item(row, 0)->text());
+    });
     connect(addSeriesButton_, &QPushButton::clicked, this, [this] { addSeriesRow(); updatePlot(); });
     connect(useSecondYAxis_, &QCheckBox::toggled, y2Group, &QWidget::setEnabled);
     connect(useSecondYAxis_, &QCheckBox::toggled, this, [this](bool enabled) { for (auto* row : seriesRows_) row->yAxis->setEnabled(enabled); updatePlot(); });
@@ -305,9 +325,23 @@ ProfilesTab::ProfilesTab(QWidget* parent) : QWidget(parent)
 
 void ProfilesTab::setSingleRunEnabled(bool enabled)
 {
-    singleRunGroup_->setEnabled(enabled);
-    if (enabled && singleRunStatus_->text() == "Run started…")
-        singleRunStatus_->setText("Ready to run. Adjust selections or starting values and run again.");
+    singleRunExperiment_->setEnabled(enabled);
+    singleRunDataset_->setEnabled(enabled);
+    singleRunSolver_->setEnabled(enabled);
+    singleRunVariables_->setEnabled(enabled);
+    singleRunButton_->setEnabled(enabled && singleRunDataset_->count() > 0);
+}
+
+void ProfilesTab::setSingleRunControlState(bool canPause, bool canStop, bool canSaveInputs)
+{
+    singleRunPause_->setEnabled(canPause);
+    singleRunStop_->setEnabled(canStop);
+    singleRunSaveInputs_->setEnabled(canSaveInputs);
+}
+
+void ProfilesTab::setSingleRunStatus(const QString& message)
+{
+    singleRunStatus_->setText(message);
 }
 
 void ProfilesTab::setSingleRunContext(const QString& filename, const model_controls::Snapshot& controls)
@@ -348,7 +382,7 @@ void ProfilesTab::refreshSingleRunDatasets(const QString& preferredDataset)
     singleRunDataset_->setCurrentIndex(index);
     singleRunDataset_->blockSignals(false);
     singleRunStatus_->setText(datasets.isEmpty() ? "This experiment has no profile datasets." : QString{});
-    singleRunButton_->setEnabled(!datasets.isEmpty());
+    singleRunButton_->setEnabled(singleRunExperiment_->isEnabled() && !datasets.isEmpty());
     refreshSingleRunVariables();
 }
 
@@ -360,13 +394,55 @@ void ProfilesTab::refreshSingleRunVariables()
         const int row = singleRunVariables_->rowCount(); singleRunVariables_->insertRow(row);
         auto* nameItem = new QTableWidgetItem(name); nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable); singleRunVariables_->setItem(row, 0, nameItem);
         auto* fitItem = new QTableWidgetItem; fitItem->setFlags((fitItem->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable); fitItem->setCheckState(Qt::Checked); singleRunVariables_->setItem(row, 1, fitItem);
-        auto* startValue = new QLineEdit(singleRunVariables_); startValue->setObjectName("singleRunStartValue_" + name);
+        auto* startCell = new QWidget(singleRunVariables_);
+        auto* startLayout = new QHBoxLayout(startCell); startLayout->setContentsMargins(0, 0, 0, 0); startLayout->setSpacing(4);
+        auto* startValue = new QLineEdit(startCell); startValue->setObjectName("singleRunStartValue_" + name);
         auto* validator = new QDoubleValidator(-1e300, 1e300, 15, startValue); validator->setNotation(QDoubleValidator::ScientificNotation); startValue->setValidator(validator);
         const auto initialValue = model_controls::profileVariableInitialValue(singleRunDatabase_, singleRunControls_, singleRunExperiment_->currentText(), singleRunDataset_->currentText(), name);
         if (initialValue) startValue->setText(QString::number(*initialValue, 'g', 15));
         startValue->setProperty("singleRunInitialValue", initialValue ? QVariant::fromValue(*initialValue) : QVariant{});
-        singleRunVariables_->setCellWidget(row, 2, startValue);
+        auto* previousValue = new QPushButton(startCell); previousValue->setObjectName("singleRunPreviousValue_" + name); previousValue->hide();
+        startLayout->addWidget(startValue, 1); startLayout->addWidget(previousValue);
+        singleRunVariables_->setCellWidget(row, 2, startCell);
+        connect(previousValue, &QPushButton::clicked, this, [startValue, previousValue] {
+            bool ok = false;
+            const double current = startValue->text().toDouble(&ok);
+            if (!ok) return;
+            const double alternate = previousValue->property("alternateStartingValue").toDouble();
+            startValue->setText(QString::number(alternate, 'g', 15));
+            previousValue->setProperty("alternateStartingValue", current);
+            previousValue->setText("Switch to: " + QString::number(current, 'g', 8));
+            previousValue->setToolTip("Switch between the previous start and the saved fitted value.");
+        });
     }
+}
+
+void ProfilesTab::acceptSavedFittedInputs()
+{
+    for (int row = 0; row < singleRunVariables_->rowCount(); ++row) {
+        auto* cell = singleRunVariables_->cellWidget(row, 2);
+        auto* startValue = cell ? cell->findChild<QLineEdit*>() : nullptr;
+        auto* previousValue = cell ? cell->findChild<QPushButton*>() : nullptr;
+        if (!startValue || !previousValue) continue;
+        const auto variable = singleRunVariables_->item(row, 0)->text();
+        const auto fitted = model_controls::profileVariableInitialValue(singleRunDatabase_, singleRunControls_,
+            singleRunExperiment_->currentText(), singleRunDataset_->currentText(), variable);
+        if (!fitted) continue;
+        bool ok = false;
+        const double oldValue = startValue->text().toDouble(&ok);
+        const QString fittedText = QString::number(*fitted, 'g', 15);
+        if (ok && oldValue != *fitted) {
+            previousValue->setProperty("alternateStartingValue", oldValue);
+            previousValue->setText("Switch to: " + QString::number(oldValue, 'g', 8));
+            previousValue->setToolTip("Switch between the previous start and the saved fitted value.");
+            previousValue->show();
+        } else {
+            previousValue->hide();
+        }
+        startValue->setText(fittedText);
+        startValue->setProperty("singleRunInitialValue", *fitted);
+    }
+    singleRunStatus_->setText("Saved fitted values are now the starting values. Previous starts are available beside changed values.");
 }
 
 void ProfilesTab::requestSingleRun()
@@ -378,7 +454,8 @@ void ProfilesTab::requestSingleRun()
     for (int row = 0; row < singleRunVariables_->rowCount(); ++row) {
         if (singleRunVariables_->item(row, 1)->checkState() != Qt::Checked) continue;
         const auto variable = singleRunVariables_->item(row, 0)->text();
-        auto* startValue = qobject_cast<QLineEdit*>(singleRunVariables_->cellWidget(row, 2));
+        auto* cell = singleRunVariables_->cellWidget(row, 2);
+        auto* startValue = cell ? cell->findChild<QLineEdit*>() : nullptr;
         bool ok = false; const double value = startValue ? startValue->text().toDouble(&ok) : 0.0;
         if (!ok || !std::isfinite(value)) {
             QMessageBox::warning(this, "Invalid starting value", "Enter a finite starting value for " + variable + "."); return;
@@ -387,7 +464,7 @@ void ProfilesTab::requestSingleRun()
         const QVariant original = startValue->property("singleRunInitialValue");
         if (!original.isValid() || value != original.toDouble()) request.initialValues[variable.toStdString()] = value;
     }
-    if (singleRunRequested) { singleRunStatus_->setText("Run started…"); singleRunRequested(request); }
+    if (singleRunRequested) singleRunRequested(request);
 }
 
 void ProfilesTab::addSeriesRow(const QJsonObject& value)

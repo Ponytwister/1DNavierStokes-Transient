@@ -246,6 +246,21 @@ void DatabaseTableTab::setEditingEnabled(bool enabled) {
     editingEnabled_ = enabled; updateButtons();
 }
 
+void DatabaseTableTab::editVariable(const QString& variable) {
+    if (tableKind_ != Table::alglib || !loaded_ || !editingEnabled_) return;
+    const int variableColumn = columns_.indexOf("VARIABLE");
+    if (variableColumn < 0) return;
+    for (int row = 0; row < table_->rowCount(); ++row) {
+        const auto* item = table_->item(row, variableColumn);
+        if (!item || item->text() != variable) continue;
+        table_->setCurrentCell(row, variableColumn);
+        table_->selectRow(row);
+        editRow(false);
+        return;
+    }
+    status_->setText("Variable '" + variable + "' is not present in the Variables table.");
+}
+
 void DatabaseTableTab::updateButtons() {
     const auto expected = editableColumns(tableKind_);
     bool supported = loaded_ && editingEnabled_;

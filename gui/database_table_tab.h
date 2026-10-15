@@ -15,6 +15,7 @@ public:
     explicit DatabaseTableTab(Table table, QWidget* parent = nullptr);
     void load(QString database);
     void clear();
+    void editVariable(const QString& variable);
     ExperimentRowFilter* experimentFilter() const { return filter_; }
     void setEditingEnabled(bool enabled);
     std::function<void()> saved;

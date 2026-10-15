@@ -93,6 +93,23 @@ MainWindow::MainWindow()
         selection.run_solver = request.runSolver;
         startRun(std::move(selection));
     };
+    profilesPage_->pauseRequested = [this] {
+        if (runner_.request_pause()) {
+            pauseRequested_ = true;
+            pause_->setEnabled(false);
+            profilesPage_->setSingleRunControlState(false, work_ == Work::solve && !closing_ && !cancelling_, false);
+            setStatus("Pause requested. Finishing the current optimizer iteration…");
+        }
+    };
+    profilesPage_->stopRequested = [this] {
+        runner_.request_cancel(); cancelling_ = true; updateControls();
+        setStatus("Cancellation requested. Waiting for the calculation to stop…");
+    };
+    profilesPage_->variableEditRequested = [this](const QString& variable) {
+        if (work_ != Work::idle || closing_) return;
+        tabs_->setCurrentWidget(alglibPage_);
+        alglibPage_->editVariable(variable);
+    };
     tabs_->addTab(profilesPage_, "Profiles");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
@@ -252,7 +269,8 @@ MainWindow::MainWindow()
     connect(run_, &QPushButton::clicked, this, [this] { startRun(); });
     connect(pause_, &QPushButton::clicked, this, [this] {
         if (runner_.request_pause()) {
-            pause_->setEnabled(false);
+            pauseRequested_ = true;
+            updateControls();
             setStatus("Pause requested. Finishing the current optimizer iteration…");
         }
     });
@@ -298,10 +316,12 @@ MainWindow::MainWindow()
     });
     connect(export_, &QPushButton::clicked, this, [this] { save(operation::export_results); });
     connect(profiles_, &QPushButton::clicked, this, [this] { save(operation::save_model_profiles); });
-    connect(inputs_, &QPushButton::clicked, this, [this] {
+    auto saveFittedInputs = [this] {
         if (QMessageBox::question(this, "Save fitted inputs", "Replace fitted initial inputs in\n" + activeDatabase_ + "?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
             save(operation::save_fitted_parameters);
-    });
+    };
+    connect(inputs_, &QPushButton::clicked, this, saveFittedInputs);
+    profilesPage_->saveFittedInputsRequested = saveFittedInputs;
     experimentsPage_->saved = [this] { applyTableFilters(); clearResult(); setStatus("Experiment saved. Run again to calculate results."); };
     auto referenceSaved = [this] { clearResult(); setStatus("Reference data saved. Run again to calculate results."); };
     reactionsPage_->saved = referenceSaved;
@@ -494,6 +514,9 @@ void MainWindow::updateControls()
     output_->setEnabled(idle); browseOutput_->setEnabled(idle);
     run_->setEnabled(idle && !database_->text().trimmed().isEmpty());
     profilesPage_->setSingleRunEnabled(idle && !database_->text().trimmed().isEmpty());
+    profilesPage_->setSingleRunControlState(work_ == Work::solve && runner_.status() == background_state::running && !pauseRequested_ && !closing_,
+                                            work_ == Work::solve && !closing_ && !cancelling_,
+                                            idle && session_);
     tabs_->setTabEnabled(1, idle && !database_->text().trimmed().isEmpty());
     controlsPage_->setEnabled(work_ == Work::idle && !closing_);
     tabs_->setTabEnabled(2, work_ == Work::idle && !closing_);
@@ -511,7 +534,7 @@ void MainWindow::updateControls()
     alglibPage_->setEditingEnabled(idle);
     rawProfilesPage_->setEditingEnabled(idle);
     cancel_->setEnabled(work_ == Work::solve && !closing_ && !cancelling_);
-    pause_->setEnabled(work_ == Work::solve && runner_.status() == background_state::running && !closing_);
+    pause_->setEnabled(work_ == Work::solve && runner_.status() == background_state::running && !pauseRequested_ && !closing_);
     export_->setEnabled(idle && session_ && !output_->text().trimmed().isEmpty());
     reportPage_->setRunAvailable(idle && session_);
     findChild<QPushButton*>("prepareRunReportButton")->setEnabled(idle && session_);
@@ -567,7 +590,11 @@ void MainWindow::startRun(std::optional<tsensor_workflow::single_profile_selecti
         }
         if (selection && !hasRunSolverControl)
             controls.emplace_back("run_solver", selection->run_solver ? "true" : "false");
+        pauseRequested_ = false;
+        const bool singleProfileRun = selection.has_value();
         runner_.start(path(activeDatabase_), {}, std::move(controls), true, std::move(selection));
+        singleProfileRunActive_ = singleProfileRun;
+        if (singleProfileRunActive_) profilesPage_->setSingleRunStatus("Run in progress…");
         profilesPage_->beginLiveRun();
         cancelling_ = false; work_ = Work::solve; setStatus("Running…"); updateControls();
     } catch (...) { reportFailure(std::current_exception()); }
@@ -607,7 +634,7 @@ void MainWindow::save(operation requested)
                 } else if (requested == operation::save_model_profiles) {
                     session->save_model_profiles(); result.reloadTables = true; result.message = "Profiles saved. Open Profiles to plot the saved model profiles.";
                 } else {
-                    session->save_fitted_parameters(); result.reloadTables = true; result.message = "Fitted inputs saved.";
+                    session->save_fitted_parameters(); result.reloadTables = true; result.fittedInputsSaved = true; result.message = "Fitted inputs saved.";
                 }
             } catch (...) { result.error = std::current_exception(); }
             return result;
@@ -707,6 +734,10 @@ void MainWindow::poll()
                         "Original: " + original + "\nFinal: " + final);
                 }
             }
+            if (singleProfileRunActive_) {
+                profilesPage_->setSingleRunStatus("Ready to run. Adjust selections or starting values and run again.");
+                singleProfileRunActive_ = false;
+            }
             updateControls();
         }
     } else if (work_ == Work::save && action_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -720,6 +751,7 @@ void MainWindow::poll()
                 reloadTables();
                 profilesPage_->setDatabase(activeDatabase_);
             }
+            if (result.fittedInputsSaved) profilesPage_->acceptSavedFittedInputs();
             if (!result.reportFile.isEmpty()) {
                 reportPage_->loadFile(result.reportFile);
                 if (!closing_) tabs_->setCurrentWidget(reportPage_);

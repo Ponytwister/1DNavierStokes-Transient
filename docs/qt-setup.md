@@ -204,7 +204,13 @@ remain in place after a run. Starting-value edits apply to that run only and
 must be within the bounds configured in Variables. The **Run solver** checkbox
 defaults to Model controls; clear it to evaluate once at the starting values
 without fitting. The result appears in the same live preview and normal run
-result controls.
+result controls. After **Save fitted inputs**, each changed start field updates
+to the saved fit. A **Switch to** button beside it keeps the prior value handy
+and lets you toggle between that start and the saved fit.
+The region has its own **Run**, **Pause**, **Stop**, and **Save fitted inputs**
+buttons. They control the same active run and fitted result as the buttons on
+Run and Results. Double-click a variable name to open that variable in the
+Variables editor.
 
 Export and saves run off the UI thread and are serialized with calculations.
 Errors appear in the status and log; a failed export/save keeps results available

@@ -27,7 +27,7 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 private:
     enum class Work { idle, solve, save };
-    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; QString reportFile; QString reportText; };
+    struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; bool fittedInputsSaved = false; QString reportFile; QString reportText; };
     void prepareReport();
     void startRun(std::optional<tsensor_workflow::single_profile_selection> selection = std::nullopt);
     void saveSetup();
@@ -43,6 +43,8 @@ private:
     Work work_ = Work::idle;
     bool closing_ = false;
     bool cancelling_ = false;
+    bool pauseRequested_ = false;
+    bool singleProfileRunActive_ = false;
     ControlsDialog* controlsEditor_ = nullptr;
     QString presetFilename_;
     void discardControlsEditor();

@@ -70,7 +70,14 @@ public:
     void setDatabase(const QString& filename);
     void setSingleRunContext(const QString& filename, const model_controls::Snapshot& controls);
     void setSingleRunEnabled(bool enabled);
+    void setSingleRunControlState(bool canPause, bool canStop, bool canSaveInputs);
+    void setSingleRunStatus(const QString& message);
+    void acceptSavedFittedInputs();
     std::function<void(const SingleProfileRunRequest&)> singleRunRequested;
+    std::function<void()> pauseRequested;
+    std::function<void()> stopRequested;
+    std::function<void()> saveFittedInputsRequested;
+    std::function<void(const QString&)> variableEditRequested;
     void beginLiveRun();
     void setLiveProfiles(std::vector<tsensor_workflow::live_profile_snapshot> profiles);
     QJsonObject settings() const;
@@ -106,7 +113,7 @@ private:
     QComboBox *singleRunExperiment_, *singleRunDataset_;
     QTableWidget* singleRunVariables_;
     QCheckBox* singleRunSolver_;
-    QPushButton* singleRunButton_;
+    QPushButton *singleRunButton_, *singleRunPause_, *singleRunStop_, *singleRunSaveInputs_;
     QLabel* singleRunStatus_;
     model_controls::Snapshot singleRunControls_;
     QString singleRunDatabase_;
