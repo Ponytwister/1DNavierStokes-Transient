@@ -160,6 +160,7 @@ void load_inputs(parameters_t& p, sqlite3* db, const std::optional<control_value
             read_model_parameters_db_callback(&p, 2, row, nullptr);
         }
     } else read_model_parameters_from_db(p, db);
+    prepare_parameter_scope_selection(p, db);
     initialize_channel_dimensions(p, db);
     lines_from_profile_text(p, db);
     if (p.single_profile_experiment && p.experiments.size() != 1)

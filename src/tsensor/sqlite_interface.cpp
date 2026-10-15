@@ -451,6 +451,9 @@ read_model_parameters_db_callback(void *data, int count, char **argv, char **col
         while (getline(ss, s, ' ')) {
             if (p.single_profile_experiment &&
                 std::find(p.single_profile_variables.begin(), p.single_profile_variables.end(), s) == p.single_profile_variables.end()) continue;
+            if (std::find(p.suppressed_universal_parameters.begin(),
+                          p.suppressed_universal_parameters.end(), s) !=
+                p.suppressed_universal_parameters.end()) continue;
             if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats
                 p.global_solve_for.push_back(s);
                 p.solve_for.push_back(s);
@@ -585,6 +588,9 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
             while (getline(ss, s, ' ')) {
                 if (p.single_profile_experiment &&
                     std::find(p.single_profile_variables.begin(), p.single_profile_variables.end(), s) == p.single_profile_variables.end()) continue;
+                if (std::find(p.suppressed_experiment_parameters[run_ptr->name].begin(),
+                              p.suppressed_experiment_parameters[run_ptr->name].end(), s) !=
+                        p.suppressed_experiment_parameters[run_ptr->name].end()) continue;
                 if (std::find(p.solve_for.begin(), p.solve_for.end(), s) == p.solve_for.end()) { // to avoid repeats in p.solve_for
                     p.solve_for.push_back(s);
                 }
@@ -1302,6 +1308,133 @@ read_raw_profiles_from_db(parameters_t& p, sqlite3* db) //reading data using cal
     add_finishing_report(p, 3, "Done");
 }
 
+void
+prepare_parameter_scope_selection(parameters_t& p, sqlite3* db)
+{
+    struct profile_selection {
+        std::string experiment;
+        std::string dataset;
+        bool omitted = false;
+        std::vector<std::string> variables;
+    };
+    std::map<std::string, std::vector<std::string>> experiment_variables;
+    std::vector<profile_selection> profiles;
+    const auto column_text = [](sqlite3_stmt* statement, int column) {
+        const auto* value = reinterpret_cast<const char*>(sqlite3_column_text(statement, column));
+        return value ? std::string(value) : std::string{};
+    };
+    const auto parse_variables = [](const std::string& text) {
+        std::vector<std::string> variables;
+        std::stringstream stream(text);
+        std::string variable;
+        while (stream >> variable) {
+            if (std::find(variables.begin(), variables.end(), variable) == variables.end())
+                variables.push_back(std::move(variable));
+        }
+        return variables;
+    };
+    const auto find_column = [](sqlite3_stmt* statement, const char* name) {
+        for (int column = 0; column < sqlite3_column_count(statement); ++column)
+            if (std::string(sqlite3_column_name(statement, column)) == name) return column;
+        return -1;
+    };
+
+    sqlite3_stmt* raw_experiments = nullptr;
+    int rc = sqlite3_prepare_v2(db, "SELECT * FROM experiments", -1, &raw_experiments, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> experiments(raw_experiments, sqlite3_finalize);
+    if (rc != SQLITE_OK)
+        throw std::runtime_error(std::string("Cannot inspect experiment parameter selections: ") + sqlite3_errmsg(db));
+    while ((rc = sqlite3_step(experiments.get())) == SQLITE_ROW) {
+        const int name_column = find_column(experiments.get(), "NAME");
+        const int variables_column = find_column(experiments.get(), "PARAMETERS_TO_SOLVE_FOR");
+        if (name_column < 0 || variables_column < 0) continue;
+        const auto name = column_text(experiments.get(), name_column);
+        if (std::none_of(p.experiment_runs.begin(), p.experiment_runs.end(),
+                         [&](const auto& run) { return run.name == name; })) continue;
+        experiment_variables[name] = parse_variables(column_text(experiments.get(), variables_column));
+    }
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error(std::string("Cannot read experiment parameter selections: ") + sqlite3_errmsg(db));
+
+    sqlite3_stmt* raw_profiles = nullptr;
+    rc = sqlite3_prepare_v2(db, "SELECT * FROM raw_profile", -1, &raw_profiles, nullptr);
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> raw_profile_rows(raw_profiles, sqlite3_finalize);
+    if (rc != SQLITE_OK)
+        throw std::runtime_error(std::string("Cannot inspect raw-profile parameter selections: ") + sqlite3_errmsg(db));
+    while ((rc = sqlite3_step(raw_profile_rows.get())) == SQLITE_ROW) {
+        const int name_column = find_column(raw_profile_rows.get(), "NAME");
+        const int dataset_column = find_column(raw_profile_rows.get(), "WT_PERCENT");
+        if (name_column < 0 || dataset_column < 0) continue;
+        profile_selection profile;
+        profile.experiment = column_text(raw_profile_rows.get(), name_column);
+        profile.dataset = column_text(raw_profile_rows.get(), dataset_column);
+        const int omit_column = find_column(raw_profile_rows.get(), "OMIT");
+        if (omit_column >= 0) {
+            auto omit = column_text(raw_profile_rows.get(), omit_column);
+            removeSpaces(omit);
+            std::transform(omit.begin(), omit.end(), omit.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            profile.omitted = omit == "true";
+        }
+        const int variables_column = find_column(raw_profile_rows.get(), "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR");
+        if (variables_column >= 0)
+            profile.variables = parse_variables(column_text(raw_profile_rows.get(), variables_column));
+        if (std::none_of(p.experiment_runs.begin(), p.experiment_runs.end(),
+                         [&](const auto& run) { return run.name == profile.experiment; })) continue;
+        if (p.single_profile_experiment &&
+            (profile.experiment != *p.single_profile_experiment ||
+             profile.dataset != *p.single_profile_dataset)) continue;
+        if (!p.single_profile_experiment && profile.omitted) continue;
+        profiles.push_back(std::move(profile));
+    }
+    if (rc != SQLITE_DONE)
+        throw std::runtime_error(std::string("Cannot read raw-profile parameter selections: ") + sqlite3_errmsg(db));
+
+    std::vector<std::string> covered_everywhere;
+    bool first_profile = true;
+    for (const auto& profile : profiles) {
+        const auto& experiment_scope = experiment_variables[profile.experiment];
+        std::vector<std::string> covered = profile.variables;
+        for (const auto& variable : experiment_scope)
+            if (std::find(covered.begin(), covered.end(), variable) == covered.end())
+                covered.push_back(variable);
+        if (first_profile) {
+            covered_everywhere = std::move(covered);
+            first_profile = false;
+        } else {
+            covered_everywhere.erase(std::remove_if(covered_everywhere.begin(), covered_everywhere.end(),
+                [&](const auto& variable) {
+                    return std::find(covered.begin(), covered.end(), variable) == covered.end();
+                }), covered_everywhere.end());
+        }
+    }
+    for (const auto& [experiment, variables] : experiment_variables) {
+        for (const auto& variable : variables) {
+            std::size_t profile_count = 0;
+            const bool every_profile_selects_it = std::all_of(profiles.begin(), profiles.end(),
+                [&](const auto& profile) {
+                    if (profile.experiment != experiment) return true;
+                    ++profile_count;
+                    return std::find(profile.variables.begin(), profile.variables.end(), variable) !=
+                           profile.variables.end();
+                });
+            if (profile_count > 0 && every_profile_selects_it)
+                p.suppressed_experiment_parameters[experiment].push_back(variable);
+        }
+    }
+    if (!first_profile) {
+        p.suppressed_universal_parameters = std::move(covered_everywhere);
+        for (const auto& variable : p.suppressed_universal_parameters) {
+            p.global_solve_for.erase(std::remove(p.global_solve_for.begin(), p.global_solve_for.end(), variable),
+                                     p.global_solve_for.end());
+            p.solve_for.erase(std::remove(p.solve_for.begin(), p.solve_for.end(), variable), p.solve_for.end());
+            p.solvables.erase(std::remove_if(p.solvables.begin(), p.solvables.end(), [&](const auto& solvable) {
+                return solvable.source_name == "global" && solvable.name == variable;
+            }), p.solvables.end());
+        }
+    }
+}
+
 
 void 
 initialize_profile_entrance_concentrations(parameters_t& p, sqlite3* db)
@@ -1772,6 +1905,7 @@ write_alglib_values_to_db(parameters_t& p, sqlite3* db) //reading data using cal
     add_report(p, 0, "raw profile left_edge and width");
     for (int i = 0; i < p.experiments.size(); i++) {
         experiment_struct* exp_ptr = &p.experiments.at(i);
+        if (exp_ptr->omit) continue;
         sqltext.append("UPDATE raw_profile SET 'LEFT_EDGE' = '" + double_to_string(exp_ptr->left_edge.value() - p.exp_left_padding) + "', 'WIDTH' = '" + double_to_string(exp_ptr->width.value()) + "' WHERE NAME = '" + exp_ptr->run->name + "' AND WT_PERCENT = '" + exp_ptr->second_name + "'; ");
     }
     pop_report(p, 0);

@@ -564,6 +564,109 @@ void verify_solution(run_session& session, const run_result& result)
     }
 }
 
+TEST(Workflow, SavingFittedInputsPreservesOmittedProfileGeometry)
+{
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "INSERT OR REPLACE INTO model_controls VALUES('run_solver','false');"
+        "UPDATE raw_profile SET LEFT_EDGE=3.25, WIDTH=4.5, OMIT='true' WHERE WT_PERCENT='4.0';");
+    session.load_inputs();
+    session.run();
+
+    session.save_fitted_parameters();
+
+    near(scalar(session.database(),
+        "SELECT LEFT_EDGE FROM raw_profile WHERE WT_PERCENT='4.0'"), 3.25);
+    near(scalar(session.database(),
+        "SELECT WIDTH FROM raw_profile WHERE WT_PERCENT='4.0'"), 4.5);
+    near(scalar(session.database(),
+        "SELECT count(*) FROM raw_profile WHERE WT_PERCENT='4.0' AND OMIT='true'"), 1);
+}
+
+TEST(Workflow, SingleProfileOverridesExperimentGeometryAndIgnoresOmit)
+{
+    fixture files;
+    single_profile_selection selection{
+        "uniform", "4.0", {"left_edge", "width"}, {}};
+    run_session session(files.database, {}, {}, {}, false, selection);
+    sql(session.database(),
+        "ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT;"
+        "UPDATE experiments SET PARAMETERS_TO_SOLVE_FOR='left_edge width';"
+        "ALTER TABLE raw_profile ADD COLUMN INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT;"
+        "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='left_edge width',OMIT='true' WHERE WT_PERCENT='4.0';"
+        "INSERT INTO alglib_input VALUES('left_edge',0,0,2,1),('width',8,6,8,1);");
+
+    session.load_inputs();
+
+    auto& parameters = session.parameters();
+    ASSERT_EQ(parameters.solvables.size(), 2u);
+    EXPECT_EQ(parameters.solvables[0].source_name, "uniform_4.0");
+    EXPECT_EQ(parameters.solvables[0].name, "left_edge");
+    EXPECT_EQ(parameters.solvables[1].source_name, "uniform_4.0");
+    EXPECT_EQ(parameters.solvables[1].name, "width");
+    ASSERT_EQ(parameters.experiments.size(), 1u);
+    EXPECT_FALSE(parameters.experiments.front().omit);
+
+    const auto result = session.run();
+    EXPECT_TRUE(result.optimizer_ran);
+    ASSERT_EQ(result.parameters.size(), 2u);
+    EXPECT_EQ(result.parameters[0].source, "uniform_4.0");
+    EXPECT_EQ(result.parameters[1].source, "uniform_4.0");
+
+    session.save_fitted_parameters();
+    near(scalar(session.database(),
+        "SELECT LEFT_EDGE FROM raw_profile WHERE WT_PERCENT='4.0'"),
+        parameters.experiments.front().left_edge.value());
+    near(scalar(session.database(),
+        "SELECT WIDTH FROM raw_profile WHERE WT_PERCENT='4.0'"),
+        parameters.experiments.front().width.value());
+    near(scalar(session.database(),
+        "SELECT count(*) FROM raw_profile WHERE WT_PERCENT='4.0' AND OMIT='true'"), 1);
+}
+
+TEST(Workflow, WiderParameterScopesYieldToCompleteProfileCoverage)
+{
+    for (const bool all_profiles_select_width : {false, true}) {
+        SCOPED_TRACE(all_profiles_select_width);
+        fixture files;
+        run_session session(files.database);
+        sql(session.database(),
+            "UPDATE model_controls SET value='keq1 width' WHERE criterion='universal_solve_for';"
+            "ALTER TABLE experiments ADD COLUMN PARAMETERS_TO_SOLVE_FOR TEXT;"
+            "UPDATE experiments SET PARAMETERS_TO_SOLVE_FOR='keq1 width';"
+            "ALTER TABLE raw_profile ADD COLUMN INDEPENDENT_PARAMETERS_TO_SOLVE_FOR TEXT;");
+        if (all_profiles_select_width) {
+            sql(session.database(),
+                "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='width';");
+        } else {
+            sql(session.database(),
+                "UPDATE raw_profile SET INDEPENDENT_PARAMETERS_TO_SOLVE_FOR='width' WHERE WT_PERCENT<>'4.0';");
+        }
+        sql(session.database(), "INSERT INTO alglib_input VALUES('width',8,6,8,1)");
+
+        session.load_inputs();
+
+        const auto& parameters = session.parameters();
+        EXPECT_EQ(parameters.suppressed_universal_parameters.size(), 2u);
+        EXPECT_EQ(std::count_if(parameters.solvables.begin(), parameters.solvables.end(), [](const auto& variable) {
+            return variable.source_name == "global" && variable.name == "keq1";
+        }), 0);
+        EXPECT_EQ(std::count_if(parameters.solvables.begin(), parameters.solvables.end(), [](const auto& variable) {
+            return variable.source_name == "global" && variable.name == "width";
+        }), 0);
+        EXPECT_EQ(std::count_if(parameters.solvables.begin(), parameters.solvables.end(), [](const auto& variable) {
+            return variable.source_name == "uniform" && variable.name == "keq1";
+        }), 1);
+        EXPECT_EQ(std::count_if(parameters.solvables.begin(), parameters.solvables.end(), [](const auto& variable) {
+            return variable.source_name == "uniform" && variable.name == "width";
+        }), all_profiles_select_width ? 0 : 1);
+        EXPECT_EQ(std::count_if(parameters.solvables.begin(), parameters.solvables.end(), [](const auto& variable) {
+            return variable.source_name.starts_with("uniform_") && variable.name == "width";
+        }), all_profiles_select_width ? 4 : 3);
+    }
+}
+
 void verify_persistence(run_session& session, const std::filesystem::path& directory)
 {
     auto* db = session.database();

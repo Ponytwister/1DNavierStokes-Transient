@@ -270,6 +270,8 @@ typedef struct parameters_struct : channel_dimensions {
     std::optional<std::string> single_profile_experiment;
     std::optional<std::string> single_profile_dataset;
     std::vector<std::string> single_profile_variables;
+    std::map<std::string, std::vector<std::string>> suppressed_experiment_parameters;
+    std::vector<std::string> suppressed_universal_parameters;
     std::map<std::string, double> single_profile_initial_values;
     std::stop_token cancellation;
     std::stop_token pause_request;
@@ -341,6 +343,7 @@ int read_model_parameters_db_callback(void *data, int count, char **argv, char *
 void read_model_parameters_from_db(parameters_t& p, sqlite3* db);
 int raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_raw_profiles_from_db(parameters_t& p, sqlite3* db);
+void prepare_parameter_scope_selection(parameters_t& p, sqlite3* db);
 void initialize_profile_entrance_concentrations(parameters_t& p, sqlite3* db);
 int alglib_input_db_callback(void *data, int count, char **argv, char **columnNames);
 void read_alglib_values_from_db(parameters_t& p, sqlite3* db);
