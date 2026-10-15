@@ -199,49 +199,51 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         const double kon1 = variable_location("kon1", run_ptr).value();
         const double keq1 = variable_location("keq1", run_ptr).value();
 
-        // These rows use the source sample index as their x axis. They retain
-        // the loaded values and normalized values before solver resampling.
-        const auto source_count = exp_ptr->loaded_experimental_profile.size();
-        if (source_count > 0) {
-            write_sample_header(source_count);
-            fout << "sec  (" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units
-                 << "_FITC)  forward_reaction_rate_1  keq_1  " << FITC_ptr->model_units << "  "
-                 << PS_beads_ptr->input_units << "  " << PS_beads_ptr->model_units
-                 << "  deriv  Raw_Sample_Index  ";
-            for (std::size_t x = 0; x < source_count; ++x) fout << x << "  ";
-            fout << '\n';
-            auto write_source_profile = [&](const std::string& type, const std::vector<double>& values) {
-                fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
-                     << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
-                     << "  -  " << run_ptr->name << "_" << exp_ptr->second_name << "wt%_" << type << "  ";
-                for (std::size_t x = 0; x < source_count; ++x) fout << values.at(x) << "    ";
-                fout << '\n';
-            };
-            write_source_profile("Raw_Profile", exp_ptr->loaded_experimental_profile);
-            write_source_profile("Normalized_Profile", exp_ptr->normalized_experimental_profile);
-        }
-
-        std::vector<double> rescaled_raw_profile;
-        rescaled_raw_profile.reserve(exp_ptr->window_size);
-        int last_raw_sample = 0;
-        for (int x = 0; x < exp_ptr->window_size; ++x) {
-            if (x < exp_ptr->width.value()) {
-                const auto padded_index = static_cast<int>(std::ceil(x + exp_ptr->left_edge.value()));
-                if (!exp_ptr->loaded_experimental_profile.empty()) {
-                    last_raw_sample = std::clamp(padded_index - p.exp_left_padding, 0,
-                        static_cast<int>(exp_ptr->loaded_experimental_profile.size()) - 1);
-                }
-            }
-            rescaled_raw_profile.push_back(exp_ptr->loaded_experimental_profile.empty() ? 0.0
-                : exp_ptr->loaded_experimental_profile.at(static_cast<std::size_t>(last_raw_sample)));
-        }
         int width;
-        fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
-             << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
-             << "  -  " << run_ptr->name << "_" << exp_ptr->second_name
-             << "wt%_Rescaled_Raw_Profile  ";
-        for (const auto value : rescaled_raw_profile) fout << value << "    ";
-        fout << '\n';
+        if (extended) {
+            // The Report tab uses these source and rescaled views; legacy
+            // exports retain their historical profile set.
+            const auto source_count = exp_ptr->loaded_experimental_profile.size();
+            if (source_count > 0) {
+                write_sample_header(source_count);
+                fout << "sec  (" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units
+                     << "_FITC)  forward_reaction_rate_1  keq_1  " << FITC_ptr->model_units << "  "
+                     << PS_beads_ptr->input_units << "  " << PS_beads_ptr->model_units
+                     << "  deriv  Raw_Sample_Index  ";
+                for (std::size_t x = 0; x < source_count; ++x) fout << x << "  ";
+                fout << '\n';
+                auto write_source_profile = [&](const std::string& type, const std::vector<double>& values) {
+                    fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
+                         << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
+                         << "  -  " << run_ptr->name << "_" << exp_ptr->second_name << "wt%_" << type << "  ";
+                    for (std::size_t x = 0; x < source_count; ++x) fout << values.at(x) << "    ";
+                    fout << '\n';
+                };
+                write_source_profile("Raw_Profile", exp_ptr->loaded_experimental_profile);
+                write_source_profile("Normalized_Profile", exp_ptr->normalized_experimental_profile);
+            }
+
+            std::vector<double> rescaled_raw_profile;
+            rescaled_raw_profile.reserve(exp_ptr->window_size);
+            int last_raw_sample = 0;
+            for (int x = 0; x < exp_ptr->window_size; ++x) {
+                if (x < exp_ptr->width.value()) {
+                    const auto padded_index = static_cast<int>(std::ceil(x + exp_ptr->left_edge.value()));
+                    if (!exp_ptr->loaded_experimental_profile.empty()) {
+                        last_raw_sample = std::clamp(padded_index - p.exp_left_padding, 0,
+                            static_cast<int>(exp_ptr->loaded_experimental_profile.size()) - 1);
+                    }
+                }
+                rescaled_raw_profile.push_back(exp_ptr->loaded_experimental_profile.empty() ? 0.0
+                    : exp_ptr->loaded_experimental_profile.at(static_cast<std::size_t>(last_raw_sample)));
+            }
+            fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
+                 << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
+                 << "  -  " << run_ptr->name << "_" << exp_ptr->second_name
+                 << "wt%_Rescaled_Raw_Profile  ";
+            for (const auto value : rescaled_raw_profile) fout << value << "    ";
+            fout << '\n';
+        }
         for (int j = 0; j < profile_names.size(); j++) {
             fout << p.Z * run_ptr->dt                   << "  "; //1
             fout << p1                                       << "  "; //2
