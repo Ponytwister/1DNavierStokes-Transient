@@ -508,8 +508,13 @@ TEST(ChannelDimensions, MixedExperimentsUseIndependentGeometryAndUniformAnalytic
         if (line.rfind("res_time", 0) != 0) continue;
         std::istringstream row(line); std::string label;
         for (int i = 0; i < 9; ++i) row >> label;
-        double position = 0, last = 0;
+        double first = 0, second = 0, position = 0, last = 0;
+        row >> first >> second;
+        last = second;
         while (row >> position) last = position;
+        // Raw-profile headers use unit sample-index spacing; this assertion
+        // concerns only the per-run channel-geometry headers.
+        if (second - first == 1) continue;
         last_positions.push_back(last);
     }
     ASSERT_EQ(last_positions.size(), 2u);
@@ -710,7 +715,7 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
         while (std::getline(input, line)) {
             std::istringstream row(line); std::string label;
             for (int i = 0; i < 9; ++i) row >> label;
-            if (label != name) continue;
+            if (label != name && !label.ends_with("_" + name)) continue;
             std::vector<double> values; double value;
             while (row >> value) values.push_back(value);
             return values;
@@ -729,6 +734,16 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
     const auto total = profile(generated, "Total_Beads_(wt%)");
     ASSERT_EQ(total.size(), p.X);
     for (double value : total) near(value, .3);
+    const auto raw_profile = profile(generated, "Raw_Profile");
+    ASSERT_EQ(raw_profile.size(), exp.loaded_experimental_profile.size());
+    for (std::size_t i = 0; i < raw_profile.size(); ++i)
+        near(raw_profile[i], exp.loaded_experimental_profile[i]);
+    const auto normalized_profile = profile(generated, "Normalized_Profile");
+    ASSERT_EQ(normalized_profile.size(), exp.normalized_experimental_profile.size());
+    for (std::size_t i = 0; i < normalized_profile.size(); ++i)
+        near(normalized_profile[i], exp.normalized_experimental_profile[i]);
+    EXPECT_EQ(profile(generated, "Rescaled_Raw_Profile").size(), exp.window_size);
+    EXPECT_EQ(profile(generated, "Experimental_Profile").size(), exp.window_size);
     // Existing CLI/export contract stays unchanged, including the historical label.
     const auto legacyPath = session.export_results(files.root / "legacy");
     std::ifstream legacyFile(legacyPath);

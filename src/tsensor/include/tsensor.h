@@ -234,6 +234,10 @@ struct experiment_struct {
     std::vector<double> channel_position;
     std::vector<double> model_profile;
     std::vector<double> raw_experimental_profile;
+    // Intensity samples exactly as loaded, without synthetic padding.
+    std::vector<double> loaded_experimental_profile;
+    // Normalized loaded samples before left-edge/width resampling.
+    std::vector<double> normalized_experimental_profile;
     std::vector<double> experimental_profile;
     std::vector<double> error;
     std::vector<double> numeric_derivative;

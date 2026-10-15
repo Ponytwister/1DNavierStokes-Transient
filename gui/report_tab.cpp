@@ -92,7 +92,9 @@ QString tsv(const Rows& rows)
 
 QString profileType(const QString& label)
 {
-    for (const auto& type : {QString("Experimental_Profile"), QString("Numeric_Model_Profile")})
+    for (const auto& type : {QString("Raw_Profile"), QString("Normalized_Profile"),
+                             QString("Rescaled_Raw_Profile"), QString("Experimental_Profile"),
+                             QString("Numeric_Model_Profile")})
         if (label == type || label.endsWith("_" + type)) return type;
     return label;
 }
@@ -116,9 +118,12 @@ QStringList blockNames(const Rows& rows)
     for (const auto& row : rows) {
         if (row.isEmpty()) continue;
         if (row[0] == "sec") names.push_back(QString("Profile block %1").arg(names.size() + 1));
-        else if (!names.isEmpty() && row.size() >= 9 && profileType(row[8]) == "Experimental_Profile") {
+        else if (!names.isEmpty() && row.size() >= 9 &&
+                 QStringList({"Raw_Profile", "Normalized_Profile", "Rescaled_Raw_Profile", "Experimental_Profile"})
+                     .contains(profileType(row[8]))) {
             auto name = row[8];
-            if (name.endsWith("_Experimental_Profile")) name.chop(QString("_Experimental_Profile").size());
+            const auto type = profileType(name);
+            if (name.endsWith("_" + type)) name.chop(type.size() + 1);
             names.back() = QString("%1: %2 · %3 sec").arg(names.size()).arg(name, row[0]);
         }
     }
