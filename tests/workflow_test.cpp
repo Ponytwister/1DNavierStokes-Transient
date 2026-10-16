@@ -825,6 +825,25 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
         }
         return std::vector<double>{};
     };
+    auto profile_axis = [](const std::string& report, const std::string& name) {
+        std::istringstream input(report);
+        std::string line;
+        std::vector<double> axis;
+        while (std::getline(input, line)) {
+            std::istringstream row(line); std::string label;
+            row >> label;
+            if (label == "res_time") {
+                for (int i = 0; i < 8; ++i) row >> label;
+                axis.clear();
+                double value;
+                while (row >> value) axis.push_back(value);
+            } else if (label != "sec") {
+                for (int i = 0; i < 8; ++i) row >> label;
+                if (label == name || label.ends_with("_" + name)) return axis;
+            }
+        }
+        return std::vector<double>{};
+    };
     const auto bound = profile(generated, "Bound_Beads_(wt%)");
     ASSERT_EQ(bound.size(), p.X);
     for (double value : bound) near(value, .2);
@@ -841,12 +860,18 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
     ASSERT_EQ(raw_profile.size(), exp.loaded_experimental_profile.size());
     for (std::size_t i = 0; i < raw_profile.size(); ++i)
         near(raw_profile[i], exp.loaded_experimental_profile[i]);
+    const auto raw_axis = profile_axis(generated, "Raw_Profile");
+    ASSERT_EQ(raw_axis.size(), raw_profile.size());
+    for (std::size_t i = 0; i < raw_axis.size(); ++i) near(raw_axis[i], static_cast<double>(i));
     const auto normalized_profile = profile(generated, "Normalized_Profile");
     ASSERT_EQ(normalized_profile.size(), exp.normalized_experimental_profile.size());
     for (std::size_t i = 0; i < normalized_profile.size(); ++i)
         near(normalized_profile[i], exp.normalized_experimental_profile[i]);
     EXPECT_EQ(profile(generated, "Rescaled_Raw_Profile").size(), exp.window_size);
     EXPECT_EQ(profile(generated, "Experimental_Profile").size(), exp.window_size);
+    const auto scaled_axis = profile_axis(generated, "Experimental_Profile");
+    ASSERT_EQ(scaled_axis.size(), exp.channel_position.size());
+    for (std::size_t i = 0; i < scaled_axis.size(); ++i) near(scaled_axis[i], exp.channel_position[i]);
     // Existing CLI/export contract stays unchanged, including the historical label.
     const auto legacyPath = session.export_results(files.root / "legacy");
     std::ifstream legacyFile(legacyPath);

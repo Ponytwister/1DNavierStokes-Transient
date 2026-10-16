@@ -236,6 +236,44 @@ TEST(Report, ReordersBlocksAndTypesWithAxesAndPreservesOrderOnRegeneration)
     }
 }
 
+TEST(Report, RawProfilesAreSeparateAndUncheckedByDefaultWithTheirOwnAxes)
+{
+    const QString source =
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  0  1\n"
+        "sec  b  k  eq  d  c  s  deriv  Raw_Sample_Index  0  1\n"
+        "1  2  3  4  5  6  7  -  run_Raw_Profile  10  11\n"
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  0  1\n"
+        "sec  b  k  eq  d  c  s  deriv  Raw_Sample_Index  0  1\n"
+        "1  2  3  4  5  6  7  -  run_Normalized_Profile  0.1  0.2\n"
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  12  24\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  12  24\n"
+        "1  2  3  4  5  6  7  -  run_Rescaled_Raw_Profile  10  11\n"
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  12  24\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  12  24\n"
+        "1  2  3  4  5  6  7  -  run_Experimental_Profile  0.1  0.2\n";
+    ReportTab tab;
+    ASSERT_TRUE(tab.loadGenerated(source, "run", "report"));
+    auto* types = tab.findChild<QListWidget*>("reportTypes");
+    ASSERT_NE(types, nullptr);
+    QMap<QString, Qt::CheckState> states;
+    for (int i = 0; i < types->count(); ++i) states.insert(types->item(i)->text(), types->item(i)->checkState());
+    EXPECT_EQ(states.size(), 4);
+    EXPECT_EQ(states.value("Raw_Profile"), Qt::Unchecked);
+    EXPECT_EQ(states.value("Rescaled_Raw_Profile"), Qt::Unchecked);
+    EXPECT_EQ(states.value("Normalized_Profile"), Qt::Checked);
+    EXPECT_EQ(states.value("Experimental_Profile"), Qt::Checked);
+
+    for (int i = 0; i < types->count(); ++i)
+        if (types->item(i)->text() == "Rescaled_Raw_Profile") types->item(i)->setCheckState(Qt::Checked);
+    tab.findChild<QPushButton*>("copyReportButton")->click();
+    const auto selected = report_format::parse(QApplication::clipboard()->text());
+    EXPECT_TRUE(QApplication::clipboard()->text().contains("12\t24"));
+    EXPECT_TRUE(QApplication::clipboard()->text().contains("Channel_Width_(um)->"));
+    EXPECT_TRUE(std::any_of(selected.begin(), selected.end(), [](const QStringList& row) {
+        return row.size() > 8 && row[8] == "run_Rescaled_Raw_Profile";
+    }));
+}
+
 TEST(Report, ReorderedSharedHeadersKeepHiddenCarrierMetadata)
 {
     using namespace report_format;

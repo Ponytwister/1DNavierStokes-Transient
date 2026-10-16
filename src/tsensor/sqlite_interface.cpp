@@ -121,13 +121,8 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
 
 
     };
-    auto write_sample_header = [&](std::size_t count) {
-        fout << "res_time  bind_ratio(p1)  forward_reaction_rate_1  equalibrium_constant_1  dye_conc.  bead_conc.  bead_surface_area  D-A  profile_type  ";
-        for (std::size_t x = 0; x < count; ++x) fout << x << "  ";
-        fout << '\n';
-    };
     std::optional<double> header_width;
-    if (p.row_count == 0) write_header(p.experiment_runs.empty() ? p.W : p.experiment_runs.front().W);
+    if (!extended && p.row_count == 0) write_header(p.experiment_runs.empty() ? p.W : p.experiment_runs.front().W);
 
     double dye_bead_ratio = 2000.0d;
     double total_dye = 0.0d;
@@ -144,7 +139,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         check_cancellation(p);
         exp_ptr = &p.experiments.at(row);
         run_ptr = exp_ptr->run;
-        if (!header_width || *header_width != run_ptr->W) {
+        if (!extended && (!header_width || *header_width != run_ptr->W)) {
             write_header(run_ptr->W);
             header_width = run_ptr->W;
         }
@@ -170,6 +165,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         const auto& model = exp_ptr->model_profile;
         const auto& experiment = exp_ptr->experimental_profile;
         const auto& out = exp_ptr->species_out;
+        if (!extended) {
         fout << "sec"                       << "  "; //1
         fout << "(" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units << "_FITC)  "; //2
         fout << "forward_reaction_rate_1"   << "  "; //3
@@ -184,6 +180,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
         }
         fout << '\n';
+        }
         double beads_sa = 0;
         for (auto specie_key : exp_ptr->entrances.at(0).CONC) {
             if (specie_key.first == PS_beads_ptr) {
@@ -199,20 +196,42 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         const double kon1 = variable_location("kon1", run_ptr).value();
         const double keq1 = variable_location("keq1", run_ptr).value();
 
+        auto write_profile_axis = [&](const std::vector<double>& axis, const std::string& axis_name) {
+            fout << "res_time  bind_ratio(p1)  forward_reaction_rate_1  equalibrium_constant_1  dye_conc.  bead_conc.  bead_surface_area  D-A  profile_type  ";
+            for (const auto position : axis) fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
+            fout << '\n';
+            fout << "sec  (" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units
+                 << "_FITC)  forward_reaction_rate_1  keq_1  " << FITC_ptr->model_units << "  "
+                 << PS_beads_ptr->input_units << "  " << PS_beads_ptr->model_units
+                 << "  deriv  " << axis_name << "  ";
+            for (const auto position : axis) fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
+            fout << '\n';
+        };
+        auto sampled_axis = [&]() {
+            std::vector<double> axis;
+            axis.reserve(exp_ptr->channel_position.size());
+            for (const auto position : exp_ptr->channel_position) axis.push_back(position);
+            return axis;
+        };
+        auto model_axis = [&]() {
+            std::vector<double> axis;
+            axis.reserve(p.X);
+            const double scale = run_ptr->W * 1.0e6 / p.X;
+            for (int x = 0; x < p.X; ++x) axis.push_back(x * scale);
+            return axis;
+        };
+
         int width;
         if (extended) {
             // The Report tab uses these source and rescaled views; legacy
             // exports retain their historical profile set.
             const auto source_count = exp_ptr->loaded_experimental_profile.size();
             if (source_count > 0) {
-                write_sample_header(source_count);
-                fout << "sec  (" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units
-                     << "_FITC)  forward_reaction_rate_1  keq_1  " << FITC_ptr->model_units << "  "
-                     << PS_beads_ptr->input_units << "  " << PS_beads_ptr->model_units
-                     << "  deriv  Raw_Sample_Index  ";
-                for (std::size_t x = 0; x < source_count; ++x) fout << x << "  ";
-                fout << '\n';
+                std::vector<double> source_axis;
+                source_axis.reserve(source_count);
+                for (std::size_t x = 0; x < source_count; ++x) source_axis.push_back(static_cast<double>(x));
                 auto write_source_profile = [&](const std::string& type, const std::vector<double>& values) {
+                    write_profile_axis(source_axis, "Raw_Sample_Index");
                     fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
                          << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
                          << "  -  " << run_ptr->name << "_" << exp_ptr->second_name << "wt%_" << type << "  ";
@@ -237,6 +256,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                 rescaled_raw_profile.push_back(exp_ptr->loaded_experimental_profile.empty() ? 0.0
                     : exp_ptr->loaded_experimental_profile.at(static_cast<std::size_t>(last_raw_sample)));
             }
+            write_profile_axis(sampled_axis(), "Channel_Width_(um)->");
             fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
                  << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
                  << "  -  " << run_ptr->name << "_" << exp_ptr->second_name
@@ -245,6 +265,11 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             fout << '\n';
         }
         for (int j = 0; j < profile_names.size(); j++) {
+            if (extended) {
+                const bool uses_sample_axis = (j == 4 || (j >= 6 && j <= 12));
+                write_profile_axis(uses_sample_axis ? sampled_axis() : model_axis(),
+                    uses_sample_axis ? "Channel_Width_(um)->" : "Model_Grid_(um)->");
+            }
             fout << p.Z * run_ptr->dt                   << "  "; //1
             fout << p1                                       << "  "; //2
             fout << kon1                                     << "  "; //3

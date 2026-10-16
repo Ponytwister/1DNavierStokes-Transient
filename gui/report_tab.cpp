@@ -92,8 +92,8 @@ QString tsv(const Rows& rows)
 
 QString profileType(const QString& label)
 {
-    for (const auto& type : {QString("Raw_Profile"), QString("Normalized_Profile"),
-                             QString("Rescaled_Raw_Profile"), QString("Experimental_Profile"),
+    for (const auto& type : {QString("Rescaled_Raw_Profile"), QString("Raw_Profile"),
+                             QString("Normalized_Profile"), QString("Experimental_Profile"),
                              QString("Numeric_Model_Profile")})
         if (label == type || label.endsWith("_" + type)) return type;
     return label;
@@ -431,7 +431,11 @@ bool ReportTab::loadSource(const QString& text, bool preserveSelections)
         const auto type = report_format::profileType(row[8]);
         if (!types.contains(type)) types.push_back(type);
     }
-    for (const auto& type : types) add(types_, type, typeSelection.value(type, Qt::Checked));
+    for (const auto& type : types) {
+        const auto defaultState = type == "Raw_Profile" || type == "Rescaled_Raw_Profile"
+            ? Qt::Unchecked : Qt::Checked;
+        add(types_, type, typeSelection.value(type, defaultState));
+    }
     auto restoreOrder = [](QListWidget* list, const QStringList& order) {
         int target = 0;
         for (const auto& label : order) {
