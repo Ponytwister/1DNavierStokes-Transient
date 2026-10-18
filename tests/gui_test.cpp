@@ -742,7 +742,7 @@ TEST(Gui, ExperimentFiltersFollowAppliedSelectionAndIndependentToggles)
     Inputs input;
     // Acceptance now starts a run, so the selected experiment needs complete inputs.
     input.execute("INSERT INTO experiments SELECT 'second',LOW_REF_LEFT,LOW_REF_RIGHT,HIGH_REF_LEFT,HIGH_REF_RIGHT,"
-                  "DEFAULT_NORMALIZATION,SPECIES,REACTIONS,ENTRANCE_FLOWRATE,EDGES,SPECIE_INLET_CONC_UNITS,"
+                  "DEFAULT_NORMALIZATION,SPECIES,REACTIONS,ENTRANCE_FLOWRATE,LEFT_EDGE,SPECIE_INLET_CONC_UNITS,"
                   "SPECIE_MODEL_CONC_UNITS,WIDTH FROM experiments WHERE NAME='uniform';"
                   "INSERT INTO experiments(NAME) VALUES('uniform-extra');"
                   "INSERT INTO raw_profile(NAME,WT_PERCENT,CHANNEL_LEFT_EDGE,CHANNEL_RIGHT_EDGE,"

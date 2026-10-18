@@ -421,6 +421,13 @@ Migration 007 clears saved history and normalized concentration rows while
 leaving `raw_profile` unchanged; migration 008 then normalizes its remaining
 concentration values without changing other raw profile fields.
 
+Apply `migrations/009_rename_experiment_edges_to_left_edge.sql` once to existing
+databases after backing them up. It renames `experiments.EDGES` to
+`experiments.LEFT_EDGE` and sets `user_version` to 5. The stored value remains in
+raw-profile coordinates without synthetic left padding; the application adds
+`exp_left_padding` when loading it for calculations and removes that padding
+when saving it. New databases already use `LEFT_EDGE`.
+
 Both **Raw profiles** and **Experiments** have an **Only selected experiments**
 checkbox, on by default. Each checkbox independently hides rows whose `NAME` is
 not an exact match for a selected experiment in Model controls. Applied in-memory

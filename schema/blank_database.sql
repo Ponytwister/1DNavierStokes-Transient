@@ -21,7 +21,7 @@ CREATE TABLE experiments (
     ENTRANCE_FLOWRATE ANY,
     SPECIE_INLET_CONC_UNITS ANY,
     SPECIE_MODEL_CONC_UNITS ANY,
-    EDGES,
+    LEFT_EDGE NUMERIC,
     WIDTH NUMERIC,
     CHANNEL_WIDTH REAL NOT NULL DEFAULT 5e-4
         CHECK(typeof(CHANNEL_WIDTH) IN ('real','integer') AND CHANNEL_WIDTH > 0 AND CHANNEL_WIDTH <= 1.7976931348623157e308),
@@ -157,4 +157,4 @@ CREATE TABLE profile_record_samples (
 CREATE INDEX profile_record_samples_lookup
     ON profile_record_samples(EXPERIMENT_NAME, WT_PERCENT, RUN_AT_UTC_US, X);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 5;

@@ -648,10 +648,11 @@ exp_parameters_db_callback(void *data, int count, char **argv, char **columnName
                 run_ptr->total_flowrate += run_ptr->ENTRANCE_FLOWRATE.back();
             }
 
-        } else if (criterion == "EDGES") {
+        } else if (criterion == "LEFT_EDGE") {
             std::vector <double> edges;
             while (getline(ss, s, ' ')) { 
-                edges.emplace_back(std::max(std::stod(s), 0.0d));
+                // Store the experiment value in the same unpadded coordinates as raw_profile.LEFT_EDGE.
+                edges.emplace_back(std::max(std::stod(s) + p.exp_left_padding, 0.0d));
             }
             run_ptr->left_edge.value() = edges.at(0);
             run_ptr->left_edge.param_init = true;
@@ -1923,7 +1924,8 @@ write_alglib_values_to_db(parameters_t& p, sqlite3* db) //reading data using cal
             pop_report(p, 0); // removes exponents state
         }
         pop_and_add(p, 0, "edges"); // removes reaction state
-        sqltext.append("UPDATE experiments SET 'EDGES' = '" + double_to_string(run_ptr->left_edge.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
+        // Persist the experiment value without synthetic left padding, matching raw_profile.LEFT_EDGE.
+        sqltext.append("UPDATE experiments SET 'LEFT_EDGE' = '" + double_to_string(run_ptr->left_edge.value() - p.exp_left_padding) + "' WHERE NAME = '" + run_ptr->name + "'; ");
         sqltext.append("UPDATE experiments SET 'WIDTH' = '" + double_to_string(run_ptr->width.value()) + "' WHERE NAME = '" + run_ptr->name + "'; ");
         pop_report(p, 0); // removes edges state
     }
