@@ -1595,11 +1595,15 @@ read_alglib_values_from_db(parameters_t& p, sqlite3* db) //reading data using ca
         if (p.single_profile_experiment) {
             const auto requested = p.single_profile_initial_values.find(s.name);
             if (requested != p.single_profile_initial_values.end()) {
-                if (!std::isfinite(requested->second) || requested->second < p.low_bound[i] || requested->second > p.up_bound[i])
-                    throw std::runtime_error("Starting value for '" + s.name + "' must be finite and within its configured bounds");
                 p.initial_values_alglib[i] = requested->second;
                 s.value() = requested->second;
             }
+            // Validate profile-derived defaults as well as explicit UI overrides.
+            // Otherwise ALGLIB silently projects an out-of-range start to a bound.
+            if (!std::isfinite(p.initial_values_alglib[i]) ||
+                p.initial_values_alglib[i] < p.low_bound[i] ||
+                p.initial_values_alglib[i] > p.up_bound[i])
+                throw std::runtime_error("Starting value for '" + s.name + "' must be finite and within its configured bounds");
         }
 
     }
