@@ -931,16 +931,20 @@ static void
 synchronize_profile_entrance_concentrations(parameters_t& p, bool use_initial_values)
 {
     for (auto& experiment : p.experiments) {
-        if (experiment.omit) continue;
         auto* run = experiment.run;
         for (const auto& override : experiment.entrance_concentrations) {
             if (override.alias.empty()) continue;
+            // An omitted profile is not fitted, so an aliased inlet uses its
+            // paired numeric value as this profile's fixed input.
+            if (experiment.omit && !override.has_paired_value) continue;
             if (override.entrance_number < 1 || override.entrance_number > static_cast<int>(experiment.entrances.size()))
                 throw std::runtime_error("ENTRANCE_CONC refers to an inlet that is missing from ENTRANCE_FLOWRATE.");
             const auto species = specie_index(run, override.species_name);
             auto* inlet_species = &run->species.at(species);
-            const double concentration = profile_alias_value(p, experiment, override.alias,
-                override.concentration, override.has_paired_value, use_initial_values);
+            const double concentration = experiment.omit
+                ? override.concentration
+                : profile_alias_value(p, experiment, override.alias,
+                    override.concentration, override.has_paired_value, use_initial_values);
             if (!std::isfinite(concentration) || concentration < 0.0)
                 throw std::runtime_error("ENTRANCE_CONC must be a finite non-negative number");
             const std::string source_units = override.units.empty() ? inlet_species->model_units : override.units;
@@ -1077,6 +1081,7 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
     // Decide before registering any profile-local solver variables. The GUI and
     // ALGLIB both consume the resulting solvables list.
     bool omit = false;
+    std::vector<std::string> selected_profile_variables;
     for (int i = 0; i < count; ++i) {
         if (std::string(columnNames[i]) == "OMIT" && argv[i] != nullptr) {
             std::string value = argv[i];
@@ -1084,8 +1089,16 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             std::transform(value.begin(), value.end(), value.begin(),
                            [](unsigned char c) { return std::tolower(c); });
             omit = value == "true";
+        } else if (std::string(columnNames[i]) == "INDEPENDENT_PARAMETERS_TO_SOLVE_FOR" && argv[i] != nullptr) {
+            std::stringstream variables(argv[i]);
+            std::string variable;
+            while (variables >> variable) selected_profile_variables.push_back(variable);
         }
     }
+    const auto omitted_profile_selects = [&](const std::string& variable) {
+        return omit && std::find(selected_profile_variables.begin(), selected_profile_variables.end(), variable) !=
+                           selected_profile_variables.end();
+    };
     add_report(p, 0, "callback_start");
     //1st parameter of this function is received from 4th parameter of sqlite3_exec
     //count->is the number of columns
@@ -1213,14 +1226,20 @@ raw_profiles_db_callback(void *data, int count, char **argv, char **columnNames)
             pop_report(p, 0);
         } else if (criterion == "LEFT_EDGE") {
             add_report(p, 0, "LEFT_EDGE Value=" + value);
-            if (!value.empty() && exp_ptr->left_edge.param_init) {
+            if (!value.empty() && omitted_profile_selects("left_edge")) {
+                exp_ptr->left_edge.source = nullptr;
+                exp_ptr->left_edge.default_value = std::max(std::stod(value) + p.exp_left_padding, 0.0d);
+            } else if (!value.empty() && exp_ptr->left_edge.param_init) {
                 exp_ptr->left_edge.value() = std::max(std::stod(value) + p.exp_left_padding, 0.0d);
 
             }
             pop_report(p, 0);
         } else if (criterion == "WIDTH") {
             add_report(p, 0, "WIDTH Value=" + value);
-            if (!value.empty() && exp_ptr->width.param_init) {
+            if (!value.empty() && omitted_profile_selects("width")) {
+                exp_ptr->width.source = nullptr;
+                exp_ptr->width.default_value = std::stod(value);
+            } else if (!value.empty() && exp_ptr->width.param_init) {
                 exp_ptr->width.value() = std::stod(value);
             }
             pop_report(p, 0);
