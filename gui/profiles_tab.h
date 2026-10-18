@@ -20,6 +20,7 @@ class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QToolButton;
 
 struct ProfileSeriesData {
     QString name;
@@ -72,6 +73,7 @@ public:
     void setSingleRunEnabled(bool enabled);
     void setSingleRunControlState(bool canPause, bool canStop, bool canSaveInputs);
     void setSingleRunStatus(const QString& message);
+    void setSingleRunParameters(const std::vector<tsensor_workflow::parameter_value>& parameters, bool currentAvailable);
     void acceptSavedFittedInputs();
     std::function<void(const SingleProfileRunRequest&)> singleRunRequested;
     std::function<void()> pauseRequested;
@@ -88,8 +90,8 @@ private:
         QComboBox* profile = nullptr;
         QComboBox* yAxis = nullptr;
         QPushButton* lineColorButton = nullptr;
-        QPushButton* fillColorButton = nullptr;
-        QCheckBox* fill = nullptr;
+        QToolButton* fillColorButton = nullptr;
+        bool fillEnabled = false;
         QLineEdit* legend = nullptr;
         QColor lineColor, fillColor;
         QString lastProfile;
@@ -104,9 +106,14 @@ private:
     void addSeriesRow(const QJsonObject& settings = {});
     void removeSeriesRow(SeriesRow* row);
     void refreshSeriesRows();
+    void applyDatabaseDatasetFilters();
     void chooseLineColor(SeriesRow* row);
     void chooseFillColor(SeriesRow* row);
     QComboBox* source_;
+    QWidget* databaseDatasetFilters_;
+    QLineEdit* databaseDatasetSearch_;
+    QComboBox* databaseDatasetSort_;
+    QCheckBox *latestDatabaseVersions_, *selectedExperimentsOnly_;
     QTableWidget* seriesTable_;
     QPushButton* addSeriesButton_;
     QGroupBox* singleRunGroup_;
@@ -123,12 +130,14 @@ private:
     QLineEdit *title_, *xLabel_, *yLabel_, *y2Label_;
     QDoubleSpinBox *xMin_, *xMax_, *yMin_, *yMax_, *y2Min_, *y2Max_, *xNumberGap_, *xTitleGap_, *yNumberGap_, *yTitleGap_, *y2NumberGap_, *y2TitleGap_;
     QDoubleSpinBox* aspectRatio_;
-    QSpinBox *xTicks_, *yTicks_, *y2Ticks_;
+    QSpinBox *xTicks_, *yTicks_, *y2Ticks_, *exportImageWidth_, *exportImageHeight_;
     QComboBox* legendPosition_;
     QCheckBox *autoRangeX_, *autoRangeY_, *autoRangeY2_, *useSecondYAxis_, *grid_, *ticks_;
     ProfilePlot* plot_;
     QString database_, reportFile_;
     QStringList datasetLabels_, datasetIds_, profiles_;
+    QStringList datasetTooltips_;
+    QStringList databaseDatasetLabels_, databaseDatasetIds_;
     QVector<SeriesRow*> seriesRows_;
     std::vector<tsensor_workflow::live_profile_snapshot> liveProfiles_;
 };

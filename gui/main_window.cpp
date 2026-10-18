@@ -6,8 +6,11 @@
 #include "report_tab.h"
 #include "profiles_tab.h"
 #include <QActionGroup>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QEvent>
+#include <QComboBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -58,6 +61,7 @@ QString legacyReportFilename(const parameters_t& parameters) {
 
 MainWindow::MainWindow()
 {
+    qApp->installEventFilter(this);
     setWindowTitle("Navier — Transient Model");
     resize(900, 720);
     auto* central = new QWidget(this);
@@ -333,6 +337,18 @@ MainWindow::MainWindow()
     timer_->start(50);
     profilesPage_->setDatabase(database_->text().trimmed());
     updateControls();
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::Wheel) {
+        if (auto* combo = qobject_cast<QComboBox*>(watched);
+            combo && (!combo->view() || !combo->view()->isVisible())) {
+            event->accept();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 bool MainWindow::openReportFile(const QString& filename) {
@@ -661,6 +677,7 @@ void MainWindow::prepareReport()
 
 void MainWindow::showParameters(const std::vector<parameter_value>& parameters, bool completed)
 {
+    if (singleProfileRunActive_) profilesPage_->setSingleRunParameters(parameters, completed);
     values_->setRowCount(static_cast<int>(parameters.size()));
     for (int i = 0; i < values_->rowCount(); ++i) {
         const auto& parameter = parameters[i];

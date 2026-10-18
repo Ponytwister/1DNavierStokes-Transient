@@ -702,7 +702,7 @@ void verify_persistence(run_session& session, const std::filesystem::path& direc
         std::istringstream row(line);
         std::string field;
         for (int i = 0; i < 9 && row >> field; ++i) {
-            if (i == 8 && field == "Free_Dye") {
+            if (i == 8 && field == "FITC") {
                 double value;
                 int count = 0;
                 while (row >> value) { near(value, .002); ++count; }

@@ -27,6 +27,17 @@ struct live_profile_snapshot {
     std::vector<double> x;
     std::vector<double> experimental;
     std::vector<double> numeric;
+    std::vector<double> experimental_derivative;
+    std::vector<double> numeric_derivative;
+    std::vector<double> experimental_difference;
+    std::vector<double> numeric_difference;
+    std::vector<double> error;
+    std::vector<double> free_dye;
+    std::vector<double> bound_dye;
+    std::vector<double> total_dye;
+    std::vector<double> unbound_beads;
+    std::vector<double> bound_beads;
+    std::vector<double> total_beads;
 };
 
 struct progress_event {

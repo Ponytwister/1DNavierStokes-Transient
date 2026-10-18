@@ -25,6 +25,7 @@ public:
     bool openReportFile(const QString& filename);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     enum class Work { idle, solve, save };
     struct ActionResult { QString message; std::exception_ptr error; bool reloadTables = false; bool fittedInputsSaved = false; QString reportFile; QString reportText; };

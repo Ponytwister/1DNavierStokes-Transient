@@ -152,11 +152,12 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         ptrdiff_t FITC_Bead_1 = run_ptr->FITC_Bead_1;
         FITC_Bead_1_ptr = &run_ptr->reactions.at(FITC_Bead_1);
         auto profile_names = specie_name_vect;
+        profile_names[0] = FITC_ptr->name;
+        profile_names[3] = PS_beads_ptr->name;
         if (extended) {
             // The legacy Bound_Beads row contains analytical_zero, not beads.
             // Keep its sampled axis and give the true model-grid beads their own row.
             profile_names[4] = "Analytical_Zero_(" + FITC_ptr->model_units + ")";
-            profile_names[3] = "Unbound_Beads_(" + PS_beads_ptr->input_units + ")";
             profile_names[5] = "Total_Beads_(" + PS_beads_ptr->input_units + ")";
             profile_names.push_back("Bound_Beads_(" + PS_beads_ptr->input_units + ")");
             for (const auto& species : run_ptr->species)
@@ -2743,18 +2744,57 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             if (!run || run->FITC < 0 || run->FITC >= static_cast<std::ptrdiff_t>(run->species.size())) continue;
             const auto& fitc = run->species.at(run->FITC);
             const double numeric_unit = unit_conversion(run, run->FITC, fitc.model_units, fitc.input_units);
+            auto& freeDye = run->species.at(run->FITC);
+            const auto& beads = run->species.at(run->PS_beads);
+            auto& binding = run->reactions.at(run->FITC_Bead_1);
+            const double beadUnit = unit_conversion(run, run->PS_beads, beads.model_units, beads.input_units);
+            const double dyeToBead = std::abs(binding.coef.at(&freeDye).value());
+            if (p.X <= 0 || experiment.species_out.empty() || experiment.species_out.at(run->FITC).empty() ||
+                experiment.species_out.at(run->Bound_Dye_1).empty() || experiment.species_out.at(run->PS_beads).empty()) continue;
             const auto sample_count = std::min({experiment.channel_position.size(),
-                experiment.experimental_profile.size(), experiment.model_profile.size()});
+                experiment.experimental_profile.size(), experiment.model_profile.size(),
+                experiment.experimental_derivative.size(), experiment.numeric_derivative.size(),
+                experiment.experimental_difference.size(), experiment.numeric_difference.size(),
+                experiment.error.size()});
             tsensor_workflow::live_profile_snapshot snapshot;
             snapshot.experiment_name = run->name;
             snapshot.weight_percent = experiment.second_name;
             snapshot.x.reserve(sample_count);
             snapshot.experimental.reserve(sample_count);
             snapshot.numeric.reserve(sample_count);
+            auto reserve = [sample_count](std::vector<double>& values) { values.reserve(sample_count); };
+            reserve(snapshot.experimental_derivative); reserve(snapshot.numeric_derivative);
+            reserve(snapshot.experimental_difference); reserve(snapshot.numeric_difference); reserve(snapshot.error);
+            reserve(snapshot.free_dye); reserve(snapshot.bound_dye); reserve(snapshot.total_dye);
+            reserve(snapshot.unbound_beads); reserve(snapshot.bound_beads); reserve(snapshot.total_beads);
+            const double modelScale = run->W * 1e6 / p.X;
+            if (modelScale <= 0) continue;
+            auto interpolateSpecies = [&](std::ptrdiff_t speciesIndex, double x) {
+                const auto& values = experiment.species_out.at(speciesIndex);
+                const double position = std::clamp(x / modelScale, 0.0, static_cast<double>(values.size() - 1));
+                const auto left = static_cast<std::size_t>(position);
+                const auto right = std::min(left + 1, values.size() - 1);
+                const double fraction = position - static_cast<double>(left);
+                return values[left] * (1.0 - fraction) + values[right] * fraction;
+            };
             for (std::size_t sample = 0; sample < sample_count; ++sample) {
                 snapshot.x.push_back(experiment.channel_position[sample]);
                 snapshot.experimental.push_back(experiment.experimental_profile[sample] * run->dye_conc_mgml);
                 snapshot.numeric.push_back(experiment.model_profile[sample] * numeric_unit);
+                snapshot.experimental_derivative.push_back(experiment.experimental_derivative.at(sample));
+                snapshot.numeric_derivative.push_back(experiment.numeric_derivative.at(sample));
+                snapshot.experimental_difference.push_back(experiment.experimental_difference.at(sample));
+                snapshot.numeric_difference.push_back(experiment.numeric_difference.at(sample));
+                snapshot.error.push_back(experiment.error.at(sample));
+                const double free = interpolateSpecies(run->FITC, experiment.channel_position[sample]) * numeric_unit;
+                const double bound = interpolateSpecies(run->Bound_Dye_1, experiment.channel_position[sample]) * numeric_unit;
+                const double unboundBeads = interpolateSpecies(run->PS_beads, experiment.channel_position[sample]) * beadUnit;
+                const double boundBeads = dyeToBead > 0
+                    ? interpolateSpecies(run->Bound_Dye_1, experiment.channel_position[sample]) / dyeToBead * beadUnit : 0.0;
+                snapshot.free_dye.push_back(free); snapshot.bound_dye.push_back(bound);
+                snapshot.total_dye.push_back(free + bound);
+                snapshot.unbound_beads.push_back(unboundBeads); snapshot.bound_beads.push_back(boundBeads);
+                snapshot.total_beads.push_back(unboundBeads + boundBeads);
             }
             event.live_profiles.push_back(std::move(snapshot));
         }
