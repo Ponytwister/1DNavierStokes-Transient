@@ -2538,7 +2538,7 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
         assert (!std::isinf(residuals[i + exp_ptr->window_start]));
     }
     
-    if (p.iterations > 1) {
+    {
         pop_and_add(p, 0, "row:" + std::to_string(row) + "_DAintegrals");
         double exp_d = std::numeric_limits<double>::lowest();
         double model_d = std::numeric_limits<double>::lowest();
@@ -2692,26 +2692,39 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
         std::vector<std::exception_ptr> failures(p.row_count);
         // jthread also joins if creating a later worker throws.
         std::vector<std::jthread> threads(p.row_count);
+        // D-A metrics compare each profile with its run's 0% profile. Finish
+        // those reference profiles before starting dependent profiles so the
+        // first (and only, for run_solver=false) evaluation is deterministic.
+        std::vector<int> dependent_rows;
+        dependent_rows.reserve(p.row_count);
+        for (int row = 0; row < p.row_count; ++row) {
+            if (p.experiments.at(row).second_name == "0.0") {
+                model(p, control_parameters, residuals, row);
+            } else {
+                dependent_rows.push_back(row);
+            }
+        }
         int start_row = 0;
-        int row = 0;
-        while (row < p.row_count) {
+        std::size_t row = 0;
+        while (row < dependent_rows.size()) {
             check_cancellation(p);
-            start_row = row;
-            for (int i = 0; i < hardware_threads && row < p.row_count; i++) {
-                threads[row] = std::jthread([&p, &control_parameters, &residuals, &failures, row] {
+            start_row = static_cast<int>(row);
+            for (int i = 0; i < hardware_threads && row < dependent_rows.size(); i++) {
+                const int model_row = dependent_rows[row];
+                threads[row] = std::jthread([&p, &control_parameters, &residuals, &failures, model_row] {
                     try {
-                        model(p, control_parameters, residuals, row);
+                        model(p, control_parameters, residuals, model_row);
                     } catch (...) {
-                        failures[row] = std::current_exception();
+                        failures[model_row] = std::current_exception();
                     }
                 });
                 row++;
             }
-            for (int i = 0; i < hardware_threads && start_row + i < p.row_count; i++) {
+            for (int i = 0; i < hardware_threads && static_cast<std::size_t>(start_row + i) < row; i++) {
                 threads[start_row + i].join();
             }
-            for (int i = start_row; i < row; ++i) {
-                if (failures[i]) { std::rethrow_exception(failures[i]); }
+            for (std::size_t i = static_cast<std::size_t>(start_row); i < row; ++i) {
+                if (failures[dependent_rows[i]]) { std::rethrow_exception(failures[dependent_rows[i]]); }
             }
         }
     }

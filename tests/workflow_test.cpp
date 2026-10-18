@@ -584,6 +584,27 @@ TEST(Workflow, SavingFittedInputsPreservesOmittedProfileGeometry)
         "SELECT count(*) FROM raw_profile WHERE WT_PERCENT='4.0' AND OMIT='true'"), 1);
 }
 
+TEST(Workflow, MetricsAreCalculatedWhenSolverIsDisabled)
+{
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "INSERT OR REPLACE INTO model_controls VALUES('run_solver','false');"
+        "UPDATE raw_profile SET INTENSITY_ARRAY='0'||char(9)||'0'||char(9)||'0'||char(9)||'0'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1'||char(9)||'1' "
+        "WHERE WT_PERCENT='4.0';");
+    session.load_inputs();
+    session.run();
+
+    const auto experiment_it = std::find_if(session.parameters().experiments.begin(),
+        session.parameters().experiments.end(), [](const auto& experiment) {
+            return experiment.second_name == "4.0";
+        });
+    ASSERT_NE(experiment_it, session.parameters().experiments.end());
+    const auto& experiment = *experiment_it;
+    EXPECT_GT(experiment.exp_DA, 0.0);
+    EXPECT_GT(experiment.analytic_exp_integral, 0.0);
+}
+
 TEST(Workflow, SingleProfileOverridesExperimentGeometryAndIgnoresOmit)
 {
     fixture files;
