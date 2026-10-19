@@ -1,9 +1,110 @@
 #include <workflow.h>
 #include <type_traits>
+#include <sqlite3.h>
+#include <sstream>
+#include <map>
 
 namespace tsensor_workflow {
 
 namespace {
+void record_run(sqlite3* db, parameters_t& p, const control_values& supplied,
+                const run_result& result, const char* status)
+{
+    auto exec = [db](const char* sql) {
+        char* error = nullptr;
+        const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+        std::string message = error ? error : sqlite3_errmsg(db);
+        sqlite3_free(error);
+        if (rc != SQLITE_OK) throw std::runtime_error("Cannot save run history: " + message);
+    };
+    exec("CREATE TABLE IF NOT EXISTS run_history (ID INTEGER PRIMARY KEY, COMPLETED_AT_UTC TEXT NOT NULL, EXPERIMENTS TEXT, STATUS TEXT NOT NULL, RESIDUAL_EVALUATIONS INTEGER, ITERATIONS INTEGER, RESIDUAL_SUM REAL);");
+    exec("CREATE TABLE IF NOT EXISTS run_history_values (RUN_ID INTEGER NOT NULL REFERENCES run_history(ID) ON DELETE CASCADE, CATEGORY TEXT NOT NULL, ITEM TEXT NOT NULL, FIELD TEXT NOT NULL, VALUE TEXT, PRIMARY KEY(RUN_ID,CATEGORY,ITEM,FIELD));");
+    sqlite3_stmt* versionRaw = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &versionRaw, nullptr) == SQLITE_OK) {
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> version(versionRaw, sqlite3_finalize);
+        if (sqlite3_step(versionRaw) == SQLITE_ROW && sqlite3_column_int(versionRaw, 0) < 6)
+            exec("PRAGMA user_version = 6");
+    }
+    exec("BEGIN IMMEDIATE");
+    try {
+        sqlite3_stmt* raw = nullptr;
+        const char* insert = "INSERT INTO run_history(COMPLETED_AT_UTC,EXPERIMENTS,STATUS,RESIDUAL_EVALUATIONS,ITERATIONS,RESIDUAL_SUM) VALUES(datetime('now'),?1,?2,?3,?4,?5)";
+        if (sqlite3_prepare_v2(db, insert, -1, &raw, nullptr) != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement(raw, sqlite3_finalize);
+        std::string experiments;
+        for (const auto& run : p.experiment_runs) { if (!experiments.empty()) experiments += ", "; experiments += run.name; }
+        sqlite3_bind_text(raw,1,experiments.c_str(),-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(raw,2,status,-1,SQLITE_STATIC);
+        sqlite3_bind_int(raw,3,result.residual_evaluations);
+        if (result.optimizer_iterations) sqlite3_bind_int64(raw,4,*result.optimizer_iterations); else sqlite3_bind_null(raw,4);
+        if (result.sum_squared_residuals) sqlite3_bind_double(raw,5,*result.sum_squared_residuals); else sqlite3_bind_null(raw,5);
+        if (sqlite3_step(raw) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+        const auto id = sqlite3_last_insert_rowid(db);
+        sqlite3_finalize(statement.release());
+        raw = nullptr;
+        if (sqlite3_prepare_v2(db,"INSERT INTO run_history_values VALUES(?1,?2,?3,?4,?5)",-1,&raw,nullptr)!=SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
+        std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> value(raw, sqlite3_finalize);
+        auto add = [&](const char* category, const std::string& item, const char* field, const std::optional<std::string>& v) {
+            sqlite3_reset(raw); sqlite3_clear_bindings(raw); sqlite3_bind_int64(raw,1,id);
+            sqlite3_bind_text(raw,2,category,-1,SQLITE_STATIC); sqlite3_bind_text(raw,3,item.c_str(),-1,SQLITE_TRANSIENT);
+            sqlite3_bind_text(raw,4,field,-1,SQLITE_STATIC);
+            if (v) sqlite3_bind_text(raw,5,v->c_str(),-1,SQLITE_TRANSIENT); else sqlite3_bind_null(raw,5);
+            if (sqlite3_step(raw)!=SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+        };
+        auto number = [](double v) { std::ostringstream out; out.precision(17); out << v; return out.str(); };
+        std::map<std::string, std::optional<std::string>> controls;
+        sqlite3_stmt* controlRaw = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT * FROM model_controls", -1, &controlRaw, nullptr) == SQLITE_OK) {
+            std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> controlStatement(controlRaw, sqlite3_finalize);
+            if (sqlite3_column_count(controlRaw) >= 2) {
+                while (sqlite3_step(controlRaw) == SQLITE_ROW) {
+                    const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(controlRaw, 0));
+                    const auto* value = reinterpret_cast<const char*>(sqlite3_column_text(controlRaw, 1));
+                    if (name) controls[name] = sqlite3_column_type(controlRaw, 1) == SQLITE_NULL
+                        ? std::nullopt : std::optional<std::string>(value ? value : "");
+                }
+            }
+        }
+        for (const auto& [name, value] : supplied) controls[name] = value;
+        for (const auto& [name, val] : controls) add("control",name,"value",val);
+        for (auto& run : p.experiment_runs) {
+            for (auto& s : run.species) {
+                add("species",run.name + "/" + s.name,"QE",number(s.QE.value()));
+                add("species",run.name + "/" + s.name,"DIFFUSION_RATE",number(s.diffusion_rate));
+                add("species",run.name + "/" + s.name,"PARTICLE_DIAMETER",number(s.diameter));
+                add("species",run.name + "/" + s.name,"PARTICLE_DENSITY",number(s.particle_density));
+                add("species",run.name + "/" + s.name,"MOLECULAR_WEIGHT",number(s.molecular_weight));
+                add("species",run.name + "/" + s.name,"TYPE",std::to_string(s.type));
+                add("species",run.name + "/" + s.name,"QE_ALIAS",s.qe_alias);
+                add("species",run.name + "/" + s.name,"DIFFUSION_ALIAS",s.diffusion_alias);
+                add("species",run.name + "/" + s.name,"DIAMETER_ALIAS",s.diameter_alias);
+                add("species",run.name + "/" + s.name,"INPUT_UNITS",s.input_units);
+                add("species",run.name + "/" + s.name,"MODEL_UNITS",s.model_units);
+            }
+            for (auto& reaction : run.reactions) {
+                add("reaction",run.name + "/" + reaction.name,"K1",number(reaction.k[0].value()));
+                add("reaction",run.name + "/" + reaction.name,"K2",number(reaction.k[1].value()));
+                add("reaction",run.name + "/" + reaction.name,"K1_ALIAS",reaction.k_alias[0]);
+                add("reaction",run.name + "/" + reaction.name,"K2_ALIAS",reaction.k_alias[1]);
+                for (auto* s : reaction.specie_vect) {
+                    const auto item = run.name + "/" + reaction.name + "/" + s->name;
+                    if (reaction.coef.contains(s)) {
+                        add("reaction",item,"COEFFICIENT",number(reaction.coef.at(s).value()));
+                        const auto alias = reaction.coef_alias.find(s);
+                        if (alias != reaction.coef_alias.end()) add("reaction",item,"COEFFICIENT_ALIAS",alias->second.name);
+                    }
+                    if (reaction.exp.contains(s)) {
+                        add("reaction",item,"EXPONENT",number(reaction.exp.at(s).value()));
+                        const auto alias = reaction.exp_alias.find(s);
+                        if (alias != reaction.exp_alias.end()) add("reaction",item,"EXPONENT_ALIAS",alias->second.name);
+                    }
+                }
+            }
+        }
+        exec("COMMIT");
+    } catch (...) { sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr); throw; }
+}
+
 [[noreturn]] void report_failure(parameters_t& p, const workflow_error& error)
 {
     publish_event(p, {event_kind::failed, error.action, error.what(), 3, {},
@@ -94,6 +195,7 @@ void run_session::load_inputs(const std::optional<control_values>& controls)
     perform(parameters_, operation::load_inputs, [&] {
         require_state(session_state::empty, operation::load_inputs);
         state_ = session_state::failed;
+        loaded_controls_ = controls.value_or(control_values{});
         tsensor_workflow::load_inputs(parameters_, database_.get(), controls);
         state_ = session_state::loaded;
     });
@@ -104,7 +206,19 @@ run_result run_session::run()
     return perform(parameters_, operation::solve, [&] {
         require_state(session_state::loaded, operation::solve);
         state_ = session_state::failed;
-        auto result = tsensor_workflow::run(parameters_);
+        run_result result;
+        try {
+            result = tsensor_workflow::run(parameters_);
+        } catch (...) {
+            const auto failure = std::current_exception();
+            try {
+                run_result unsuccessful;
+                record_run(database_.get(), parameters_, loaded_controls_, unsuccessful,
+                    parameters_.cancellation.stop_requested() ? "cancelled" : "failed");
+            } catch (...) {}
+            std::rethrow_exception(failure);
+        }
+        record_run(database_.get(), parameters_, loaded_controls_, result, result.paused ? "paused" : "completed");
         state_ = session_state::completed;
         return result;
     });

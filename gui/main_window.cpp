@@ -5,6 +5,7 @@
 #include "setup_file.h"
 #include "report_tab.h"
 #include "profiles_tab.h"
+#include "run_history_tab.h"
 #include <QActionGroup>
 #include <QAbstractItemView>
 #include <QApplication>
@@ -33,6 +34,7 @@
 #include <QVBoxLayout>
 #include <sqlite3.h>
 #include <stdexcept>
+#include <algorithm>
 
 using namespace tsensor_workflow;
 namespace {
@@ -115,6 +117,25 @@ MainWindow::MainWindow()
         alglibPage_->editVariable(variable);
     };
     tabs_->addTab(profilesPage_, "Profiles");
+    runHistoryPage_ = new RunHistoryTab;
+    runHistoryPage_->loadRequested = [this] {
+        if (work_ != Work::idle || closing_) return;
+        try { loadControls(); } catch (...) { reportFailure(std::current_exception()); return; }
+        const auto saved = runHistoryPage_->selectedControls();
+        auto restored = *modelControls_;
+        for (auto& row : restored.rows) {
+            const auto match = std::find_if(saved.begin(), saved.end(), [&](const auto& item) { return item.first == row.name.toStdString(); });
+            if (match != saved.end()) row.value = match->second ? std::optional<QString>(QString::fromStdString(*match->second)) : std::nullopt;
+        }
+        discardControlsEditor();
+        modelControls_ = std::move(restored);
+        profilesPage_->setSingleRunContext(database_->text().trimmed(), *modelControls_);
+        applyTableFilters();
+        clearResult();
+        tabs_->setCurrentWidget(controlsPage_);
+        setStatus("Model controls loaded from run history. Review them before the next run.");
+    };
+    tabs_->addTab(runHistoryPage_, "Run history");
     auto selectedExperiments = [this] {
         const auto snapshot = modelControls_ ? *modelControls_ : model_controls::load(database_->text().trimmed());
         for (const auto& row : snapshot.rows)
@@ -267,6 +288,7 @@ MainWindow::MainWindow()
         reactionsPage_->clear(); speciesPage_->clear(); alglibPage_->clear(); rawProfilesPage_->clear(); clearResult();
         // Each table owns its in-memory rows for the selected database.
         reloadTables();
+        runHistoryPage_->setDatabase(database_->text().trimmed());
         profilesPage_->setDatabase(database_->text().trimmed());
     });
     connect(output_, &QLineEdit::textChanged, this, [this] { updateControls(); });
@@ -288,6 +310,7 @@ MainWindow::MainWindow()
                 } catch (...) { reportFailure(std::current_exception()); }
             }
         }
+        if (tabs_->widget(index) == runHistoryPage_) runHistoryPage_->setDatabase(database_->text().trimmed());
         if (index != 1 || controlsEditor_ || work_ != Work::idle || closing_) return;
         const QFileInfo input(database_->text().trimmed());
         if (!input.isFile()) {

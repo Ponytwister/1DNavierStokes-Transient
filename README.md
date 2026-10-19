@@ -120,6 +120,10 @@ from the selected database. Navigation and closing remain available while editin
 **Update preset** saves the edits to the loaded setup file, or **Save preset...**
 prompts for a new file. Neither action changes database defaults. **Cancel**
 discards edits that have not been accepted for a run. Changing the database resets the active controls.
+The **Run history** tab lists completed runs and shows each run's captured model controls,
+species properties, and reaction values. **Load model controls** copies a selected run's
+control settings into the current in-memory controls for review and a later run; it does
+not change the database defaults.
 The original presets remain terminal-only and require no Qt.
 
 For a portable Windows ZIP, follow the [packaging instructions](docs/qt-setup.md#portable-windows-package).

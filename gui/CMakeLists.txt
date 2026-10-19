@@ -17,7 +17,7 @@ if(NOT qt_compiler_target STREQUAL "${NAVIER_QT_ARCHITECTURE}-w64-mingw32")
 endif()
 
 find_package(Qt6 ${NAVIER_QT_VERSION} EXACT REQUIRED COMPONENTS ${NAVIER_QT_COMPONENTS})
-add_library(navier_gui STATIC checklist_picker.h raw_profile_editor.cpp raw_profile_editor.h experiment_row_filter.h database_table_tab.cpp database_table_tab.h experiments_tab.cpp experiments_tab.h main_window.cpp main_window.h controls_dialog.cpp controls_dialog.h model_controls.cpp model_controls.h setup_file.cpp setup_file.h)
+add_library(navier_gui STATIC checklist_picker.h raw_profile_editor.cpp raw_profile_editor.h experiment_row_filter.h database_table_tab.cpp database_table_tab.h experiments_tab.cpp experiments_tab.h main_window.cpp main_window.h controls_dialog.cpp controls_dialog.h model_controls.cpp model_controls.h setup_file.cpp setup_file.h run_history_tab.cpp run_history_tab.h)
 target_link_libraries(navier_gui PUBLIC tsensor Qt6::Widgets)
 target_sources(navier_gui PRIVATE report_tab.cpp report_tab.h profiles_tab.cpp profiles_tab.h)
 target_sources(navier_gui PRIVATE experiment_selections.cpp experiment_selections.h quantity_units.h experiment_fields.h)

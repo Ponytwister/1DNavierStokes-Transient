@@ -95,6 +95,7 @@ private:
     void require_state(session_state expected, operation action) const;
     std::unique_ptr<sqlite3, close_database> database_;
     parameters_t parameters_{};
+    control_values loaded_controls_;
     session_state state_ = session_state::empty;
 };
 

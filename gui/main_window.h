@@ -9,6 +9,7 @@ class ExperimentsTab;
 class DatabaseTableTab;
 class ReportTab;
 class ProfilesTab;
+class RunHistoryTab;
 class QAction;
 class QLineEdit;
 class QPushButton;
@@ -74,5 +75,6 @@ private:
     ExperimentsTab* experimentsPage_;
     ReportTab* reportPage_;
     ProfilesTab* profilesPage_;
+    RunHistoryTab* runHistoryPage_;
     DatabaseTableTab *reactionsPage_, *speciesPage_, *alglibPage_, *rawProfilesPage_;
 };
