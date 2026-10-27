@@ -124,3 +124,25 @@ output compatibility. GUI tests verify that generation requires a completed run,
 needs no output folder, retains selections, and excludes deselected data from
 the first exported file. These are component and synthetic-workflow checks, not
 general solver validation.
+
+## Net reaction rates
+
+Profiles offers `Net_Species_Rate:<name>_(<model units>/s)` for each species and
+`Net_Reaction_Rate:<name>_(model_extent/s)` for each reaction. These are signed,
+limited source rates from the final axial timestep, divided by that experiment's
+timestep in seconds. Species rates sum stoichiometric coefficient times reaction
+extent rate; positive means production. Reaction rates are forward minus reverse;
+positive means forward. Extent uses the model's existing reaction convention and
+stoichiometric scaling, rather than an inferred concentration unit. Diffusive
+transport is excluded. Solver equations and limiting are unchanged.
+
+Live curves and saved curves use the model grid in micrometers. The Report tab
+includes these as optional profile types, initially unchecked; saved report
+formats retain their selections. Legacy exports and Legacy format omit them.
+
+Explicit Save profiles applies the additive, idempotent migration
+`migrations/011_profile_rate_samples.sql` inside the profile-save transaction.
+It preserves all existing experiment and profile data. Older saved runs have no
+rate curves; rerun and save to obtain them. Older applications can continue using
+their existing tables. To remove this feature's stored data, back up the database
+and drop only `profile_rate_samples`; subsequent saves recreate it.

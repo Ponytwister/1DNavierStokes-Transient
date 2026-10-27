@@ -731,6 +731,8 @@ void ProfilesTab::showLiveProfiles()
                  "Experimental difference", "Numeric difference", "Free dye", "Bound dye", "Total dye",
                  "Unbound beads", "Bound beads", "Total beads", "Error"};
     for (const auto& profile : liveProfiles_) {
+        for (const auto& rate : profile.rate_names)
+            if (!profiles_.contains(QString::fromStdString(rate))) profiles_ << QString::fromStdString(rate);
         const QString name = QString::fromStdString(profile.experiment_name);
         const QString wt = QString::fromStdString(profile.weight_percent);
         const QString id = name + QChar(0x1f) + wt;
@@ -769,6 +771,11 @@ void ProfilesTab::loadDatabase()
         databaseDatasetIds_ << name + QChar(0x1f) + wt + QChar(0x1f) + QString::number(runAtUtcUs);
     }
     profiles_ = {"Experimental", "Numeric model", "Experimental derivative", "Numeric derivative", "Experimental difference", "Numeric difference", "Free dye", "Bound dye", "Total dye", "Unbound beads", "Bound beads", "Total beads", "Error"};
+    sqlite3_stmt* rates = nullptr;
+    if (sqlite3_prepare_v2(db.get(), "SELECT DISTINCT PROFILE_TYPE FROM profile_rate_samples ORDER BY PROFILE_TYPE", -1, &rates, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(rates) == SQLITE_ROW) profiles_ << QString::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(rates, 0)));
+    }
+    sqlite3_finalize(rates);
     applyDatabaseDatasetFilters();
     refreshSeriesRows(); if (seriesRows_.isEmpty() && !datasetIds_.isEmpty()) addSeriesRow(); status_->setText(databaseDatasetIds_.isEmpty() ? "No saved model profiles are available in this database." : "Saved profiles from the selected database."); updatePlot();
 }
@@ -895,25 +902,32 @@ void ProfilesTab::updatePlot()
             case 10: values = &found->bound_beads; break;
             case 11: values = &found->total_beads; break;
             case 12: values = &found->error; break;
-            default: break;
+            default: {
+                const auto name = row->profile->currentText().toStdString();
+                const auto it = std::find(found->rate_names.begin(), found->rate_names.end(), name);
+                if (it != found->rate_names.end()) values = &found->rates.at(it - found->rate_names.begin());
+                break;
+            }
             }
             if (!values) continue;
-            const int count = static_cast<int>(std::min(found->x.size(), values->size()));
+            const auto& axis = row->profile->currentText().startsWith("Net_") ? found->rate_x : found->x;
+            const int count = static_cast<int>(std::min(axis.size(), values->size()));
             if (count < 2) continue;
             ProfileSeriesData data;
             const QString profile = row->profile->currentText();
             data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed();
             data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fillEnabled; data.yAxis = row->yAxis->currentIndex();
             data.x.reserve(count); data.y.reserve(count);
-            for (int i = 0; i < count; ++i) { data.x << found->x[static_cast<std::size_t>(i)]; data.y << (*values)[static_cast<std::size_t>(i)]; }
+            for (int i = 0; i < count; ++i) { data.x << axis[static_cast<std::size_t>(i)]; data.y << (*values)[static_cast<std::size_t>(i)]; }
             series << data;
         }
     } else {
         static const char* columns[] = {"Experimental", "Numeric", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Difference", "Numeric_Difference", "Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads", "Bound_Beads", "Total_Beads", "Error"};
         sqlite3* db = nullptr; const auto encoded = database_.toUtf8(); if (sqlite3_open_v2(encoded.constData(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
-            for (auto* row : seriesRows_) { const auto key = row->dataset->currentData().toString().split(QChar(0x1f)); const int col = profiles_.indexOf(row->profile->currentText()); if (key.size() != 3 || col < 0 || col >= int(std::size(columns))) continue;
-                const QByteArray query = QByteArray("SELECT X,") + columns[col] + " FROM profile_record_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=? AND RUN_AT_UTC_US=? ORDER BY X"; sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, query.constData(), -1, &stmt, nullptr) != SQLITE_OK) continue;
+            for (auto* row : seriesRows_) { const auto key = row->dataset->currentData().toString().split(QChar(0x1f)); const int col = profiles_.indexOf(row->profile->currentText()); const bool rate = row->profile->currentText().startsWith("Net_"); if (key.size() != 3 || col < 0 || (!rate && col >= int(std::size(columns)))) continue;
+                const QByteArray query = rate ? QByteArray("SELECT X,RATE FROM profile_rate_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=? AND RUN_AT_UTC_US=? AND PROFILE_TYPE=? ORDER BY X") : QByteArray("SELECT X,") + columns[col] + " FROM profile_record_samples WHERE EXPERIMENT_NAME=? AND WT_PERCENT=? AND RUN_AT_UTC_US=? ORDER BY X"; sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, query.constData(), -1, &stmt, nullptr) != SQLITE_OK) continue;
                 const auto e = key[0].toUtf8(), w = key[1].toUtf8(), timestamp = key[2].toUtf8(); sqlite3_bind_text(stmt, 1, e.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 2, w.constData(), -1, SQLITE_TRANSIENT); sqlite3_bind_int64(stmt, 3, timestamp.toLongLong());
+                if (rate) { const auto name = row->profile->currentText().toUtf8(); sqlite3_bind_text(stmt, 4, name.constData(), -1, SQLITE_TRANSIENT); }
                 ProfileSeriesData data; const QString profile = row->profile->currentText(); data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed(); data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fillEnabled; data.yAxis = row->yAxis->currentIndex();
                 while (sqlite3_step(stmt) == SQLITE_ROW) { if (sqlite3_column_type(stmt, 1) == SQLITE_NULL) continue; const auto* txt = sqlite3_column_text(stmt, 1); bool valid = false; const double y = txt ? QString::fromUtf8(reinterpret_cast<const char*>(txt)).trimmed().toDouble(&valid) : 0; const double x = sqlite3_column_double(stmt, 0); if (valid && std::isfinite(x) && std::isfinite(y)) { data.x << x; data.y << y; } }
                 sqlite3_finalize(stmt); if (data.x.size() >= 2) series << data;

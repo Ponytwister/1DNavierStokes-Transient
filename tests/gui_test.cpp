@@ -52,6 +52,25 @@ TEST(Report, PreservesUnitsNamesPrecisionAndUnequalProfileLengths)
     EXPECT_THROW(report_format::parse(header + "1  2\n"), std::runtime_error);
 }
 
+TEST(Report, NetRatesAreOptionalAndExcludedByLegacyFormat)
+{
+    ReportTab tab;
+    ASSERT_TRUE(tab.loadGenerated(
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  0  1\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  0  1\n"
+        "1  1  1  1  1  1  1  -  Net_Species_Rate:A_(umol/s)  -2  -3\n"
+        "1  1  1  1  1  1  1  -  Net_Reaction_Rate:R_(model_extent/s)  2  3\n", "rates", "rates.txt"));
+    auto* types = tab.findChild<QListWidget*>("reportTypes");
+    ASSERT_NE(types, nullptr);
+    ASSERT_EQ(types->count(), 2);
+    for (int i = 0; i < types->count(); ++i) {
+        EXPECT_EQ(types->item(i)->checkState(), Qt::Unchecked);
+        types->item(i)->setCheckState(Qt::Checked);
+    }
+    tab.applyLegacyFormat();
+    for (int i = 0; i < types->count(); ++i) EXPECT_EQ(types->item(i)->checkState(), Qt::Unchecked);
+}
+
 TEST(Report, OpensCommaAndTabDelimitedReports)
 {
     using namespace report_format;

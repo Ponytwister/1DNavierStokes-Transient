@@ -38,6 +38,9 @@ struct live_profile_snapshot {
     std::vector<double> unbound_beads;
     std::vector<double> bound_beads;
     std::vector<double> total_beads;
+    std::vector<double> rate_x;
+    std::vector<std::string> rate_names;
+    std::vector<std::vector<double>> rates;
 };
 
 struct progress_event {

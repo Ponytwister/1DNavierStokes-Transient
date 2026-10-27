@@ -163,6 +163,12 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             profile_names.push_back("Bound_Beads_(" + PS_beads_ptr->input_units + ")");
             for (const auto& species : run_ptr->species)
                 profile_names.push_back("Species:" + species.name + "_(" + species.model_units + ")");
+            if (!exp_ptr->species_net_rates.empty()) {
+                for (const auto& species : run_ptr->species)
+                    profile_names.push_back("Net_Species_Rate:" + species.name + "_(" + species.model_units + "/s)");
+                for (const auto& reaction : run_ptr->reactions)
+                    profile_names.push_back("Net_Reaction_Rate:" + reaction.name + "_(model_extent/s)");
+            }
         }
         const auto& model = exp_ptr->model_profile;
         const auto& experiment = exp_ptr->experimental_profile;
@@ -347,7 +353,10 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                         break;
                     }
                     default: // Additional species profiles stay in declared model units.
-                        fout << out.at(j - 14).at(x);
+                        if (j - 14 < run_ptr->number_of_species) fout << out.at(j - 14).at(x);
+                        else if (j - 14 - run_ptr->number_of_species < run_ptr->number_of_species)
+                            fout << exp_ptr->species_net_rates.at(j - 14 - run_ptr->number_of_species).at(x);
+                        else fout << exp_ptr->reaction_net_rates.at(j - 14 - 2 * run_ptr->number_of_species).at(x);
                         break;
                 }
                 fout << "    ";
@@ -1877,6 +1886,34 @@ write_model_profile_to_db(parameters_t& p, sqlite3* db) //reading data using cal
         }
     }
 
+    // Additive migration 011: older databases acquire rate storage only on explicit save.
+    execute_sql(p, db, "CREATE TABLE IF NOT EXISTS profile_rate_samples (RUN_AT_UTC_US INTEGER NOT NULL, EXPERIMENT_NAME TEXT NOT NULL, WT_PERCENT TEXT NOT NULL, PROFILE_TYPE TEXT NOT NULL, X REAL NOT NULL, RATE REAL NOT NULL, PRIMARY KEY(RUN_AT_UTC_US, EXPERIMENT_NAME, WT_PERCENT, PROFILE_TYPE, X))", 0, errMsg.out());
+    sqlite3_stmt* rateStatement = nullptr;
+    if (sqlite3_prepare_v2(db, "INSERT INTO profile_rate_samples VALUES (?, ?, ?, ?, ?, ?)", -1, &rateStatement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db));
+    struct rate_statement_guard { sqlite3_stmt* s; ~rate_statement_guard() { sqlite3_finalize(s); } } rateGuard{rateStatement};
+    for (const auto& exp : p.experiments) {
+        auto saveRates = [&](const auto& rates, bool species) {
+            for (std::size_t k = 0; k < rates.size(); ++k) {
+                const auto name = species
+                    ? "Net_Species_Rate:" + exp.run->species[k].name + "_(" + exp.run->species[k].model_units + "/s)"
+                    : "Net_Reaction_Rate:" + exp.run->reactions[k].name + "_(model_extent/s)";
+                for (std::size_t x = 0; x < rates[k].size(); ++x) {
+                    sqlite3_bind_int64(rateStatement, 1, run_at_utc_us);
+                    sqlite3_bind_text(rateStatement, 2, exp.run->name.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(rateStatement, 3, exp.second_name.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(rateStatement, 4, name.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_double(rateStatement, 5, x * exp.run->W * 1e6 / p.X);
+                    sqlite3_bind_double(rateStatement, 6, rates[k][x]);
+                    if (sqlite3_step(rateStatement) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db));
+                    sqlite3_reset(rateStatement);
+                }
+            }
+        };
+        saveRates(exp.species_net_rates, true);
+        saveRates(exp.reaction_net_rates, false);
+    }
+
     transaction.commit();
     pop_report(p, 1);
     add_finishing_report(p, 3, "Done");
@@ -2320,6 +2357,8 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
     double* old_solution_ptr = old_solution;
     //The 3 Concentration Arrays.
     auto& species_out = exp_ptr->species_out;
+    exp_ptr->species_net_rates.assign(species_count, std::vector<double>(X, 0.0));
+    exp_ptr->reaction_net_rates.assign(reaction_count, std::vector<double>(X, 0.0));
     //pop_and_add(p, 0, "row:" + std::to_string(row) + "_coef");
 
     
@@ -2429,6 +2468,12 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
                 }
                 //assert (reaction_rate[run_ptr->FITC_Bead_1] >= 0.0d);
                 //assert (specie_rate[run_ptr->FITC] < 0.0d);
+            }
+            if (z == p.Z - 1) {
+                for (int reaction = 0; reaction < reaction_count; ++reaction)
+                    exp_ptr->reaction_net_rates[reaction][i] = reaction_rate[reaction] / run_ptr->dt;
+                for (int specie = 0; specie < species_count; ++specie)
+                    exp_ptr->species_net_rates[specie][i] = p.disable_reactions ? 0.0 : specie_rate[specie] / run_ptr->dt;
             }
             for (int specie = 0; specie < species_count; specie++) {
                 E[specie * X + i] = available[specie] + specie_rate[specie];
@@ -2766,6 +2811,15 @@ alglib_solver(const alglib::real_1d_array &control_parameters, alglib::real_1d_a
             tsensor_workflow::live_profile_snapshot snapshot;
             snapshot.experiment_name = run->name;
             snapshot.weight_percent = experiment.second_name;
+            for (int x = 0; x < p.X; ++x) snapshot.rate_x.push_back(x * run->W * 1e6 / p.X);
+            for (std::size_t i = 0; i < experiment.species_net_rates.size(); ++i) {
+                snapshot.rate_names.push_back("Net_Species_Rate:" + run->species[i].name + "_(" + run->species[i].model_units + "/s)");
+                snapshot.rates.push_back(experiment.species_net_rates[i]);
+            }
+            for (std::size_t i = 0; i < experiment.reaction_net_rates.size(); ++i) {
+                snapshot.rate_names.push_back("Net_Reaction_Rate:" + run->reactions[i].name + "_(model_extent/s)");
+                snapshot.rates.push_back(experiment.reaction_net_rates[i]);
+            }
             snapshot.x.reserve(sample_count);
             snapshot.experimental.reserve(sample_count);
             snapshot.numeric.reserve(sample_count);

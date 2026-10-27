@@ -542,7 +542,7 @@ bool ReportTab::loadSource(const QString& text, bool preserveSelections)
         if (!types.contains(type)) types.push_back(type);
     }
     for (const auto& type : types) {
-        const auto defaultState = type == "Raw_Profile" || type == "Rescaled_Raw_Profile"
+        const auto defaultState = type == "Raw_Profile" || type == "Rescaled_Raw_Profile" || type.startsWith("Net_Species_Rate:") || type.startsWith("Net_Reaction_Rate:")
             ? Qt::Unchecked : Qt::Checked;
         add(types_, type, typeSelection.value(type, defaultState));
     }
@@ -607,7 +607,7 @@ void ReportTab::applyFormatToControls(const QJsonObject& settings)
             // Older reports mislabeled analytical_zero as Bound_Beads_(wt%).
             // Keep it as its literal imported profile instead of treating it as
             // part of the current Legacy preset.
-            if (name.startsWith("Bound_Beads_(") || name.startsWith("Species:")) continue;
+            if (name.startsWith("Bound_Beads_(") || name.startsWith("Species:") || name.startsWith("Net_")) continue;
             if (!legacyTypes.contains(name)) legacyTypes.push_back(name);
         }
         for (int i = 0; i < blocks_->count(); ++i) blocks_->item(i)->setCheckState(Qt::Checked);

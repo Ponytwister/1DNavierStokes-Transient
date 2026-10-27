@@ -206,6 +206,8 @@ struct experiment_run_struct : channel_dimensions {
 
 struct experiment_struct {
     std::vector<std::vector<double>> species_out;
+    // Final timestep, limited net source rates per second on the model grid.
+    std::vector<std::vector<double>> species_net_rates, reaction_net_rates;
     int beginning_of_channel;
     int end_of_channel;
     int window_size;

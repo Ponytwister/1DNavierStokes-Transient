@@ -993,4 +993,59 @@ TEST(Workflow, InvalidInputsFailWithoutResultsAndAllowFreshRun)
     ASSERT_TRUE(completed.session);
     verify_solution(*completed.session, *completed.result);
 }
+
+TEST(Workflow, NetRatesMatchSingleStepMassActionAndPersistWithoutLegacyRows) {
+
+    fixture files;
+
+    run_session session(files.database);
+
+    sql(session.database(), "UPDATE model_controls SET value='' WHERE criterion='universal_solve_for'; "
+        "UPDATE model_controls SET value='1' WHERE criterion='length/time resolution (Z)'; "
+        "UPDATE reactions SET Ks='0.000001 1'");
+    session.load_inputs();
+
+    auto& p = session.parameters();
+    p.disable_reverse_reactions = true;
+    p.capture_live_profiles = true;
+    session.run();
+    for (auto& exp : p.experiments) {
+        auto& run = *exp.run;
+        std::vector<double> inlet(2 * p.X * run.number_of_species);
+        set_inlet_conc(p, &exp, inlet.data());
+        ASSERT_EQ(exp.reaction_net_rates.size(), 1u);
+        for (int x = 0; x < p.X; ++x) {
+            // A + B -> C, one step: forward extent rate k[A][B].
+            const double expected = 1e-6 * inlet[run.FITC * p.X + x] * inlet[run.PS_beads * p.X + x];
+            near(exp.reaction_net_rates[0][x], expected);
+            near(exp.species_net_rates[run.FITC][x], -expected);
+            near(exp.species_net_rates[run.PS_beads][x], -expected);
+            near(exp.species_net_rates[run.Bound_Dye_1][x], expected);
+        }
+    }
+    EXPECT_NE(session.generate_report().find("Net_Species_Rate:"), std::string::npos);
+    EXPECT_NE(session.generate_report().find("Net_Reaction_Rate:"), std::string::npos);
+    const auto path = session.export_results(files.root / "legacy-rates");
+    std::ifstream legacyFile(path);
+    const std::string legacy(std::istreambuf_iterator<char>(legacyFile), {});
+    EXPECT_EQ(legacy.find("Net_"), std::string::npos);
+    const auto oldRecords = scalar(session.database(), "SELECT count(*) FROM profile_records");
+    session.save_model_profiles();
+    near(scalar(session.database(), "SELECT count(*) FROM profile_rate_samples"), p.experiments.size() * 4 * p.X);
+    near(scalar(session.database(), "SELECT count(*) FROM profile_records"), oldRecords + p.experiments.size());
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        std::ifstream migration(std::filesystem::path(TSENSOR_FIXTURE_DIR) / "../../migrations/011_profile_rate_samples.sql");
+        sql(session.database(), std::string(std::istreambuf_iterator<char>(migration), {}));
+    }
+    near(scalar(session.database(), "SELECT count(*) FROM profile_rate_samples"), p.experiments.size() * 4 * p.X);
+    run_session disabled(files.database);
+    disabled.load_inputs();
+    disabled.parameters().disable_reactions = true;
+    disabled.run();
+    for (const auto& exp : disabled.parameters().experiments) {
+        for (const auto& values : exp.species_net_rates) for (double v : values) near(v, 0);
+        for (const auto& values : exp.reaction_net_rates) for (double v : values) near(v, 0);
+    }
+}
+
 } // namespace
