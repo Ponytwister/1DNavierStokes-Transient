@@ -39,7 +39,10 @@ output with tabs between cells; paste using Excel's **Paste Special > Text** to
 keep your sheet's formatting. **Export selected report...** writes the same data
 to a UTF-8 `.tsv` or `.txt` file for tab-delimited import. No data selection disables
 copy/export. **Export legacy report** retains the original 13-row text format,
-including its historical analytical-zero row labeled as bound beads.
+with its analytical-zero row labeled `Analytical_Zero_(<dye model units>)`.
+Save a report selection with **Save format...** in the Report tab. A setup file
+can reference a `.navier-report.json` format file so opening the setup restores
+that report selection for the next run.
 Opening a file resets selections to All and keeps formatting choices. Generating
 again retains matching selections; newly available types default to selected.
 Report settings do not change the source data or database. Excel interprets

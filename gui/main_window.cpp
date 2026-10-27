@@ -422,7 +422,10 @@ void MainWindow::savePreset(bool saveAs) {
             ? QFileDialog::getSaveFileName(this, "Save preset", presetFilename_, "Navier setup (*.navier.json)")
             : presetFilename_;
         if (filename.isEmpty()) return;
-        setup_file::save(filename, {database_->text().trimmed(), output_->text().trimmed(), snapshot.rows, profilesPage_->settings()});
+        const auto reportFormatFile = QFileDialog::getOpenFileName(this, "Choose report format for setup", reportPage_->formatFilename(),
+            "Report formats (*.navier-report.json);;JSON files (*.json)");
+        setup_file::save(filename, {database_->text().trimmed(), output_->text().trimmed(), snapshot.rows,
+            profilesPage_->settings(), reportFormatFile.isEmpty() ? reportPage_->formatFilename() : reportFormatFile});
         presetFilename_ = filename;
         if (controlsEditor_) controlsEditor_->configurePresetButton("Update preset", [this] { savePreset(false); });
         setStatus("Preset saved: " + filename);
@@ -447,6 +450,8 @@ void MainWindow::openSetup() {
                 (model_controls::kind(original.rows[i].name) == model_controls::Kind::unknown && original.rows[i] != setup.controls[i]))
                 throw std::runtime_error("Setup controls do not match this database.");
         }
+        if (!setup.reportFormatFile.isEmpty() && !reportPage_->loadFormatFile(setup.reportFormatFile))
+            throw std::runtime_error("Could not load the report format referenced by this setup.");
         discardControlsEditor();
         clearResult();
         database_->setText(setup.database); output_->setText(setup.outputDirectory);

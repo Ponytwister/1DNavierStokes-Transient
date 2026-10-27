@@ -16,6 +16,7 @@ namespace {
 void validate(const Setup& setup) {
     for (const auto& path : {setup.database, setup.outputDirectory})
         if (path.trimmed().isEmpty() || path.contains(QChar::Null)) fail("Setup paths must not be empty or contain NUL.");
+    if (setup.reportFormatFile.contains(QChar::Null)) fail("Report format path cannot contain NUL.");
     QSet<QString> names;
     for (const auto& row : setup.controls) {
         if (row.name.isEmpty() || names.contains(row.name)) fail("Empty or duplicate model control name.");
@@ -35,7 +36,8 @@ void save(const QString& filename, const Setup& setup) {
         controls.append(QJsonObject{{"name", row.name}, {"value", row.value ? QJsonValue(*row.value) : QJsonValue(QJsonValue::Null)}});
     const auto bytes = QJsonDocument(QJsonObject{{"format", "navier-setup"}, {"version", 1},
         {"database", QFileInfo(setup.database).absoluteFilePath()},
-        {"outputDirectory", QFileInfo(setup.outputDirectory).absoluteFilePath()}, {"controls", controls}, {"profiles", setup.profiles}}).toJson();
+        {"outputDirectory", QFileInfo(setup.outputDirectory).absoluteFilePath()}, {"controls", controls}, {"profiles", setup.profiles},
+        {"reportFormatFile", setup.reportFormatFile.trimmed().isEmpty() ? QString{} : QFileInfo(setup.reportFormatFile).absoluteFilePath()}}).toJson();
     QSaveFile file(filename);
     if (!file.open(QIODevice::WriteOnly)) fail(file.errorString());
     if (file.write(bytes) != bytes.size()) fail(file.errorString());
@@ -53,7 +55,8 @@ Setup load(const QString& filename) {
     if (!object["database"].isString() || !object["outputDirectory"].isString() || !object["controls"].isArray())
         fail("Setup requires database, outputDirectory, and controls fields.");
     if (!object["profiles"].isUndefined() && !object["profiles"].isObject()) fail("Invalid profile display settings.");
-    Setup setup{object["database"].toString(), object["outputDirectory"].toString(), {}, object["profiles"].toObject()};
+    if (!object["reportFormatFile"].isUndefined() && !object["reportFormatFile"].isString()) fail("Invalid report format path.");
+    Setup setup{object["database"].toString(), object["outputDirectory"].toString(), {}, object["profiles"].toObject(), object["reportFormatFile"].toString()};
     for (const auto value : object["controls"].toArray()) {
         if (!value.isObject()) fail("Invalid control row.");
         const auto row = value.toObject();
@@ -64,6 +67,7 @@ Setup load(const QString& filename) {
     const auto directory = QFileInfo(filename).absoluteDir();
     setup.database = QDir::cleanPath(directory.absoluteFilePath(setup.database));
     setup.outputDirectory = QDir::cleanPath(directory.absoluteFilePath(setup.outputDirectory));
+    if (!setup.reportFormatFile.isEmpty()) setup.reportFormatFile = QDir::cleanPath(directory.absoluteFilePath(setup.reportFormatFile));
     std::sort(setup.controls.begin(), setup.controls.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
     return setup;
 }

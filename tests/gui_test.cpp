@@ -374,6 +374,92 @@ TEST(Report, SplitMetadataPreviewClipboardAndFileAgreeForImportedAndGeneratedSou
     }
 }
 
+TEST(Report, ProfileMetadataAssignmentsReachPreviewAndClipboard)
+{
+    const QString source =
+        "res_time  b  k  eq  d  c  s  D-A  profile_type  0\n"
+        "sec  b  k  eq  d  c  s  deriv  Channel_Width_(um)->  1\n"
+        "1  1  3  4  5  6  7  12.5  Experimental_Derivative  100\n"
+        "1  3  3  4  5  6  7  22.5  Numeric_Derivative  200\n"
+        "1  2  3  4  5  6  7  -  FITC  300\n\n";
+    ReportTab tab;
+    ASSERT_TRUE(tab.loadGenerated(source, "mapping test", "mapping.txt"));
+    auto* targets = tab.findChild<QTableWidget*>("reportMetadataTargets");
+    auto* columns = tab.findChild<QListWidget*>("reportColumns");
+    auto* types = tab.findChild<QListWidget*>("reportTypes");
+    ASSERT_NE(targets, nullptr); ASSERT_NE(columns, nullptr); ASSERT_NE(types, nullptr);
+    int fitcRow = -1;
+    for (int row = 0; row < targets->rowCount(); ++row)
+        if (targets->item(row, 0)->text() == "FITC") fitcRow = row;
+    ASSERT_GE(fitcRow, 0);
+    auto* fitcMapping = qobject_cast<QComboBox*>(targets->cellWidget(fitcRow, 1));
+    ASSERT_NE(fitcMapping, nullptr);
+    EXPECT_GE(fitcMapping->findData(1), 0);  // source metadata field b
+    EXPECT_GE(fitcMapping->findData(9), 0);  // exp_DA
+    EXPECT_EQ(fitcMapping->findData(7), -1); // stacked metadata is not a mapping option
+
+    for (int i = 0; i < types->count(); ++i)
+        types->item(i)->setCheckState(
+            types->item(i)->text() == "FITC" || types->item(i)->text() == "Numeric_Derivative"
+                ? Qt::Checked : Qt::Unchecked);
+    tab.findChild<QCheckBox*>("reportSamples")->setChecked(false);
+    auto setColumn = [&](int field, bool checked) {
+        for (int i = 0; i < columns->count(); ++i)
+            if (columns->item(i)->data(Qt::UserRole).toInt() == field)
+                columns->item(i)->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    };
+    auto copy = [&] {
+        tab.findChild<QPushButton*>("copyReportButton")->click();
+        return QApplication::clipboard()->text();
+    };
+
+    // Mapping to a checked ordinary metadata field puts it in its own column
+    // and in Stacked metadata on FITC.
+    for (int i = 0; i < columns->count(); ++i) setColumn(columns->item(i)->data(Qt::UserRole).toInt(), false);
+    setColumn(1, true); setColumn(7, true); setColumn(8, true);
+    fitcMapping->setCurrentIndex(fitcMapping->findData(1));
+    auto output = copy();
+    EXPECT_TRUE(output.contains("b\tStacked metadata\tprofile_type"));
+    EXPECT_TRUE(output.contains("2\t2\tFITC"));
+    EXPECT_TRUE(output.contains("3\t22.5\tNumeric_Derivative"));
+
+    // The same row mapping works for a collected D-A metadata value.
+    setColumn(7, true); setColumn(1, false); setColumn(9, true);
+    fitcMapping->setCurrentIndex(fitcMapping->findData(9));
+    output = copy();
+    EXPECT_TRUE(output.contains("Stacked metadata\tprofile_type\texp_DA"));
+    EXPECT_TRUE(output.contains("exp_DA, model_DA\tChannel_Width_(um)->\t-"));
+    EXPECT_TRUE(output.contains("12.5\tFITC\t12.5"));
+    EXPECT_TRUE(output.contains("22.5\tNumeric_Derivative\t12.5"));
+
+    // Its checkbox independently hides the separate column; the assignment
+    // continues to place the value in Stacked metadata.
+    setColumn(9, false);
+    output = copy();
+    EXPECT_FALSE(output.contains("Stacked metadata\tprofile_type\texp_DA"));
+    EXPECT_TRUE(output.contains("Stacked metadata\tprofile_type"));
+    EXPECT_TRUE(output.contains("12.5\tFITC"));
+
+    tab.applyLegacyFormat();
+    for (int field = 9; field < 15; ++field) {
+        bool unchecked = false;
+        for (int i = 0; i < columns->count(); ++i)
+            if (columns->item(i)->data(Qt::UserRole).toInt() == field)
+                unchecked = columns->item(i)->checkState() == Qt::Unchecked;
+        EXPECT_TRUE(unchecked) << "legacy metadata field " << field;
+    }
+    for (int row = 0; row < targets->rowCount(); ++row) {
+        auto* combo = qobject_cast<QComboBox*>(targets->cellWidget(row, 1));
+        ASSERT_NE(combo, nullptr);
+        const auto profile = targets->item(row, 0)->text();
+        const QMap<QString, int> defaults = {
+            {"Experimental_Derivative", 9}, {"Numeric_Derivative", 10},
+            {"Experimental_Profile", 11}, {"Numeric_Model_Profile", 12},
+            {"Experimental_Difference", 13}, {"Numeric_Difference", 14}};
+        if (defaults.contains(profile)) EXPECT_EQ(combo->currentData().toInt(), defaults.value(profile));
+    }
+}
+
 template<class T> T* widget(QWidget& window, const char* name) {
     auto* result = window.findChild<T*>(name);
     if (!result) throw std::runtime_error(name);

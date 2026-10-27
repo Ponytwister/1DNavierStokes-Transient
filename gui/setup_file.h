@@ -7,6 +7,7 @@ struct Setup {
     QString database, outputDirectory;
     std::vector<model_controls::Row> controls;
     QJsonObject profiles;
+    QString reportFormatFile;
 };
 // Paths are absolute when saved; relative paths in files resolve beside the file.
 void save(const QString& filename, const Setup& setup);

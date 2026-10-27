@@ -22,6 +22,11 @@
 #include <QSplitter>
 #include <QSet>
 #include <QMap>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QSaveFile>
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
@@ -94,7 +99,9 @@ QString profileType(const QString& label)
 {
     for (const auto& type : {QString("Rescaled_Raw_Profile"), QString("Raw_Profile"),
                              QString("Normalized_Profile"), QString("Experimental_Profile"),
-                             QString("Numeric_Model_Profile")})
+                             QString("Numeric_Model_Profile"), QString("Experimental_Derivative"),
+                             QString("Numeric_Derivative"), QString("Experimental_Difference"),
+                             QString("Numeric_Difference")})
         if (label == type || label.endsWith("_" + type)) return type;
     return label;
 }
@@ -110,6 +117,13 @@ static int metricIndex(const QString& label)
     const QStringList types = {"Experimental_Derivative", "Numeric_Derivative",
         "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference"};
     return types.indexOf(profileType(label));
+}
+
+static QMap<QString, int> defaultProfileMetadata()
+{
+    return {{"Experimental_Derivative", 9}, {"Numeric_Derivative", 10},
+            {"Experimental_Profile", 11}, {"Numeric_Model_Profile", 12},
+            {"Experimental_Difference", 13}, {"Numeric_Difference", 14}};
 }
 
 QStringList blockNames(const Rows& rows)
@@ -213,7 +227,28 @@ Rows select(const Rows& rows, const Options& options)
             if (!rows[i].isEmpty() && rows[i][0] == "res_time") usedHeaders.insert(i);
     keep.unite(usedHeaders);
     Rows result;
-    if (options.columns.isEmpty() && !options.samples) return result;
+    if (options.orderedColumns.isEmpty() && options.columns.isEmpty() && !options.samples) return result;
+    QList<int> outputFields = options.orderedColumns;
+    if (outputFields.isEmpty()) {
+        for (const int column : options.columns) {
+            if (column == 7 && options.metadataLayout != MetadataLayout::stacked) {
+                for (const int metric : options.metrics) outputFields.push_back(9 + metric);
+            } else outputFields.push_back(column);
+        }
+    }
+    QSet<int> mappedOptions;
+    for (auto mapping = options.profileMetadata.cbegin(); mapping != options.profileMetadata.cend(); ++mapping)
+        if (options.types.contains(mapping.key()) && mapping.value() >= 0 && mapping.value() < 15 && mapping.value() != 7)
+            mappedOptions.insert(mapping.value());
+    QStringList stackedMetadataNames;
+    const auto metadataOrder = options.metadataFieldOrder.isEmpty() ? outputFields : options.metadataFieldOrder;
+    for (const int field : metadataOrder)
+        if (field != 7 && mappedOptions.contains(field)) {
+            const QString name = field >= 9 ? metricNames()[field - 9] : rows.front()[field];
+            if (!stackedMetadataNames.contains(name)) stackedMetadataNames.push_back(name);
+        }
+    const QString stackedMetadataUnits = stackedMetadataNames.isEmpty()
+        ? QString("-") : stackedMetadataNames.join(", ");
     for (int i = 0; i < rows.size(); ++i) {
         if (!keep.contains(i)) continue;
         const auto& row = rows[i];
@@ -229,24 +264,42 @@ Rows select(const Rows& rows, const Options& options)
             }
             output.push_back(value);
         };
-        for (const int column : options.columns) {
-            if (column < 0 || column >= 9) continue;
-            if (column == 7 && options.metadataLayout != MetadataLayout::stacked) {
-                for (const int metric : options.metrics) {
-                    if (metric < 0 || metric >= 6) continue;
-                    QString value = "-";
-                    if (row[0] == "res_time") value = metricNames()[metric];
-                    else if (row[0] == "sec") value = "-"; // No undocumented units inferred from "deriv".
-                    else if (options.metadataLayout == MetadataLayout::separateBlock && rowBlocks[i] >= 0)
-                        value = blockMetrics[rowBlocks[i]][metric];
-                    appendValue(value, true);
-                }
-            } else appendValue(row[column], column != 8 && column != 5);
+        for (const int field : outputFields) {
+            if (field >= 9 && field < 15) {
+                const int metric = field - 9;
+                QString value = "-";
+                if (row[0] == "res_time") value = metricNames()[metric];
+                else if (row[0] != "sec" && rowBlocks[i] >= 0)
+                    value = blockMetrics[rowBlocks[i]][metric];
+                appendValue(value, true);
+                continue;
+            }
+            if (field < 0 || field >= 9) continue;
+            QString value = field == 7 && row[0] == "res_time" ? QString("Stacked metadata") :
+                field == 7 && row[0] == "sec" ? stackedMetadataUnits : row[field];
+            if (field == 7 && row[0] != "res_time" && row[0] != "sec" &&
+                options.metadataLayout == MetadataLayout::mapped) {
+                const int assignedField = options.profileMetadata.value(profileType(row[8]), -1);
+                if (assignedField >= 0 && assignedField < 9)
+                    value = row[assignedField];
+                else if (assignedField >= 9 && assignedField < 15 && rowBlocks[i] >= 0)
+                    value = blockMetrics[rowBlocks[i]][assignedField - 9];
+                else
+                    value = "-";
+            }
+            if (options.legacyStyle && field == 8 && value.startsWith("Total_Beads_("))
+                value = "Total_Beads_(wt%)";
+            appendValue(value, field != 8 && field != 5);
         }
         if (options.samples) for (int column = 9; column < row.size(); ++column) appendValue(row[column], true);
         result.push_back(output);
     }
     return result;
+}
+
+QJsonObject legacyFormat()
+{
+    return {{"preset", "legacy"}};
 }
 }
 
@@ -278,7 +331,7 @@ public:
 ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    auto* note = new QLabel("Use current run to generate a report directly from completed results, or open an existing report. Choose data and formatting before exporting. The preview, exported file and Excel copy use the same selections.");
+    auto* note = new QLabel("Use current run to generate a report directly from completed results, or open an existing report. Choose data and formatting before exporting. Use Legacy format for the historical profile set and layout. Save or load report formats to reuse these selections.");
     note->setWordWrap(true); layout->addWidget(note);
     auto* buttons = new QHBoxLayout;
     auto* open = new QPushButton("Open report..."); open->setObjectName("openReportButton");
@@ -286,6 +339,19 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     copy_ = new QPushButton("Copy for Excel"); copy_->setObjectName("copyReportButton");
     save_ = new QPushButton("Export selected report..."); save_->setObjectName("saveReportButton");
     buttons->addWidget(generate_); buttons->addWidget(open); buttons->addWidget(copy_); buttons->addWidget(save_); buttons->addStretch();
+    auto* legacy = new QPushButton("Legacy format"); legacy->setObjectName("legacyReportFormatButton");
+    auto* loadFormat = new QPushButton("Load format..."); loadFormat->setObjectName("loadReportFormatButton");
+    auto* saveFormat = new QPushButton("Save format..."); saveFormat->setObjectName("saveReportFormatButton");
+    buttons->addWidget(legacy); buttons->addWidget(loadFormat); buttons->addWidget(saveFormat);
+    connect(legacy, &QPushButton::clicked, this, [this] { applyLegacyFormat(); });
+    connect(loadFormat, &QPushButton::clicked, this, [this] {
+        const auto name = QFileDialog::getOpenFileName(this, "Load report format", formatFilename_, "Report formats (*.navier-report.json);;JSON files (*.json)");
+        if (!name.isEmpty()) loadFormatFile(name);
+    });
+    connect(saveFormat, &QPushButton::clicked, this, [this] {
+        const auto name = QFileDialog::getSaveFileName(this, "Save report format", formatFilename_, "Report formats (*.navier-report.json)");
+        if (!name.isEmpty()) saveFormatFile(name);
+    });
     connect(generate_, &QPushButton::clicked, this, [this] { if (generateRequested) generateRequested(); });
     layout->addLayout(buttons);
     auto* choices = new QHBoxLayout;
@@ -303,7 +369,10 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
             });
         }
         box->addLayout(actions); choices->addWidget(group);
-        connect(list, &QListWidget::itemChanged, this, [this] { updatePreview(); });
+        connect(list, &QListWidget::itemChanged, this, [this, list] {
+            if (list == types_) updateMetricTargetStyles();
+            updatePreview();
+        });
     };
     makeList("Experiment / profile blocks", "reportBlocks", blocks_);
     makeList("Profile types", "reportTypes", types_);
@@ -337,6 +406,38 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
         });
     }
     makeList("Metadata columns", "reportColumns", columns_);
+    columns_->setDragDropMode(QAbstractItemView::InternalMove);
+    columns_->setDefaultDropAction(Qt::MoveAction);
+    columns_->setToolTip("Drag items to change output-column order, or select an item and use Move up / Move down.");
+    auto* columnActions = new QHBoxLayout;
+    for (const int direction : {-1, 1}) {
+        auto* button = new QPushButton(direction < 0 ? "Move up" : "Move down");
+        button->setObjectName(QString("reportColumns%1").arg(direction < 0 ? "Up" : "Down"));
+        columnActions->addWidget(button);
+        auto enabled = [this, button, direction] {
+            const int row = columns_->currentRow();
+            button->setEnabled(row >= 0 && row + direction >= 0 && row + direction < columns_->count());
+        };
+        connect(columns_, &QListWidget::currentRowChanged, this, enabled);
+        connect(button, &QPushButton::clicked, this, [this, direction, enabled] {
+            const int row = columns_->currentRow(), target = row + direction;
+            if (row < 0 || target < 0 || target >= columns_->count()) return;
+            auto* item = columns_->takeItem(row);
+            columns_->insertItem(target, item); columns_->setCurrentItem(item);
+            columnOrder_.clear();
+            for (int i = 0; i < columns_->count(); ++i)
+                columnOrder_.push_back(columns_->item(i)->data(Qt::UserRole).toInt());
+            updatePreview(); enabled();
+        });
+    }
+    static_cast<QVBoxLayout*>(columns_->parentWidget()->layout())->addLayout(columnActions);
+    auto rememberColumnOrder = [this] {
+        columnOrder_.clear();
+        for (int i = 0; i < columns_->count(); ++i)
+            columnOrder_.push_back(columns_->item(i)->data(Qt::UserRole).toInt());
+        updatePreview();
+    };
+    connect(columns_->model(), &QAbstractItemModel::rowsMoved, this, rememberColumnOrder);
     layout->addLayout(choices);
     auto* format = new QHBoxLayout;
     auto makeCheck = [&](const QString& title, const char* name, QCheckBox*& check) {
@@ -348,13 +449,13 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     makeCheck("Units / axes", "reportUnits", units_);
     makeCheck("Blank rows", "reportBlankRows", blankRows_);
     layout->addLayout(format);
-    auto* metadata = new QHBoxLayout;
-    metadata->addWidget(new QLabel("D-A / integrals:"));
-    metadataLayout_ = new QComboBox; metadataLayout_->setObjectName("reportMetadataLayout");
-    metadataLayout_->addItems({"Stacked in D-A", "Separate columns — all values per block"});
-    metadataLayout_->setToolTip("Split the six D-A/integral fields into named columns. Missing source values remain '-'.");
-    metadata->addWidget(metadataLayout_); metadata->addStretch(); layout->addLayout(metadata);
-    connect(metadataLayout_, &QComboBox::currentIndexChanged, this, [this] { rebuildColumns(); updatePreview(); });
+    metricTargets_ = new QTableWidget(0, 2, this);
+    metricTargets_->setObjectName("reportMetadataTargets");
+    metricTargets_->setHorizontalHeaderLabels({"Profile row", "Metadata field"});
+    metricTargets_->verticalHeader()->hide();
+    metricTargets_->horizontalHeader()->setStretchLastSection(true);
+    metricTargets_->setMaximumHeight(250);
+    layout->addWidget(metricTargets_);
     auto* numeric = new QHBoxLayout;
     numeric->addWidget(new QLabel("Numbers:"));
     numberFormat_ = new QComboBox; numberFormat_->setObjectName("reportNumberFormat");
@@ -362,7 +463,10 @@ ReportTab::ReportTab(QWidget* parent) : QWidget(parent)
     numeric->addWidget(new QLabel("Decimal places:"));
     decimals_ = new QSpinBox; decimals_->setObjectName("reportDecimals"); decimals_->setRange(0, 15); decimals_->setValue(6); decimals_->setEnabled(false);
     numeric->addWidget(decimals_); numeric->addStretch(); layout->addLayout(numeric);
-    connect(numberFormat_, &QComboBox::currentIndexChanged, this, [this] { decimals_->setEnabled(numberFormat_->currentIndex() != 0); updatePreview(); });
+    connect(numberFormat_, &QComboBox::currentIndexChanged, this, [this] {
+        decimals_->setEnabled(numberFormat_->currentIndex() == 1 || numberFormat_->currentIndex() == 2);
+        updatePreview();
+    });
     connect(decimals_, &QSpinBox::valueChanged, this, [this] { updatePreview(); });
     status_ = new QLabel("Complete a run to generate a report, or open an existing text report.");
     status_->setObjectName("reportStatus"); status_->setTextFormat(Qt::PlainText); status_->setWordWrap(true);
@@ -406,9 +510,15 @@ bool ReportTab::loadFile(const QString& filename)
 bool ReportTab::loadSource(const QString& text, bool preserveSelections)
 {
     QStringList blockOrder, typeOrder;
+    QMap<QString, int> savedProfileMetadata;
     if (preserveSelections) {
         for (int i = 0; i < blocks_->count(); ++i) blockOrder.push_back(blocks_->item(i)->text());
         for (int i = 0; i < types_->count(); ++i) typeOrder.push_back(types_->item(i)->text());
+        for (int i = 0; i < metricTargets_->rowCount(); ++i) {
+            auto* combo = qobject_cast<QComboBox*>(metricTargets_->cellWidget(i, 1));
+            const auto* profile = metricTargets_->item(i, 0);
+            if (combo && profile) savedProfileMetadata.insert(profile->text(), combo->currentData().toInt());
+        }
     } else rowsReordered_ = false;
     QMap<QString, Qt::CheckState> typeSelection, columnSelection, blockSelection;
     auto remember = [](QListWidget* list, QMap<QString, Qt::CheckState>& saved) {
@@ -446,16 +556,210 @@ bool ReportTab::loadSource(const QString& text, bool preserveSelections)
         }
     };
     restoreOrder(blocks_, blockOrder); restoreOrder(types_, typeOrder);
-    if (!preserveSelections) columnStates_.clear();
+    if (!preserveSelections) { columnStates_.clear(); columnOrder_.clear(); }
     // Keep states by stable field ID when switching layouts or regenerating.
     for (int i = 0; i < 9; ++i)
         if (columnSelection.contains(rows_.front()[i])) columnStates_[i] = columnSelection[rows_.front()[i]];
     const auto names = report_format::metricNames();
     for (int i = 0; i < names.size(); ++i)
         if (columnSelection.contains(names[i])) columnStates_[9 + i] = columnSelection[names[i]];
+    rebuildMetricTargets(savedProfileMetadata);
     rebuildColumns();
+    if (!pendingFormat_.isEmpty()) { applyFormatToControls(pendingFormat_); pendingFormat_ = {}; }
     updatePreview();
     return true;
+}
+
+QJsonObject ReportTab::formatSettings() const
+{
+    QJsonArray blocks, types, columns, profileMetadata;
+    for (int i = 0; i < blocks_->count(); ++i)
+        blocks.append(QJsonObject{{"name", blocks_->item(i)->text()}, {"selected", blocks_->item(i)->checkState() == Qt::Checked}, {"order", i}});
+    for (int i = 0; i < types_->count(); ++i)
+        types.append(QJsonObject{{"name", types_->item(i)->text()}, {"selected", types_->item(i)->checkState() == Qt::Checked}, {"order", i}});
+    for (int i = 0; i < columns_->count(); ++i) {
+        const auto* item = columns_->item(i);
+        columns.append(QJsonObject{{"id", item->data(Qt::UserRole).toInt()}, {"selected", item->checkState() == Qt::Checked}, {"order", i}});
+    }
+    for (int i = 0; i < metricTargets_->rowCount(); ++i) {
+        auto* combo = qobject_cast<QComboBox*>(metricTargets_->cellWidget(i, 1));
+        const auto* profile = metricTargets_->item(i, 0);
+        if (combo && profile)
+            profileMetadata.append(QJsonObject{{"profile", profile->text()}, {"field", combo->currentData().toInt()}});
+    }
+    return {{"blocks", blocks}, {"types", types}, {"columns", columns},
+        {"profileMetadata", profileMetadata},
+        {"samples", samples_->isChecked()}, {"headers", headers_->isChecked()},
+        {"units", units_->isChecked()}, {"blankRows", blankRows_->isChecked()},
+        {"numberFormat", numberFormat_->currentIndex()},
+        {"decimals", decimals_->value()}, {"reorderRows", rowsReordered_}, {"legacyStyle", legacyStyle_}};
+}
+
+void ReportTab::applyFormatToControls(const QJsonObject& settings)
+{
+    if (settings["preset"].toString() == "legacy") {
+        QSignalBlocker blockSignal(blocks_), typeSignal(types_), columnSignal(columns_);
+        QStringList legacyTypes;
+        for (const auto& row : rows_) {
+            if (row.isEmpty() || row[0] == "res_time" || row[0] == "sec" || row.size() < 9 || legacyTypes.size() >= 13) continue;
+            const auto name = report_format::profileType(row[8]);
+            if (name == "Raw_Profile" || name == "Normalized_Profile" || name == "Rescaled_Raw_Profile") continue;
+            // Older reports mislabeled analytical_zero as Bound_Beads_(wt%).
+            // Keep it as its literal imported profile instead of treating it as
+            // part of the current Legacy preset.
+            if (name.startsWith("Bound_Beads_(") || name.startsWith("Species:")) continue;
+            if (!legacyTypes.contains(name)) legacyTypes.push_back(name);
+        }
+        for (int i = 0; i < blocks_->count(); ++i) blocks_->item(i)->setCheckState(Qt::Checked);
+        for (int i = 0; i < types_->count(); ++i) {
+            const auto name = types_->item(i)->text();
+            const bool legacyType = legacyTypes.contains(name);
+            types_->item(i)->setCheckState(legacyType ? Qt::Checked : Qt::Unchecked);
+        }
+        for (int i = 0; i < columns_->count(); ++i) columns_->item(i)->setCheckState(Qt::Checked);
+        samples_->setChecked(true); headers_->setChecked(true); units_->setChecked(true); blankRows_->setChecked(true);
+        numberFormat_->setCurrentIndex(0); decimals_->setValue(6);
+        for (int i = 0; i < columns_->count(); ++i) {
+            const int field = columns_->item(i)->data(Qt::UserRole).toInt();
+            const bool individualMetadata = field >= 9 && field < 15;
+            // The legacy preset keeps the historical stacked D-A field but
+            // does not add the six individual metadata columns.
+            columns_->item(i)->setCheckState(individualMetadata ? Qt::Unchecked : Qt::Checked);
+        }
+        rebuildMetricTargets();
+        decimals_->setEnabled(false);
+        rowsReordered_ = false;
+        legacyStyle_ = true;
+        updatePreview();
+        return;
+    }
+    legacyStyle_ = settings["legacyStyle"].toBool(false);
+    QMap<QString, int> savedProfileMetadata;
+    for (const auto value : settings["profileMetadata"].toArray()) {
+        const auto item = value.toObject();
+        const auto profile = item["profile"].toString();
+        if (!profile.isEmpty()) {
+            const int oldMetric = item["metric"].toInt(-1);
+            const int field = item["field"].isDouble() ? item["field"].toInt(-1)
+                : oldMetric >= 0 && oldMetric < 6 ? oldMetric + 9 : -1;
+            savedProfileMetadata.insert(profile, field);
+        }
+    }
+    // Read report formats saved by the earlier metadata-to-profile mapping UI.
+    if (savedProfileMetadata.isEmpty()) {
+        const auto savedMetricTargets = settings["metricTargets"].toArray();
+        for (int metric = 0; metric < savedMetricTargets.size() && metric < 6; ++metric) {
+            const auto profile = savedMetricTargets[metric].toString();
+            if (!profile.isEmpty()) savedProfileMetadata.insert(profile, metric + 9);
+        }
+    }
+    if (!savedProfileMetadata.isEmpty()) rebuildMetricTargets(savedProfileMetadata);
+    samples_->setChecked(settings["samples"].toBool(true)); headers_->setChecked(settings["headers"].toBool(true));
+    units_->setChecked(settings["units"].toBool(true)); blankRows_->setChecked(settings["blankRows"].toBool(true));
+    {
+        const QSignalBlocker numberBlock(numberFormat_);
+        if (settings["numberFormat"].isDouble()) {
+            const int savedFormat = settings["numberFormat"].toInt();
+            // Version 1 format files could store the removed six-significant-digit option.
+            numberFormat_->setCurrentIndex(savedFormat == 3 ? 0 : std::clamp(savedFormat, 0, numberFormat_->count() - 1));
+        }
+    }
+    if (settings["decimals"].isDouble()) decimals_->setValue(std::clamp(settings["decimals"].toInt(), 0, 15));
+    decimals_->setEnabled(numberFormat_->currentIndex() == 1 || numberFormat_->currentIndex() == 2);
+    rebuildColumns();
+    auto applyList = [](QListWidget* list, const QJsonArray& saved) {
+        QMap<QString, bool> selected;
+        QStringList order;
+        for (const auto value : saved) {
+            const auto item = value.toObject();
+            const auto name = item["name"].toString();
+            if (name.isEmpty()) continue;
+            selected.insert(name, item["selected"].toBool(true));
+            order.push_back(name);
+        }
+        if (saved.isEmpty()) return;
+        for (int i = 0; i < list->count(); ++i)
+            if (selected.contains(list->item(i)->text()))
+                list->item(i)->setCheckState(selected.value(list->item(i)->text()) ? Qt::Checked : Qt::Unchecked);
+        int target = 0;
+        for (const auto& name : order)
+            for (int i = target; i < list->count(); ++i)
+                if (list->item(i)->text() == name) { list->insertItem(target++, list->takeItem(i)); break; }
+    };
+    {
+        QSignalBlocker blockSignal(blocks_), typeSignal(types_), columnSignal(columns_);
+        applyList(blocks_, settings["blocks"].toArray());
+        applyList(types_, settings["types"].toArray());
+        const auto savedColumns = settings["columns"].toArray();
+        for (const auto value : savedColumns) {
+            const auto item = value.toObject();
+            const int id = item["id"].toInt(-1);
+            for (int i = 0; i < columns_->count(); ++i)
+                if (columns_->item(i)->data(Qt::UserRole).toInt() == id)
+                    columns_->item(i)->setCheckState(item["selected"].toBool(true) ? Qt::Checked : Qt::Unchecked);
+        }
+        if (!savedColumns.isEmpty()) {
+            columnOrder_.clear();
+            for (const auto value : savedColumns) columnOrder_.push_back(value.toObject()["id"].toInt(-1));
+            for (int i = 0; i < columns_->count(); ++i) {
+                const int id = columns_->item(i)->data(Qt::UserRole).toInt();
+                if (!columnOrder_.contains(id)) columnOrder_.push_back(id);
+            }
+            int target = 0;
+            for (const int id : columnOrder_) {
+                for (int i = target; i < columns_->count(); ++i) {
+                    if (columns_->item(i)->data(Qt::UserRole).toInt() != id) continue;
+                    auto* item = columns_->takeItem(i);
+                    columns_->insertItem(target++, item);
+                    break;
+                }
+            }
+        }
+    }
+    rowsReordered_ = settings["reorderRows"].toBool(false);
+    updatePreview();
+}
+
+void ReportTab::setFormatSettings(const QJsonObject& settings)
+{
+    pendingFormat_ = settings;
+    if (!rows_.isEmpty()) { applyFormatToControls(settings); pendingFormat_ = {}; }
+}
+
+void ReportTab::applyLegacyFormat()
+{
+    pendingFormat_ = report_format::legacyFormat();
+    if (rows_.isEmpty()) { status_->setText("Legacy format will apply to the next report."); return; }
+    applyFormatToControls(pendingFormat_); pendingFormat_ = {};
+}
+
+bool ReportTab::saveFormatFile(const QString& filename)
+{
+    const auto settings = rows_.isEmpty() && !pendingFormat_.isEmpty() ? pendingFormat_ : formatSettings();
+    const QJsonObject object{{"format", "navier-report-format"}, {"version", 1}, {"settings", settings}};
+    QSaveFile file(filename);
+    const auto bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+        status_->setText("Cannot save report format: " + file.errorString()); return false;
+    }
+    formatFilename_ = filename;
+    status_->setText("Saved report format: " + filename); return true;
+}
+
+bool ReportTab::loadFormatFile(const QString& filename)
+{
+    QFile file(filename);
+    if (!file.open(QIODevice::ReadOnly)) { status_->setText("Cannot open report format: " + file.errorString()); return false; }
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject() ||
+        document.object()["format"] != QJsonValue("navier-report-format") ||
+        document.object()["version"] != QJsonValue(1) || !document.object()["settings"].isObject()) {
+        status_->setText("Invalid or unsupported report format file."); return false;
+    }
+    formatFilename_ = filename;
+    setFormatSettings(document.object()["settings"].toObject());
+    status_->setText("Loaded report format: " + filename); return true;
 }
 
 void ReportTab::clearSource()
@@ -482,31 +786,37 @@ bool ReportTab::loadGenerated(const QString& text, const QString& source, const 
 void ReportTab::updatePreview()
 {
     if (rows_.isEmpty()) return;
+    updateMetricTargetStyles();
     report_format::Options options;
     options.reorderRows = rowsReordered_;
     for (int i = 0; i < blocks_->count(); ++i) if (blocks_->item(i)->checkState() == Qt::Checked) options.blocks.push_back(blocks_->item(i)->data(Qt::UserRole).toInt());
     for (int i = 0; i < types_->count(); ++i) if (types_->item(i)->checkState() == Qt::Checked) options.types.push_back(types_->item(i)->text());
-    options.metadataLayout = static_cast<report_format::MetadataLayout>(metadataLayout_->currentIndex());
+    options.metadataLayout = report_format::MetadataLayout::mapped;
     options.metrics.clear();
+    for (int i = 0; i < metricTargets_->rowCount(); ++i) {
+        auto* combo = qobject_cast<QComboBox*>(metricTargets_->cellWidget(i, 1));
+        const auto* profile = metricTargets_->item(i, 0);
+        if (!combo || !profile) continue;
+        const int selection = combo->currentData().toInt();
+        options.profileMetadata.insert(profile->text(), selection);
+    }
     for (int i = 0; i < columns_->count(); ++i) {
         const auto* item = columns_->item(i);
-        if (item->checkState() != Qt::Checked) continue;
         const int field = item->data(Qt::UserRole).toInt();
+        options.metadataFieldOrder.push_back(field);
+        if (item->checkState() != Qt::Checked) continue;
+        options.orderedColumns.push_back(field);
         if (field < 9) options.columns.push_back(field);
-        else {
-            if (!options.columns.contains(7)) options.columns.push_back(7);
-            options.metrics.push_back(field - 9);
-        }
+        else options.metrics.push_back(field - 9);
     }
     options.samples = samples_->isChecked(); options.headers = headers_->isChecked();
     options.units = units_->isChecked(); options.blankRows = blankRows_->isChecked();
+    options.legacyStyle = legacyStyle_;
     options.numberFormat = numberFormat_->currentIndex() == 1 ? 'f' : numberFormat_->currentIndex() == 2 ? 'e' : 0;
     options.decimals = decimals_->value();
     selected_ = report_format::select(rows_, options);
     auto* old = table_->model(); table_->setModel(new ReportModel(selected_, table_)); delete old;
-    auto profileColumn = options.columns.indexOf(8);
-    if (profileColumn >= 0 && options.columns.contains(7) && options.metadataLayout != report_format::MetadataLayout::stacked)
-        profileColumn += options.metrics.size() - 1;
+    const auto profileColumn = options.orderedColumns.indexOf(8);
     if (profileColumn >= 0) table_->setColumnWidth(profileColumn, 300);
     copy_->setEnabled(!selected_.isEmpty()); save_->setEnabled(!selected_.isEmpty());
     status_->setText(QString("Preview: %1 selected rows · Source: %2").arg(selected_.size()).arg(sourceLabel_));
@@ -514,6 +824,11 @@ void ReportTab::updatePreview()
 
 void ReportTab::rebuildColumns()
 {
+    if (columns_->count() > 0) {
+        columnOrder_.clear();
+        for (int i = 0; i < columns_->count(); ++i)
+            columnOrder_.push_back(columns_->item(i)->data(Qt::UserRole).toInt());
+    }
     for (int i = 0; i < columns_->count(); ++i)
         columnStates_[columns_->item(i)->data(Qt::UserRole).toInt()] = columns_->item(i)->checkState();
     const QSignalBlocker blocker(columns_);
@@ -523,13 +838,86 @@ void ReportTab::rebuildColumns()
         auto* item = new QListWidgetItem(label, columns_);
         item->setData(Qt::UserRole, field);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(columnStates_.value(field, field >= 9 ? columnStates_.value(7, Qt::Checked) : Qt::Checked));
+        item->setCheckState(columnStates_.value(field, field >= 9 ? Qt::Unchecked : Qt::Checked));
     };
-    for (int field = 0; field < 9; ++field) {
-        if (field == 7 && metadataLayout_->currentIndex() != 0) {
-            const auto names = report_format::metricNames();
-            for (int i = 0; i < names.size(); ++i) add(9 + i, names[i]);
-        } else add(field, rows_.front()[field]);
+    for (int field = 0; field < 9; ++field)
+        add(field, field == 7 ? QString("Stacked metadata") : rows_.front()[field]);
+    const auto names = report_format::metricNames();
+    for (int i = 0; i < names.size(); ++i) add(9 + i, names[i]);
+    if (!columnOrder_.isEmpty()) {
+        QList<int> desired;
+        auto addDesired = [&](int field) {
+            if (field >= 0 && field < 15 && !desired.contains(field)) desired.push_back(field);
+        };
+        for (const int oldField : columnOrder_) addDesired(oldField);
+        for (int i = 0; i < columns_->count(); ++i)
+            addDesired(columns_->item(i)->data(Qt::UserRole).toInt());
+        int target = 0;
+        for (const int field : desired) {
+            for (int i = target; i < columns_->count(); ++i) {
+                if (columns_->item(i)->data(Qt::UserRole).toInt() != field) continue;
+                auto* item = columns_->takeItem(i);
+                columns_->insertItem(target++, item);
+                break;
+            }
+        }
+    }
+    columnOrder_.clear();
+    for (int i = 0; i < columns_->count(); ++i)
+        columnOrder_.push_back(columns_->item(i)->data(Qt::UserRole).toInt());
+}
+
+void ReportTab::rebuildMetricTargets(const QMap<QString, int>& savedMappings)
+{
+    QStringList available;
+    for (int i = 0; i < types_->count(); ++i) available.push_back(types_->item(i)->text());
+    const auto defaults = report_format::defaultProfileMetadata();
+    const QSignalBlocker blocker(metricTargets_);
+    metricTargets_->clearContents();
+    metricTargets_->setRowCount(available.size());
+    for (int row = 0; row < available.size(); ++row) {
+        const auto& profile = available[row];
+        auto* label = new QTableWidgetItem(profile);
+        label->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        metricTargets_->setItem(row, 0, label);
+        auto* combo = new QComboBox(metricTargets_);
+        combo->setObjectName(QString("reportMetadataForProfile_%1").arg(row));
+        combo->setToolTip("Maps a metadata field to this profile row in Stacked metadata. Its checkbox independently controls whether it also appears as a separate column.");
+        combo->addItem("— no field —", -1);
+        for (int field = 0; field < 9; ++field) {
+            if (field == 7) continue;
+            combo->addItem(rows_.front()[field], field);
+        }
+        const auto names = report_format::metricNames();
+        for (int metric = 0; metric < names.size(); ++metric) combo->addItem(names[metric], 9 + metric);
+        const int selectedMetric = savedMappings.contains(profile)
+            ? savedMappings.value(profile) : defaults.value(profile, -1);
+        const int index = combo->findData(selectedMetric);
+        combo->setCurrentIndex(index >= 0 ? index : 0);
+        metricTargets_->setCellWidget(row, 1, combo);
+        connect(combo, &QComboBox::currentIndexChanged, this, [this] { updatePreview(); });
+    }
+    updateMetricTargetStyles();
+}
+
+void ReportTab::updateMetricTargetStyles()
+{
+    for (int row = 0; row < metricTargets_->rowCount(); ++row) {
+        auto* label = metricTargets_->item(row, 0);
+        auto* combo = qobject_cast<QComboBox*>(metricTargets_->cellWidget(row, 1));
+        if (!label || !combo) continue;
+        bool selected = false;
+        for (int i = 0; i < types_->count(); ++i) {
+            if (types_->item(i)->text() == label->text()) {
+                selected = types_->item(i)->checkState() == Qt::Checked;
+                break;
+            }
+        }
+        label->setForeground(selected ? QApplication::palette().color(QPalette::Text) : QColor("#888888"));
+        auto font = label->font(); font.setItalic(!selected); label->setFont(font);
+        combo->setEnabled(selected);
+        if (!selected) combo->setStyleSheet("color: #888888;");
+        else combo->setStyleSheet(QString());
     }
 }
 

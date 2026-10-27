@@ -839,10 +839,36 @@ void ProfilesTab::updatePlot()
     QVector<ProfileSeriesData> series;
     if (source_->currentIndex() == 1) {
         try { QFile file(reportFile_); if (!file.open(QIODevice::ReadOnly)) { plot_->setData(autoTitle, "X (µm)", yAuto, {}); return; } const auto rows = report_format::parse(QString::fromUtf8(file.readAll()));
-            struct ReportBlock { QVector<double> x; QHash<QString, QVector<double>> y; }; QVector<ReportBlock> blocks; ReportBlock* block = nullptr;
+            struct ReportBlock { QVector<double> x; QHash<QString, QVector<double>> y, profileX; }; QVector<ReportBlock> blocks; ReportBlock* block = nullptr;
             QVector<double> currentAxis;
-            for (const auto& row : rows) { if (row.isEmpty()) continue; if (row[0] == "res_time") { currentAxis.clear(); for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); currentAxis << (ok ? v : std::numeric_limits<double>::quiet_NaN()); } } else if (row[0] == "sec") { blocks.push_back({}); block = &blocks.back(); block->x = currentAxis; } else if (block && row.size() >= 10) { auto& values = block->y[row[8]]; for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); values << (ok ? v : std::numeric_limits<double>::quiet_NaN()); } } }
-            for (auto* row : seriesRows_) { bool ok = false; int b = row->dataset->currentData().toInt(&ok); if (!ok || b < 0 || b >= blocks.size()) continue; const QString profile = row->profile->currentText(); auto values = blocks[b].y.value(profile); int n = std::min(blocks[b].x.size(), values.size()); if (n < 2) continue; ProfileSeriesData data; data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed(); data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fillEnabled; data.yAxis = row->yAxis->currentIndex(); data.x = blocks[b].x; data.y = values; data.x.resize(n); data.y.resize(n); series << data; }
+            for (const auto& row : rows) {
+                if (row.isEmpty()) continue;
+                if (row[0] == "res_time") {
+                    currentAxis.clear();
+                    for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); currentAxis << (ok ? v : std::numeric_limits<double>::quiet_NaN()); }
+                } else if (row[0] == "sec") {
+                    blocks.push_back({}); block = &blocks.back();
+                    for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); block->x << (ok ? v : std::numeric_limits<double>::quiet_NaN()); }
+                    if (block->x.isEmpty()) block->x = currentAxis;
+                } else if (block && row.size() >= 10) {
+                    QVector<double> values;
+                    for (int i = 9; i < row.size(); ++i) { bool ok = false; double v = row[i].toDouble(&ok); values << (ok ? v : std::numeric_limits<double>::quiet_NaN()); }
+                    block->y.insert(row[8], values);
+                    const auto axis = block->x.size() == values.size() || currentAxis.size() != values.size() ? block->x : currentAxis;
+                    block->profileX.insert(row[8], axis);
+                }
+            }
+            for (auto* row : seriesRows_) {
+                bool ok = false; int b = row->dataset->currentData().toInt(&ok);
+                if (!ok || b < 0 || b >= blocks.size()) continue;
+                const QString profile = row->profile->currentText();
+                auto values = blocks[b].y.value(profile);
+                auto axis = blocks[b].profileX.value(profile, blocks[b].x);
+                int n = std::min(axis.size(), values.size()); if (n < 2) continue;
+                ProfileSeriesData data; data.name = row->legend->text().trimmed().isEmpty() ? profile : row->legend->text().trimmed();
+                data.lineColor = row->lineColor; data.fillColor = row->fillColor; data.filled = row->fillEnabled; data.yAxis = row->yAxis->currentIndex();
+                data.x = axis; data.y = values; data.x.resize(n); data.y.resize(n); series << data;
+            }
         } catch (...) {}
     } else if (source_->currentIndex() == 2) {
         for (auto* row : seriesRows_) {

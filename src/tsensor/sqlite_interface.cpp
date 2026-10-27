@@ -133,13 +133,13 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
     specie_struct* Bound_Dye_1_ptr;
     reaction_struct* FITC_Bead_1_ptr;
     
-    std::vector<std::string> specie_name_vect = {"Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads_(wt%)", "Bound_Beads_(wt%)", "Total_Beads_(wt%)", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference", "Error"};
+    std::vector<std::string> specie_name_vect = {"Free_Dye", "Bound_Dye", "Total_Dye", "Unbound_Beads_(wt%)", "analytical_zero", "Total_Beads_(wt%)", "Experimental_Derivative", "Numeric_Derivative", "Experimental_Profile", "Numeric_Model_Profile", "Experimental_Difference", "Numeric_Difference", "Error"};
     
     for (int row = 0; row < p.row_count; row++) {
         check_cancellation(p);
         exp_ptr = &p.experiments.at(row);
         run_ptr = exp_ptr->run;
-        if (!extended && (!header_width || *header_width != run_ptr->W)) {
+        if (!header_width || *header_width != run_ptr->W) {
             write_header(run_ptr->W);
             header_width = run_ptr->W;
         }
@@ -153,11 +153,12 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         FITC_Bead_1_ptr = &run_ptr->reactions.at(FITC_Bead_1);
         auto profile_names = specie_name_vect;
         profile_names[0] = FITC_ptr->name;
+        profile_names[1] = Bound_Dye_1_ptr->name;
         profile_names[3] = PS_beads_ptr->name;
+        profile_names[4] = "Analytical_Zero_(" + FITC_ptr->model_units + ")";
         if (extended) {
-            // The legacy Bound_Beads row contains analytical_zero, not beads.
-            // Keep its sampled axis and give the true model-grid beads their own row.
-            profile_names[4] = "Analytical_Zero_(" + FITC_ptr->model_units + ")";
+            // Keep the analytical-zero profile on its sampled axis and give
+            // true bound beads their own model-grid row.
             profile_names[5] = "Total_Beads_(" + PS_beads_ptr->input_units + ")";
             profile_names.push_back("Bound_Beads_(" + PS_beads_ptr->input_units + ")");
             for (const auto& species : run_ptr->species)
@@ -197,10 +198,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
         const double kon1 = variable_location("kon1", run_ptr).value();
         const double keq1 = variable_location("keq1", run_ptr).value();
 
-        auto write_profile_axis = [&](const std::vector<double>& axis, const std::string& axis_name) {
-            fout << "res_time  bind_ratio(p1)  forward_reaction_rate_1  equalibrium_constant_1  dye_conc.  bead_conc.  bead_surface_area  D-A  profile_type  ";
-            for (const auto position : axis) fout << (std::abs(position) < 1e-307 ? 0 : position) << "  ";
-            fout << '\n';
+        auto write_profile_units = [&](const std::vector<double>& axis, const std::string& axis_name) {
             fout << "sec  (" + FITC_ptr->model_units + "_PSbead)/(" + PS_beads_ptr->model_units
                  << "_FITC)  forward_reaction_rate_1  keq_1  " << FITC_ptr->model_units << "  "
                  << PS_beads_ptr->input_units << "  " << PS_beads_ptr->model_units
@@ -214,14 +212,6 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             for (const auto position : exp_ptr->channel_position) axis.push_back(position);
             return axis;
         };
-        auto model_axis = [&]() {
-            std::vector<double> axis;
-            axis.reserve(p.X);
-            const double scale = run_ptr->W * 1.0e6 / p.X;
-            for (int x = 0; x < p.X; ++x) axis.push_back(x * scale);
-            return axis;
-        };
-
         int width;
         if (extended) {
             // The Report tab uses these source and rescaled views; legacy
@@ -232,7 +222,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                 source_axis.reserve(source_count);
                 for (std::size_t x = 0; x < source_count; ++x) source_axis.push_back(static_cast<double>(x));
                 auto write_source_profile = [&](const std::string& type, const std::vector<double>& values) {
-                    write_profile_axis(source_axis, "Raw_Sample_Index");
+                    write_profile_units(source_axis, "Raw_Sample_Index");
                     fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
                          << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
                          << "  -  " << run_ptr->name << "_" << exp_ptr->second_name << "wt%_" << type << "  ";
@@ -257,7 +247,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                 rescaled_raw_profile.push_back(exp_ptr->loaded_experimental_profile.empty() ? 0.0
                     : exp_ptr->loaded_experimental_profile.at(static_cast<std::size_t>(last_raw_sample)));
             }
-            write_profile_axis(sampled_axis(), "Channel_Width_(um)->");
+            write_profile_units(sampled_axis(), "Channel_Width_(um)->");
             fout << p.Z * run_ptr->dt << "  " << p1 << "  " << kon1 << "  " << keq1 << "  "
                  << run_ptr->dye_conc << "  " << exp_ptr->second_name << "  " << beads_sa
                  << "  -  " << run_ptr->name << "_" << exp_ptr->second_name
@@ -265,12 +255,8 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
             for (const auto value : rescaled_raw_profile) fout << value << "    ";
             fout << '\n';
         }
+        if (extended) write_profile_units(sampled_axis(), "Channel_Width_(um)->");
         for (int j = 0; j < profile_names.size(); j++) {
-            if (extended) {
-                const bool uses_sample_axis = (j == 4 || (j >= 6 && j <= 12));
-                write_profile_axis(uses_sample_axis ? sampled_axis() : model_axis(),
-                    uses_sample_axis ? "Channel_Width_(um)->" : "Model_Grid_(um)->");
-            }
             fout << p.Z * run_ptr->dt                   << "  "; //1
             fout << p1                                       << "  "; //2
             fout << kon1                                     << "  "; //3
@@ -327,7 +313,7 @@ static void write_excel_report(parameters_t& p, std::ostream& fout, bool extende
                     case 3: // Unbound_Beads_(wt%)
                         fout << out[PS_beads][x] * bead_unit;
                         break;
-                    case 4: // Analytical zero; legacy files retain the historical bead label.
+                    case 4: // Analytical zero.
                         fout << exp_ptr->analytical_zero.at(x);
                         break;   
                     case 5: // Total_Beads_(wt%)
@@ -378,6 +364,8 @@ void save_excel_output(parameters_t& p, const std::filesystem::path& file_name)
     std::ofstream fout;
     fout.exceptions(std::ofstream::failbit | std::ofstream::badbit);
     fout.open(file_name, std::ofstream::out | std::ofstream::trunc);
+    // Keep legacy report values round-trip precise like the expanded report.
+    fout << std::setprecision(std::numeric_limits<double>::max_digits10);
     write_excel_report(p, fout, false);
     fout.close();
 }

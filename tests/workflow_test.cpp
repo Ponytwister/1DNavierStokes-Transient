@@ -512,8 +512,7 @@ TEST(ChannelDimensions, MixedExperimentsUseIndependentGeometryAndUniformAnalytic
         row >> first >> second;
         last = second;
         while (row >> position) last = position;
-        // Raw-profile headers use unit sample-index spacing; this assertion
-        // concerns only the per-run channel-geometry headers.
+        // Count only per-run channel-geometry headers.
         if (second - first == 1) continue;
         last_positions.push_back(last);
     }
@@ -849,18 +848,29 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
     auto profile_axis = [](const std::string& report, const std::string& name) {
         std::istringstream input(report);
         std::string line;
-        std::vector<double> axis;
+        std::vector<double> header_axis, units_axis;
         while (std::getline(input, line)) {
             std::istringstream row(line); std::string label;
             row >> label;
             if (label == "res_time") {
                 for (int i = 0; i < 8; ++i) row >> label;
-                axis.clear();
+                header_axis.clear();
                 double value;
-                while (row >> value) axis.push_back(value);
-            } else if (label != "sec") {
+                while (row >> value) header_axis.push_back(value);
+            } else if (label == "sec") {
                 for (int i = 0; i < 8; ++i) row >> label;
-                if (label == name || label.ends_with("_" + name)) return axis;
+                units_axis.clear();
+                double value;
+                while (row >> value) units_axis.push_back(value);
+            } else {
+                for (int i = 0; i < 8; ++i) row >> label;
+                if (label == name || label.ends_with("_" + name)) {
+                    std::vector<double> values; double value;
+                    while (row >> value) values.push_back(value);
+                    if (units_axis.size() == values.size()) return units_axis;
+                    if (header_axis.size() == values.size()) return header_axis;
+                    return units_axis;
+                }
             }
         }
         return std::vector<double>{};
@@ -893,13 +903,13 @@ TEST(Workflow, GeneratedReportSeparatesAnalyticalZeroBoundBeadsAndSpecies)
     const auto scaled_axis = profile_axis(generated, "Experimental_Profile");
     ASSERT_EQ(scaled_axis.size(), exp.channel_position.size());
     for (std::size_t i = 0; i < scaled_axis.size(); ++i) near(scaled_axis[i], exp.channel_position[i]);
-    // Existing CLI/export contract stays unchanged, including the historical label.
+    // Legacy and expanded reports identify the analytical-zero profile consistently.
     const auto legacyPath = session.export_results(files.root / "legacy");
     std::ifstream legacyFile(legacyPath);
     const std::string legacy(std::istreambuf_iterator<char>(legacyFile), {});
-    EXPECT_EQ(profile(legacy, "Bound_Beads_(wt%)"), analytic);
+    EXPECT_EQ(profile(legacy, "Analytical_Zero_(umol)"), analytic);
     EXPECT_EQ(legacy.find("Species:"), std::string::npos);
-    EXPECT_EQ(legacy.find("Analytical_Zero"), std::string::npos);
+    EXPECT_EQ(legacy.find("Bound_Beads_(wt%)"), std::string::npos);
 }
 
 TEST(Workflow, BackgroundSuccessOutlivesRunner)
