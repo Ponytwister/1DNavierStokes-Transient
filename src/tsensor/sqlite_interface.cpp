@@ -2476,7 +2476,12 @@ model(parameters_t& p, const alglib::real_1d_array &control_parameters, alglib::
                     exp_ptr->species_net_rates[specie][i] = p.disable_reactions ? 0.0 : specie_rate[specie] / run_ptr->dt;
             }
             for (int specie = 0; specie < species_count; specie++) {
-                E[specie * X + i] = available[specie] + specie_rate[specie];
+                // Interior equations are multiplied through by two for the
+                // Crank-Nicolson diffusion solve, so scale their explicit
+                // reaction increment by two as well. Edge equations remain
+                // in their undoubled form.
+                const double reaction_scale = (i == 0 || i == X - 1) ? 1.0d : 2.0d;
+                E[specie * X + i] = available[specie] + reaction_scale * specie_rate[specie];
             }
         }
         for (int specie = 0; specie < species_count; specie++) {

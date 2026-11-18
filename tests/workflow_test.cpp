@@ -994,6 +994,47 @@ TEST(Workflow, InvalidInputsFailWithoutResultsAndAllowFreshRun)
     verify_solution(*completed.session, *completed.result);
 }
 
+TEST(Workflow, DiffusionOnlyStepMatchesAnalyticalErrorFunction) {
+    fixture files;
+    run_session session(files.database);
+    sql(session.database(),
+        "UPDATE experiments SET ENTRANCE_FLOWRATE='0.00000000025 0.00000000025' WHERE NAME='uniform';"
+        "UPDATE experiments SET WIDTH=128 WHERE NAME='uniform';"
+        "UPDATE raw_profile SET CHANNEL_LEFT_EDGE=0, CHANNEL_RIGHT_EDGE=129, WIDTH=128, "
+        "INTENSITY_ARRAY=replace(printf('%0129d',0),'0','1') WHERE NAME='uniform';"
+        "UPDATE raw_profile_entrance_concentrations SET CONCENTRATION=0.0 "
+        "WHERE NAME='uniform' AND SPECIES_NAME='FITC' AND ENTRANCE_NUMBER=1;"
+        "INSERT OR REPLACE INTO raw_profile_entrance_concentrations "
+        "SELECT NAME,WT_PERCENT,2,'FITC',0.002,'mg/ml' FROM raw_profile WHERE NAME='uniform';"
+        "UPDATE model_controls SET value='256' WHERE criterion='width resolution (X)';"
+        "UPDATE model_controls SET value='256' WHERE criterion='length/time resolution (Z)';"
+        "UPDATE model_controls SET value='' WHERE criterion='universal_solve_for';");
+    session.load_inputs();
+    auto& p = session.parameters();
+    p.disable_reactions = true;
+    session.run();
+
+    ASSERT_EQ(p.experiments.size(), 4u);
+    for (const auto& exp : p.experiments) {
+        ASSERT_EQ(exp.model_profile.size(), 129u);
+        ASSERT_EQ(exp.analytical_zero.size(), 129u);
+        double max_normalized_error = 0.0;
+        std::size_t max_error_index = 0;
+        for (std::size_t i = 0; i < exp.model_profile.size(); ++i) {
+            if (exp.channel_position[i] < 100.0 || exp.channel_position[i] > 400.0) continue;
+            const double error = std::abs(exp.model_profile[i] - exp.analytical_zero[i]) / exp.run->dye_conc;
+            if (error > max_normalized_error) {
+                max_normalized_error = error;
+                max_error_index = i;
+            }
+        }
+        EXPECT_LT(max_normalized_error, 0.02) << "profile=" << exp.second_name
+            << " index=" << max_error_index << " x=" << exp.channel_position[max_error_index]
+            << " model=" << exp.model_profile[max_error_index] / exp.run->dye_conc
+            << " analytic=" << exp.analytical_zero[max_error_index] / exp.run->dye_conc;
+    }
+}
+
 TEST(Workflow, NetRatesMatchSingleStepMassActionAndPersistWithoutLegacyRows) {
 
     fixture files;
@@ -1013,6 +1054,13 @@ TEST(Workflow, NetRatesMatchSingleStepMassActionAndPersistWithoutLegacyRows) {
         auto& run = *exp.run;
         std::vector<double> inlet(2 * p.X * run.number_of_species);
         set_inlet_conc(p, &exp, inlet.data());
+        // A uniform inlet mixture must remain spatially uniform after a
+        // reaction step; this catches inconsistent scaling of the reaction
+        // increment between doubled interior and edge equations.
+        for (const auto& profile : exp.species_out) {
+            ASSERT_EQ(profile.size(), static_cast<std::size_t>(p.X));
+            for (int x = 1; x < p.X; ++x) near(profile[x], profile[0]);
+        }
         ASSERT_EQ(exp.reaction_net_rates.size(), 1u);
         for (int x = 0; x < p.X; ++x) {
             // A + B -> C, one step: forward extent rate k[A][B].
